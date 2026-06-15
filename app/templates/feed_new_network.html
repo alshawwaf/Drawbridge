@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}New Network Feed{% endblock %}
+{% block content %}
+<h1>New Network Feed</h1>
+<p class="muted">Pre-filled with a sample list — edit or replace it, then Create. The portal serves it as a flat list (or JSON) for a Check Point Network Feed object.</p>
+{% if error %}<div class="err" style="margin:12px 0;">{{ error }}</div>{% endif %}
+
+<form method="post" action="/feeds/new/network-feed" class="card">
+  <label>Feed name</label>
+  <input name="name" value="{{ form.name }}" placeholder="Threat-intel-blocklist" required>
+
+  <label>Description (optional)</label>
+  <input name="description" value="{{ form.description }}" placeholder="Demo blocklist">
+
+  <div class="row">
+    <div class="grow">
+      <label>Data type</label>
+      <select name="data_type">
+        <option value="ip_domain" {{ 'selected' if form.data_type == 'ip_domain' else '' }}>IP Address / Domain</option>
+        <option value="ip" {{ 'selected' if form.data_type == 'ip' else '' }}>IP Address</option>
+        <option value="domain" {{ 'selected' if form.data_type == 'domain' else '' }}>Domain</option>
+      </select>
+    </div>
+    <div class="grow">
+      <label>Format</label>
+      <select name="feed_format">
+        <option value="flat" {{ 'selected' if form.feed_format == 'flat' else '' }}>Flat list</option>
+        <option value="json" {{ 'selected' if form.feed_format == 'json' else '' }}>JSON (JQ on the gateway)</option>
+      </select>
+    </div>
+  </div>
+
+  <label>Entries — one per line</label>
+  <textarea name="entries_text" placeholder="203.0.113.10&#10;198.51.100.0/24&#10;*.malicious-example.com">{{ form.entries_text }}</textarea>
+  <p class="muted">Single IP, range (<code>a-b</code>), CIDR (<code>a.b.c.d/len</code>), FQDN (<code>host.example.com</code>), or wildcard (<code>*.example.com</code>) — matching the data type. JSON mode serves <code>{"entries":[…]}</code> (JQ query <code>.entries[]</code>).</p>
+
+  <label>Poll interval (seconds)</label>
+  <input name="interval_seconds" type="number" min="1" value="{{ form.interval_seconds }}" style="width:140px">
+  <p class="muted">Note: SmartConsole's "Check feed interval" is in minutes (default 60).</p>
+
+  <h2>Optional: HTTP Basic auth</h2>
+  <p class="muted">The gateway authenticates to the URL with username/password. Leave blank for an open feed.</p>
+  <div class="row">
+    <div class="grow"><label>Username</label><input name="basic_user" value="{{ form.basic_user }}" placeholder="feeduser"></div>
+    <div class="grow"><label>Password</label><input name="basic_pass" type="password" placeholder="(secret)"></div>
+  </div>
+
+  <div style="margin-top:20px;" class="row">
+    <button type="submit">Create feed</button>
+    <a class="btn secondary" href="/feeds/new">Back</a>
+  </div>
+</form>
+{% endblock %}
