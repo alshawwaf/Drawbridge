@@ -168,3 +168,23 @@ class Gateway(Base):
     cert_pem: Mapped[str] = mapped_column(Text, default="")
     owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
     created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class Datacenter(Base):
+    """A mock cloud/datacenter that Check Point connects to (e.g. OpenStack). `content` holds
+    the simulated inventory the provider API serves (instances, subnets, security groups)."""
+
+    __tablename__ = "datacenters"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    token: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    provider: Mapped[str] = mapped_column(String(32), default="openstack", index=True)
+    name: Mapped[str] = mapped_column(String(200))
+    description: Mapped[str] = mapped_column(Text, default="")
+    # openstack: {"instances":[{name,ip,tags,metadata}], "subnets":[{name,cidr}], "security_groups":[{name}]}
+    content: Mapped[dict] = mapped_column(JSON, default=dict)
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
