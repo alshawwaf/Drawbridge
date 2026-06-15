@@ -80,3 +80,55 @@ class FeedPoll(Base):
     status: Mapped[int] = mapped_column(Integer, default=200)
 
     feed: Mapped["Feed"] = relationship(back_populates="polls")
+
+
+class DynamicLayer(Base):
+    """An authored Dynamic Layer policy, stored on the portal and applied to a gateway
+    (real or the built-in mock) via the Gaia API 'set-dynamic-content'."""
+
+    __tablename__ = "dynamic_layers"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    token: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(200))
+    description: Mapped[str] = mapped_column(Text, default="")
+    # The access-layer name on the gateway (must be marked "Set as a Dynamic Layer").
+    layer_name: Mapped[str] = mapped_column(String(200), default="dynamic_layer")
+    # Authored payload: {objects:{type:[...]}, rulebase:[...], referenced_objects:{...},
+    #                    operation, comments, tags, custom_fields}
+    content: Mapped[dict] = mapped_column(JSON, default=dict)
+
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
+
+    tasks: Mapped[list["LayerTask"]] = relationship(
+        back_populates="layer", cascade="all, delete-orphan", order_by="LayerTask.at.desc()"
+    )
+
+
+class LayerTask(Base):
+    """A recorded set-dynamic-content apply (to the mock or a real gateway) and its result —
+    mirrors the Gaia API async task / show-task response."""
+
+    __tablename__ = "layer_tasks"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    task_id: Mapped[str] = mapped_column(String(64), index=True)
+    layer_id: Mapped[int | None] = mapped_column(
+        ForeignKey("dynamic_layers.id"), nullable=True, index=True
+    )
+    target: Mapped[str] = mapped_column(String(32), default="mock")  # mock | gateway
+    gateway_host: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    dry_run: Mapped[bool] = mapped_column(default=False)
+    status: Mapped[str] = mapped_column(String(32), default="succeeded")
+    status_code: Mapped[int] = mapped_column(Integer, default=200)
+    # show-task-style payload: {change_summary, validation_warnings, validation_errors, ...}
+    result: Mapped[dict] = mapped_column(JSON, default=dict)
+    at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    source_ip: Mapped[str] = mapped_column(String(64), default="")
+    user_agent: Mapped[str] = mapped_column(String(255), default="")
+
+    layer: Mapped["DynamicLayer"] = relationship(back_populates="tasks")
