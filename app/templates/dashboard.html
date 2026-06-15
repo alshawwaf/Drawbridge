@@ -4,9 +4,15 @@
 <div class="row">
   <div class="grow">
     <h1>Your simulated feeds</h1>
-    <p class="muted">Signed in as {{ user.username }}. Each URL below is what Check Point polls.</p>
+    <p class="muted">Signed in as {{ user.username }}. Each URL below is what the gateway polls.</p>
   </div>
-  <a class="btn" href="/feeds/new">+ New feed</a>
+  <div class="menu">
+    <button class="btn menu-trigger" type="button">+ New feed ▾</button>
+    <div class="menu-items">
+      <a href="/feeds/new/generic-dc">Generic Data Center</a>
+      <a href="/feeds/new/network-feed">Network Feed</a>
+    </div>
+  </div>
 </div>
 
 {% if not rows %}
