@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}{{ dc.name }}{% endblock %}
+{% block content %}
+<div class="row">
+  <div class="grow"><h1>{{ dc.name }} <span class="pill">{{ dc.provider }}</span></h1>
+    <p class="muted">{{ dc.description or "Mock OpenStack datacenter (Keystone + Nova + Neutron)" }}</p></div>
+  <form method="post" action="/datacenters/{{ dc.id }}/delete">
+    <button class="danger" type="submit" data-confirm="Delete “{{ dc.name }}”? This removes the mock datacenter.">Delete</button>
+  </form>
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0;">Connect from SmartConsole</h2>
+  <p class="muted">Objects → New → More → Cloud → Data Center → <i>OpenStack…</i>, then enter:</p>
+  <label>Hostname (Keystone endpoint)</label>
+  <div class="row" style="gap:8px; align-items:center; flex-wrap:nowrap;">
+    <span class="copy grow">{{ keystone_url }}</span>
+    <button class="copybtn" type="button" data-copy="{{ keystone_url }}">Copy</button>
+  </div>
+  <p class="muted" style="margin-top:10px;">Username <code>admin</code> · Password <code>any</code> · Domain <code>Default</code> — the mock accepts any credentials. Click <i>Test Connection</i>, then import Instances, Security Groups, and Subnets.</p>
+  <h2>Test from a shell</h2>
+  <pre>TOKEN=$(curl -sik {{ keystone_url }}/auth/tokens -H 'Content-Type: application/json' \
+  -d '{"auth":{"identity":{"methods":["password"],"password":{"user":{"name":"admin","domain":{"id":"default"},"password":"x"}}}}}' \
+  | awk 'tolower($0) ~ /x-subject-token/ {print $2}' | tr -d '\r')
+curl -s {{ keystone_url[:-3] }}/nova/v2.1/servers/detail -H "X-Auth-Token: $TOKEN"</pre>
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0;">Inventory Check Point will import</h2>
+  <h3>Instances ({{ instances|length }})</h3>
+  {% for i in instances %}<div class="itemrow"><span class="pill">VM</span> <b>{{ i.name }}</b> <code>{{ i.ip }}</code> {% for t in i.tags %}<span class="pill ok">{{ t }}</span>{% endfor %}</div>{% else %}<p class="muted">none</p>{% endfor %}
+  <div class="row" style="align-items:flex-start; gap:28px; margin-top:6px;">
+    <div class="grow"><h3>Subnets ({{ subnets|length }})</h3>{% for s in subnets %}<span class="pill" style="margin:2px;">{{ s.name }} · {{ s.cidr }}</span>{% else %}<span class="muted">none</span>{% endfor %}</div>
+    <div class="grow"><h3>Security groups ({{ secgroups|length }})</h3>{% for g in secgroups %}<span class="pill" style="margin:2px;">{{ g.name }}</span>{% else %}<span class="muted">none</span>{% endfor %}</div>
+  </div>
+  <details style="margin-top:12px;"><summary>What the OpenStack API returns (Nova + Neutron JSON)</summary><pre style="max-height:340px;">{{ preview_json }}</pre></details>
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0;">Live calls</h2>
+  <p class="muted">Every Keystone / Nova / Neutron request from Check Point is captured in the <a href="/activity?kind=datacenter">Activity log</a> — with the full request &amp; response.</p>
+</div>
+{% endblock %}
