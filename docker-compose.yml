@@ -1,0 +1,35 @@
+# Hosted deployment: Caddy (auto-TLS) in front of the app.
+#   1. cp .env.example .env  and fill in DCSIM_DOMAIN, DCSIM_BASE_URL, secrets
+#   2. docker compose up -d --build
+services:
+  app:
+    build: .
+    environment:
+      - DCSIM_BASE_URL=${DCSIM_BASE_URL:-http://localhost:8000}
+      - DCSIM_SESSION_SECRET=${DCSIM_SESSION_SECRET}
+      - DCSIM_ADMIN_USERNAME=${DCSIM_ADMIN_USERNAME:-admin}
+      - DCSIM_ADMIN_PASSWORD=${DCSIM_ADMIN_PASSWORD}
+      - DCSIM_DATABASE_URL=sqlite:////data/dcsim.db
+    volumes:
+      - dcsim-data:/data
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2
+    depends_on:
+      - app
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      - DCSIM_DOMAIN=${DCSIM_DOMAIN:-localhost}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    restart: unless-stopped
+
+volumes:
+  dcsim-data:
+  caddy-data:
+  caddy-config:
