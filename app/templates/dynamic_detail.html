@@ -1,5 +1,21 @@
 {% extends "base.html" %}
 {% block title %}{{ layer.name }}{% endblock %}
+
+{% macro render_trace(trace) %}
+  {% for s in trace %}
+  <div class="trace-step">
+    <div class="trace-head">
+      <span class="pill">{{ s.step }}</span>
+      <code>{{ s.method }} {{ s.url }}</code>
+      {% if s.status %}<span class="pill {{ 'ok' if s.status == 200 else 'bad' }}">{{ s.status }}</span>{% endif %}
+      {% if s.ms is not none %}<span class="muted">{{ s.ms }} ms</span>{% endif %}
+    </div>
+    <div class="trace-lbl">Request</div><pre>{{ s.request | tojson(indent=2) }}</pre>
+    <div class="trace-lbl">Response</div><pre>{{ s.response | tojson(indent=2) }}</pre>
+  </div>
+  {% endfor %}
+{% endmacro %}
+
 {% block content %}
 <div class="row">
   <div class="grow">
@@ -59,6 +75,7 @@
       {% for o in latest.objects_created %}<span class="pill" style="margin:2px;">{{ o }}</span>{% else %}<span class="muted">none</span>{% endfor %}</div>
   </div>
   {% if latest.warnings %}<h3>Warnings ({{ latest.warnings|length }})</h3>{% for w in latest.warnings %}<div class="muted" style="font-size:12.5px; margin:3px 0;">⚠ {{ w.message }}</div>{% endfor %}{% endif %}
+  {% if latest.trace %}<details style="margin-top:10px;"><summary>HTTP request / response trace ({{ latest.trace|length }} calls)</summary>{{ render_trace(latest.trace) }}</details>{% endif %}
 </div>
 {% endif %}
 
@@ -73,29 +90,25 @@
 
 {% if tasks %}
 <div class="card">
-  <h2 style="margin-top:0;">Apply history</h2>
-  <div class="tablewrap"><table>
-    <thead><tr><th class="nowrap">When (UTC)</th><th>Target</th><th>Mode</th><th>Status</th><th>Rules</th><th>Objects</th><th>Warnings</th></tr></thead>
-    <tbody>
-    {% for v in tasks %}
-      <tr>
-        <td class="nowrap">{{ v.t.at.strftime('%Y-%m-%d %H:%M:%S') }}</td>
-        <td><span class="pill">{{ v.t.target }}</span></td>
-        <td class="nowrap">{{ 'dry-run' if v.t.dry_run else 'apply' }}</td>
-        <td><span class="pill {{ 'ok' if v.t.status == 'succeeded' else 'bad' }}">{{ v.t.status }}</span></td>
-        <td>{{ v.rules_created }}</td>
-        <td>{{ v.objects_created|length }}</td>
-        <td>{{ v.warnings|length }}</td>
-      </tr>
-    {% endfor %}
-    </tbody>
-  </table></div>
+  <h2 style="margin-top:0;">Apply history <span class="muted" style="font-weight:400;">— expand a row for the full request / response</span></h2>
+  {% for v in tasks %}
+  <details class="itemrow" style="display:block;">
+    <summary style="color:var(--text);">
+      <span class="muted" style="font-family:ui-monospace,monospace; font-size:12px;">{{ v.t.at.strftime('%Y-%m-%d %H:%M:%S') }}</span>
+      <span class="pill">{{ v.t.target }}</span>
+      <span class="pill faint">{{ 'dry-run' if v.t.dry_run else 'apply' }}</span>
+      <span class="pill {{ 'ok' if v.t.status == 'succeeded' else 'bad' }}">{{ v.t.status }}</span>
+      <span class="muted">{{ v.rules_created }} rule(s) · {{ v.objects_created|length }} object(s){% if v.warnings %} · {{ v.warnings|length }} warning(s){% endif %}</span>
+    </summary>
+    {% if v.trace %}{{ render_trace(v.trace) }}{% else %}<p class="muted">No trace captured.</p>{% endif %}
+  </details>
+  {% endfor %}
 </div>
 {% endif %}
 
 <!-- Progress modal -->
 <div class="modal-overlay" id="progress-modal" hidden>
-  <div class="modal">
+  <div class="modal wide">
     <h3 id="progress-title">Applying to gateway…</h3>
     <p class="muted" id="progress-sub">Running the Gaia API session.</p>
     <ul class="stepper" id="stepper"></ul>
@@ -110,6 +123,7 @@
   (function () {
     var $ = function (id) { return document.getElementById(id); };
     var LAYER_ID = {{ layer.id }};
+    function esc(s) { return String(s).replace(/[&<>]/g, function (c) { return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c]; }); }
     function formData() { return new URLSearchParams(new FormData($('apply-form'))); }
 
     $('apply-target').addEventListener('change', function () {
@@ -123,47 +137,57 @@
         .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
         .then(function (res) {
           $('fetch-cert').textContent = 'Fetch & trust certificate'; $('fetch-cert').disabled = false;
-          if (!res.ok) { var e = $('cert-fp'); e.style.display = ''; e.textContent = res.j.error || 'Failed'; return; }
-          $('gw_cert').value = res.j.pem;
           var fp = $('cert-fp'); fp.style.display = '';
+          if (!res.ok) { fp.textContent = res.j.error || 'Failed'; return; }
+          $('gw_cert').value = res.j.pem;
           fp.innerHTML = '<b>Pinned</b> · SHA-256 ' + res.j.fingerprint;
         })
         .catch(function () { $('fetch-cert').textContent = 'Fetch & trust certificate'; $('fetch-cert').disabled = false; });
     });
 
-    var STAGE_FALLBACK = [['connecting','Connecting'],['logging_in','Logging in'],['pushing','Pushing policy'],['polling','Waiting for task'],['logging_out','Logging out'],['done','Done']];
     function renderStepper(stages, doneStages, current, status) {
       var ul = $('stepper'); ul.innerHTML = '';
       stages.forEach(function (s) {
-        var key = s.key, label = s.label;
-        var li = document.createElement('li'); li.className = 'step';
-        var dot = '';
-        if (doneStages.indexOf(key) !== -1 || (key === 'done' && status !== 'running')) { li.className += ' done'; dot = '✓'; }
-        else if (key === current && status === 'running') { li.className += ' active'; }
-        else if (key === current && status === 'failed') { li.className += ' fail'; dot = '!'; }
+        var li = document.createElement('li'); li.className = 'step'; var dot = '';
+        if (doneStages.indexOf(s.key) !== -1 || (s.key === 'done' && status !== 'running')) { li.className += ' done'; dot = '✓'; }
+        else if (s.key === current && status === 'running') { li.className += ' active'; }
+        else if (s.key === current && status === 'failed') { li.className += ' fail'; dot = '!'; }
         var dotHtml = (li.className.indexOf('active') !== -1) ? '<span class="spin"></span>' : '<span class="dot">' + dot + '</span>';
-        li.innerHTML = dotHtml + '<span>' + label + '</span>';
+        li.innerHTML = dotHtml + '<span>' + s.label + '</span>';
         ul.appendChild(li);
       });
     }
 
+    function renderTrace(trace) {
+      if (!trace || !trace.length) return '';
+      var html = '<details style="margin-top:6px;"><summary>HTTP request / response trace (' + trace.length + ' calls)</summary>';
+      trace.forEach(function (s) {
+        var statusPill = s.status ? ' <span class="pill ' + (s.status === 200 ? 'ok' : 'bad') + '">' + s.status + '</span>' : '';
+        var ms = (s.ms != null) ? ' <span class="muted">' + s.ms + ' ms</span>' : '';
+        html += '<div class="trace-step"><div class="trace-head"><span class="pill">' + esc(s.step) + '</span> <code>' + esc(s.method + ' ' + s.url) + '</code>' + statusPill + ms + '</div>';
+        html += '<div class="trace-lbl">Request</div><pre>' + esc(JSON.stringify(s.request, null, 2)) + '</pre>';
+        html += '<div class="trace-lbl">Response</div><pre>' + esc(JSON.stringify(s.response, null, 2)) + '</pre></div>';
+      });
+      return html + '</details>';
+    }
+
     function poll(pid) {
       fetch('/layers/' + LAYER_ID + '/apply-status/' + pid).then(function (r) { return r.json(); }).then(function (p) {
-        var stages = p.stages || STAGE_FALLBACK.map(function (x) { return { key: x[0], label: x[1] }; });
-        renderStepper(stages, p.done_stages || [], p.stage, p.status);
+        renderStepper(p.stages || [], p.done_stages || [], p.stage, p.status);
         if (p.status === 'running') { setTimeout(function () { poll(pid); }, 500); return; }
-        // finished
         var ok = p.status === 'succeeded';
         $('progress-title').textContent = ok ? 'Applied' : 'Apply failed';
         $('progress-sub').style.display = 'none';
         var box = $('progress-result'); box.style.display = '';
-        if (p.error) {
-          box.innerHTML = '<div class="err" style="margin-top:10px;">' + p.error + '</div>';
-        } else if (p.summary) {
+        var html = '';
+        if (p.error) { html += '<div class="err" style="margin-top:10px;">' + esc(p.error) + '</div>'; }
+        else if (p.summary) {
           var s = p.summary;
-          box.innerHTML = '<p class="muted" style="margin-top:10px;">Created ' + s.rules + ' rule(s), ' + s.objects + ' object(s)' +
+          html += '<p class="muted" style="margin-top:10px;">Created ' + s.rules + ' rule(s), ' + s.objects + ' object(s)' +
             (s.warnings ? ' · ' + s.warnings + ' warning(s)' : '') + (s.errors ? ' · ' + s.errors + ' error(s)' : '') + '.</p>';
         }
+        html += renderTrace(p.trace);
+        box.innerHTML = html;
         $('progress-close').style.display = '';
       }).catch(function () { setTimeout(function () { poll(pid); }, 800); });
     }
@@ -174,7 +198,6 @@
         .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
         .then(function (res) {
           if (!res.ok) { var e = $('apply-err'); e.style.display = ''; e.textContent = res.j.error || 'Failed to start'; return; }
-          // open modal
           $('progress-title').textContent = $('apply-target').value === 'gateway' ? 'Applying to gateway…' : 'Applying to mock gateway…';
           $('progress-sub').style.display = ''; $('progress-result').style.display = 'none'; $('progress-result').innerHTML = '';
           $('progress-close').style.display = 'none';

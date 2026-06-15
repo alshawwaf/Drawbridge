@@ -158,6 +158,7 @@ def _task_view(task) -> dict:
         "objects_created": objects_created,
         "warnings": result.get("validation_warnings", []) or [],
         "errors": result.get("validation_errors", []) or [],
+        "trace": result.get("trace", []) or [],
     }
 
 
@@ -220,6 +221,7 @@ def apply_status(layer_id: int, pid: str, request: Request, db: Session = Depend
     return JSONResponse({
         "stage": p["stage"], "status": p["status"], "done_stages": p["done_stages"],
         "summary": p.get("summary"), "error": p.get("error"), "task_id": p.get("task_id"),
+        "trace": p.get("trace", []),
         "stages": [{"key": k, "label": label} for k, label in STAGES],
     })
 
