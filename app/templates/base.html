@@ -140,6 +140,16 @@
     .step.fail .dot { background:var(--danger); border-color:var(--danger); color:#fff; }
     .spin { width:14px; height:14px; border:2px solid var(--line); border-top-color:var(--accent); border-radius:50%; animation:spin .7s linear infinite; display:inline-block; }
     @keyframes spin { to { transform:rotate(360deg); } }
+    /* HTTP trace viewer */
+    details > summary { cursor:pointer; font-weight:600; font-size:13px; color:var(--accent); padding:8px 0; list-style:none; }
+    details > summary::-webkit-details-marker { display:none; }
+    details > summary::before { content:"▸ "; }
+    details[open] > summary::before { content:"▾ "; }
+    .trace-step { border-top:1px solid var(--line-soft); padding:11px 0; }
+    .trace-step:first-child { border-top:none; }
+    .trace-head { display:flex; gap:8px; align-items:center; font-size:12.5px; margin-bottom:6px; flex-wrap:wrap; }
+    .trace-lbl { color:var(--faint); font-size:11px; text-transform:uppercase; letter-spacing:.4px; margin:8px 0 3px; }
+    .trace-step pre { margin:0; max-height:230px; font-size:11.5px; }
   </style>
 </head>
 <body>
