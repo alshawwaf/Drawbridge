@@ -50,4 +50,23 @@
     <a class="btn secondary" href="/">Cancel</a>
   </div>
 </form>
+
+<script id="netfeed-examples" type="application/json">{{ examples | tojson }}</script>
+<script>
+  // When the data type changes, swap the sample entries to a matching set — but only while
+  // the textarea still holds one of the known samples (don't clobber the user's own input).
+  (function () {
+    var examples = JSON.parse(document.getElementById('netfeed-examples').textContent);
+    var dt = document.querySelector('select[name="data_type"]');
+    var ta = document.querySelector('textarea[name="entries_text"]');
+    if (!dt || !ta) return;
+    var samples = Object.keys(examples).map(function (k) { return examples[k]; });
+    dt.addEventListener('change', function () {
+      var cur = ta.value.trim();
+      if (cur === '' || samples.indexOf(cur) !== -1) {
+        ta.value = examples[dt.value] || '';
+      }
+    });
+  })();
+</script>
 {% endblock %}

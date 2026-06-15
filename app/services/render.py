@@ -4,7 +4,7 @@ import uuid
 
 from ..models import Feed, FeedType
 from ..schemas.generic_dc import GDCObjectIn, GENERIC_DC_VERSION
-from ..schemas.network_feed import NetworkFeedConfig
+from ..schemas.network_feed import NetworkFeedConfig, validate_entry
 
 
 def normalize_generic_dc_content(objects: list[dict], description: str = "") -> dict:
@@ -44,9 +44,14 @@ def render_generic_dc(feed: Feed) -> tuple[str, str]:
 
 
 def normalize_network_feed_content(entries: list[str], data_type: str, fmt: str) -> dict:
-    """Validate Network Feed entries; returns the dict persisted in Feed.content."""
+    """Validate Network Feed config + entries; returns the dict persisted in Feed.content.
+
+    Entry validation lives here (not in the pydantic model) so a bad entry raises a clean,
+    readable ValueError instead of a verbose pydantic ValidationError dump.
+    """
     cfg = NetworkFeedConfig(format=fmt, data_type=data_type, entries=entries)
-    return {"format": cfg.format, "data_type": cfg.data_type, "entries": cfg.entries}
+    validated = [validate_entry(e, cfg.data_type) for e in cfg.entries]
+    return {"format": cfg.format, "data_type": cfg.data_type, "entries": validated}
 
 
 def render_network_feed(feed: Feed) -> tuple[str, str]:
