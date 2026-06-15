@@ -58,6 +58,12 @@
     .menu-items a { display:block; padding:11px 15px; color:#1c2330 !important; text-decoration:none; font-size:14px; border-bottom:1px solid var(--line); }
     .menu-items a:last-child { border-bottom:none; }
     .menu-items a:hover { background:#eef1f7; color:#1c2330 !important; }
+    /* URL cell with copy button */
+    .urlcell { display:flex; align-items:center; gap:8px; max-width:420px; }
+    .urltext { font-family: ui-monospace, monospace; font-size:12.5px; color:#42506b; background:#eef1f7; padding:7px 10px; border-radius:6px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; min-width:0; }
+    .copybtn { background:#fff; color:var(--navy); border:1px solid var(--line); border-radius:6px; padding:7px 12px; font-size:12.5px; cursor:pointer; white-space:nowrap; }
+    .copybtn:hover { border-color:var(--accent); color:var(--accent); }
+    .copybtn.copied { background:#e3f4ea; color:var(--ok); border-color:#b6e0c4; }
   </style>
 </head>
 <body>
@@ -134,6 +140,31 @@
           return;
         }
         document.querySelectorAll('.menu.open').forEach(function (m) { m.classList.remove('open'); });
+      });
+    })();
+    // Copy-to-clipboard buttons (data-copy="text").
+    (function () {
+      document.addEventListener('click', function (e) {
+        var btn = e.target.closest('[data-copy]');
+        if (!btn) return;
+        e.preventDefault();
+        var text = btn.getAttribute('data-copy');
+        function done() {
+          var label = btn.getAttribute('data-label') || btn.textContent;
+          btn.setAttribute('data-label', label);
+          btn.textContent = 'Copied!';
+          btn.classList.add('copied');
+          setTimeout(function () { btn.textContent = label; btn.classList.remove('copied'); }, 1500);
+        }
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text).then(done, done);
+        } else {
+          var ta = document.createElement('textarea');
+          ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+          document.body.appendChild(ta); ta.select();
+          try { document.execCommand('copy'); } catch (err) {}
+          document.body.removeChild(ta); done();
+        }
       });
     })();
   </script>

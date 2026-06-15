@@ -29,7 +29,12 @@
       <td>{{ r.count }}</td>
       <td>{{ r.feed.interval_seconds }}s</td>
       <td>{% if r.feed.auth_header_key %}<span class="pill">{{ 'basic' if r.feed.type.value == 'network_feed' else 'header' }}</span>{% else %}<span class="pill">open</span>{% endif %}</td>
-      <td><span class="copy">{{ r.url }}</span></td>
+      <td>
+        <div class="urlcell">
+          <span class="urltext" title="{{ r.url }}">{{ r.url }}</span>
+          <button class="copybtn" type="button" data-copy="{{ r.url }}">Copy</button>
+        </div>
+      </td>
     </tr>
   {% endfor %}
   </tbody>
