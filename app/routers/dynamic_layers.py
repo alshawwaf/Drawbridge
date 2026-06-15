@@ -3,7 +3,7 @@ apply to the built-in mock or a real R82 gateway -> review the task result & his
 import json
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -20,8 +20,8 @@ from ..schemas.dynamic_layer import (
     validate_layer_content,
 )
 from ..security import get_user_or_none, new_feed_token
-from ..services.gaia_client import apply_to_gateway
-from ..services.layer_apply import apply_to_mock
+from ..services.apply_runner import STAGES, get_progress, start_apply
+from ..services.gaia_client import fetch_gateway_cert
 from .ui import _flash, _pop_flash, templates
 
 router = APIRouter(include_in_schema=False)
@@ -177,8 +177,8 @@ def layer_detail(layer_id: int, request: Request, db: Session = Depends(get_db))
     })
 
 
-@router.post("/layers/{layer_id}/apply")
-def layer_apply(
+@router.post("/layers/{layer_id}/apply-start")
+def apply_start(
     layer_id: int,
     request: Request,
     target: str = Form("mock"),
@@ -192,25 +192,55 @@ def layer_apply(
 ):
     user = _user(request, db)
     if user is None:
-        return RedirectResponse("/login", status_code=303)
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
     layer = _owned(db, layer_id, user)
     dry = bool(dry_run)
     if target == "gateway":
         if not (gw_host and gw_user and gw_pass):
-            _flash(request, "Gateway address, username, and password are required.", "error")
-            return RedirectResponse(f"/layers/{layer_id}", status_code=303)
+            return JSONResponse({"error": "Gateway address, username, and password are required."}, status_code=400)
         try:
             port = int(gw_port or 443)
         except ValueError:
             port = 443
-        task = apply_to_gateway(db, layer, host=gw_host, port=port, user=gw_user,
-                                password=gw_pass, dry_run=dry, cert_pem=gw_cert or None)
+        pid = start_apply(layer_id=layer.id, target="gateway", dry_run=dry, gateway_host=gw_host,
+                          gateway_port=port, user=gw_user, password=gw_pass, cert_pem=gw_cert or None)
     else:
-        task = apply_to_mock(db, layer, dry_run=dry)
-    verb = "Dry-run" if dry else "Apply"
-    _flash(request, f"{verb} to {task.target}: {task.status}.",
-           "success" if task.status == "succeeded" else "error")
-    return RedirectResponse(f"/layers/{layer_id}", status_code=303)
+        pid = start_apply(layer_id=layer.id, target="mock", dry_run=dry)
+    return JSONResponse({"progress_id": pid})
+
+
+@router.get("/layers/{layer_id}/apply-status/{pid}")
+def apply_status(layer_id: int, pid: str, request: Request, db: Session = Depends(get_db)):
+    user = _user(request, db)
+    if user is None:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    p = get_progress(pid)
+    if p is None:
+        return JSONResponse({"error": "unknown progress id"}, status_code=404)
+    return JSONResponse({
+        "stage": p["stage"], "status": p["status"], "done_stages": p["done_stages"],
+        "summary": p.get("summary"), "error": p.get("error"), "task_id": p.get("task_id"),
+        "stages": [{"key": k, "label": label} for k, label in STAGES],
+    })
+
+
+@router.post("/layers/{layer_id}/fetch-cert")
+def fetch_cert(layer_id: int, request: Request, gw_host: str = Form(""),
+               gw_port: str = Form("443"), db: Session = Depends(get_db)):
+    user = _user(request, db)
+    if user is None:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    _owned(db, layer_id, user)
+    if not gw_host:
+        return JSONResponse({"error": "Enter the gateway address first."}, status_code=400)
+    try:
+        port = int(gw_port or 443)
+    except ValueError:
+        port = 443
+    try:
+        return JSONResponse(fetch_gateway_cert(gw_host, port))
+    except Exception as exc:
+        return JSONResponse({"error": f"Could not fetch certificate from {gw_host}:{port} — {exc}"}, status_code=400)
 
 
 @router.post("/layers/{layer_id}/delete")
