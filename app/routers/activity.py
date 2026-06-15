@@ -12,7 +12,7 @@ from .ui import _flash, _pop_flash, templates
 router = APIRouter(include_in_schema=False)
 
 KIND_LABELS = {"feed_poll": "Feed poll", "gaia_mock": "Mock Gaia API", "layer_apply": "Layer apply",
-               "api": "API", "ui": "Page view"}
+               "datacenter": "Data Center", "api": "API", "ui": "Page view"}
 
 
 @router.get("/activity", response_class=HTMLResponse)
