@@ -18,6 +18,12 @@
     </div>
     <label>Description (optional)</label>
     <input name="description" value="{{ form.description }}">
+    <label>Gateway (optional)</label>
+    <select name="gateway_id">
+      <option value="">— choose at apply time —</option>
+      {% for g in gateways %}<option value="{{ g.id }}" {{ 'selected' if selected_gateway_id and (selected_gateway_id|string) == (g.id|string) else '' }}>{{ g.name }} ({{ g.host }}:{{ g.port }})</option>{% endfor %}
+    </select>
+    {% if not gateways %}<p class="muted" style="margin-top:6px;">No saved gateways yet — <a href="/gateways/new">add one</a> to associate this layer with a gateway.</p>{% endif %}
     <div class="row">
       <div class="grow"><label>Comments (optional)</label><input name="comments" value="{{ form.comments }}"></div>
       <div class="grow"><label>Tags (comma-separated)</label><input name="tags" value="{{ form.tags }}" placeholder="ticket-14354, urgent"></div>

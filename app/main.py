@@ -11,7 +11,7 @@ from .config import get_settings
 from .db import SessionLocal, init_db
 from .models import User
 from .middleware import ActivityLogMiddleware
-from .routers import activity, dynamic_layers, feeds, gaia_mock, serve, ui
+from .routers import activity, dynamic_layers, feeds, gateways, gaia_mock, serve, ui
 from .security import hash_password
 
 
@@ -58,6 +58,7 @@ def create_app() -> FastAPI:
     app.include_router(serve.router)
     app.include_router(gaia_mock.router)
     app.include_router(dynamic_layers.router)
+    app.include_router(gateways.router)
     app.include_router(activity.router)
 
     @app.get("/healthz", include_in_schema=False)

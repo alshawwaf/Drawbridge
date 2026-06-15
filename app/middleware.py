@@ -1,28 +1,68 @@
-"""Pure-ASGI middleware that logs inbound integration traffic (gateway feed polls and mock
-Gaia API calls) to the ActivityLog — capturing request and response bodies without consuming
-them from the route. Secrets are redacted before storage.
+"""Pure-ASGI middleware that logs ALL HTTP traffic to the ActivityLog with request/response
+bodies, redacting secrets. Excludes only the log viewer itself and high-frequency polling
+(so the log doesn't flood with its own refreshes). JSON and form-encoded bodies are parsed and
+redacted; HTML response bodies are summarized (not stored) to keep entries readable.
 """
 import json
+from urllib.parse import parse_qs
 import time
 
 from .services.activity import redact_body, redact_headers, write_activity
 
-# Only log the integration surface — not UI navigation / status polling / health.
-LOG_PREFIXES = ("/gdc/", "/netfeed/", "/ioc/", "/gaia_api")
-_MAX_BODY = 6000
+_MAX_BODY = 8000
+
+
+def _excluded(path: str) -> bool:
+    if path.startswith(("/activity", "/healthz", "/favicon", "/static")):
+        return True
+    if path.endswith("/polls-fragment") or "/apply-status/" in path:
+        return True
+    return False
 
 
 def _kind(path: str) -> str:
-    return "gaia_mock" if path.startswith("/gaia_api") else "feed_poll"
+    if path.startswith("/gaia_api"):
+        return "gaia_mock"
+    if path.startswith(("/gdc/", "/netfeed/", "/ioc/")):
+        return "feed_poll"
+    if path.startswith("/api"):
+        return "api"
+    return "ui"
 
 
-def _parse(raw: bytes):
+def _parse_request(raw: bytes, content_type: str):
     if not raw:
         return None
+    text = raw.decode("utf-8", "replace")
+    if "json" in content_type:
+        try:
+            return redact_body(json.loads(text))
+        except Exception:
+            pass
+    if "x-www-form-urlencoded" in content_type or ("=" in text and not text.lstrip().startswith("{")):
+        try:
+            flat = {k: (v[0] if len(v) == 1 else v) for k, v in parse_qs(text).items()}
+            return redact_body(flat)
+        except Exception:
+            pass
     try:
-        return redact_body(json.loads(raw))
+        return redact_body(json.loads(text))
     except Exception:
-        return raw.decode("utf-8", "replace")[:_MAX_BODY]
+        return text[:_MAX_BODY]
+
+
+def _parse_response(raw: bytes, content_type: str):
+    if not raw:
+        return None
+    if "text/html" in content_type:
+        return f"(HTML page, {len(raw)} bytes)"
+    text = raw.decode("utf-8", "replace")
+    if "json" in content_type:
+        try:
+            return redact_body(json.loads(text))
+        except Exception:
+            pass
+    return text[:_MAX_BODY]
 
 
 class ActivityLogMiddleware:
@@ -31,7 +71,7 @@ class ActivityLogMiddleware:
 
     async def __call__(self, scope, receive, send):
         path = scope.get("path", "")
-        if scope.get("type") != "http" or not any(path.startswith(p) for p in LOG_PREFIXES):
+        if scope.get("type") != "http" or _excluded(path):
             return await self.app(scope, receive, send)
 
         method = scope.get("method", "")
@@ -69,11 +109,14 @@ class ActivityLogMiddleware:
         if not src and scope.get("client"):
             src = scope["client"][0]
         resp_headers = {k.decode(): v.decode() for k, v in resp["headers"]}
-        query = scope.get("query_string", b"").decode()
+        req_ct = req_headers.get("content-type", "")
+        resp_ct = resp_headers.get("content-type", "")
         detail = {
-            "request": {"headers": redact_headers(req_headers), "query": query, "body": _parse(req_body)},
-            "response": {"status": resp["status"], "content_type": resp_headers.get("content-type", ""),
-                         "body": _parse(bytes(resp["body"]))},
+            "request": {"headers": redact_headers(req_headers),
+                        "query": scope.get("query_string", b"").decode(),
+                        "body": _parse_request(req_body, req_ct)},
+            "response": {"status": resp["status"], "content_type": resp_ct,
+                         "body": _parse_response(bytes(resp["body"]), resp_ct)},
         }
         write_activity(kind=_kind(path), direction="inbound", method=method, path=path,
                        source_ip=src, status=resp["status"], duration_ms=ms,

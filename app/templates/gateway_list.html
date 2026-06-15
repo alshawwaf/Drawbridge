@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Gateways{% endblock %}
+{% block content %}
+<div class="row">
+  <div class="grow">
+    <h1>Gateways</h1>
+    <p class="muted">Saved gateway connection profiles. The password is never stored — you enter it each time you apply.</p>
+  </div>
+  <a class="btn" href="/gateways/new">+ New gateway</a>
+</div>
+
+{% if not rows %}
+<div class="card"><p class="muted">No gateways yet. Add one to reuse its address and credentials when applying Dynamic Layers.</p></div>
+{% else %}
+<div class="card" style="padding:6px 6px 2px;">
+<div class="tablewrap">
+<table>
+  <thead><tr><th>Name</th><th class="nowrap">Address</th><th class="nowrap">Username</th><th class="nowrap">TLS</th><th class="nowrap">Layers</th><th></th></tr></thead>
+  <tbody>
+  {% for r in rows %}
+    <tr>
+      <td><b>{{ r.gw.name }}</b></td>
+      <td class="nowrap"><code>{{ r.gw.host }}:{{ r.gw.port }}</code></td>
+      <td class="nowrap">{{ r.gw.username or '—' }}</td>
+      <td class="nowrap">{% if r.gw.cert_pem %}<span class="pill ok">pinned cert</span>{% else %}<span class="pill faint">system trust</span>{% endif %}</td>
+      <td class="nowrap">{{ r.layers }}</td>
+      <td class="nowrap" style="text-align:right;">
+        <a class="copybtn" href="/gateways/{{ r.gw.id }}/edit">Edit</a>
+        <form method="post" action="/gateways/{{ r.gw.id }}/delete" style="display:inline;">
+          <button class="copybtn" type="submit" style="color:var(--danger); border-color:var(--danger-line);" data-confirm="Delete gateway “{{ r.gw.name }}”?">Delete</button>
+        </form>
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+</div>
+{% endif %}
+{% endblock %}
