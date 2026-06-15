@@ -2,7 +2,7 @@
 {% block title %}New Network Feed{% endblock %}
 {% block content %}
 <h1>New Network Feed</h1>
-<p class="muted">Pre-filled with a sample list — edit or replace it, then Create. The portal serves it as a flat list (or JSON) for a Check Point Network Feed object.</p>
+<p class="muted">Pre-filled with a sample list — edit or replace it, then Create. The portal serves it as a flat list (or JSON) for a Network Feed object.</p>
 {% if error %}<div class="err" style="margin:12px 0;">{{ error }}</div>{% endif %}
 
 <form method="post" action="/feeds/new/network-feed" class="card">
@@ -47,7 +47,7 @@
 
   <div style="margin-top:20px;" class="row">
     <button type="submit">Create feed</button>
-    <a class="btn secondary" href="/feeds/new">Back</a>
+    <a class="btn secondary" href="/">Cancel</a>
   </div>
 </form>
 {% endblock %}
