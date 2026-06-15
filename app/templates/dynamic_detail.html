@@ -30,33 +30,32 @@
 <div class="card">
   <h2 style="margin-top:0;">Apply</h2>
   <form id="apply-form">
-    <div class="row endalign">
-      <div>
-        <label>Target</label>
-        <select name="target" id="apply-target">
-          <option value="mock">Built-in mock gateway</option>
-          <option value="gateway">Real gateway</option>
-        </select>
-      </div>
-      <div class="check" style="padding-bottom:9px;">
-        <input type="checkbox" name="dry_run" id="dry_run" value="1"><label for="dry_run">Dry-run (validate only)</label>
-      </div>
+    <div class="row">
+      <div class="check"><input type="checkbox" id="use-mock" name="use_mock" value="1"><label for="use-mock">Use built-in mock gateway</label></div>
+      <div class="check"><input type="checkbox" id="dry_run" name="dry_run" value="1"><label for="dry_run">Dry-run (validate only)</label></div>
     </div>
-    <div id="gw-fields" style="display:none;">
+    <fieldset id="gw-fields">
+      {% if gateways %}
+      <label>Saved gateway</label>
+      <select id="gw-select">
+        <option value="">— enter manually —</option>
+        {% for g in gateways %}<option value="{{ g.id }}">{{ g.name }} ({{ g.host }}:{{ g.port }})</option>{% endfor %}
+      </select>
+      {% endif %}
       <div class="row">
         <div class="grow"><label>Gateway address</label><input name="gw_host" id="gw_host" placeholder="10.1.1.1"></div>
         <div style="width:120px;"><label>Port</label><input name="gw_port" id="gw_port" value="443"></div>
       </div>
       <div class="row">
-        <div class="grow"><label>Username</label><input name="gw_user" placeholder="admin"></div>
-        <div class="grow"><label>Password</label><input name="gw_pass" type="password"></div>
+        <div class="grow"><label>Username</label><input name="gw_user" id="gw_user" placeholder="admin"></div>
+        <div class="grow"><label>Password</label><input name="gw_pass" id="gw_pass" type="password"></div>
       </div>
       <div class="row"><div class="grow"><label>Gateway certificate (PEM)</label></div>
         <button type="button" class="secondary" id="fetch-cert">Fetch &amp; trust certificate</button></div>
       <textarea name="gw_cert" id="gw_cert" style="min-height:84px;" placeholder="Paste the gateway's PEM, or use Fetch &amp; trust to pin it"></textarea>
       <div id="cert-fp" class="fp" style="display:none; margin-top:8px;"></div>
       <p class="muted">TLS verification is always on. For a self-signed gateway, fetch its certificate, review the fingerprint, and it gets pinned for this apply. The password is used only for this call and never stored.</p>
-    </div>
+    </fieldset>
     <div style="margin-top:14px;"><button type="button" id="apply-btn">Apply</button>
       <span class="err-inline" id="apply-err" style="display:none;"></span></div>
   </form>
@@ -106,10 +105,9 @@
 </div>
 {% endif %}
 
-<!-- Progress modal -->
 <div class="modal-overlay" id="progress-modal" hidden>
   <div class="modal wide">
-    <h3 id="progress-title">Applying to gateway…</h3>
+    <h3 id="progress-title">Applying…</h3>
     <p class="muted" id="progress-sub">Running the Gaia API session.</p>
     <ul class="stepper" id="stepper"></ul>
     <div id="progress-result" style="display:none;"></div>
@@ -119,16 +117,30 @@
   </div>
 </div>
 
+<script id="gw-data" type="application/json">{{ gateways | tojson }}</script>
 <script>
   (function () {
     var $ = function (id) { return document.getElementById(id); };
     var LAYER_ID = {{ layer.id }};
+    var GATEWAYS = JSON.parse($('gw-data').textContent);
+    var LAYER_GW = {{ layer_gateway_id | tojson }};
+    var gwById = {}; GATEWAYS.forEach(function (g) { gwById[g.id] = g; });
     function esc(s) { return String(s).replace(/[&<>]/g, function (c) { return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c]; }); }
     function formData() { return new URLSearchParams(new FormData($('apply-form'))); }
 
-    $('apply-target').addEventListener('change', function () {
-      $('gw-fields').style.display = this.value === 'gateway' ? '' : 'none';
-    });
+    function fillGateway(g) {
+      if (!g) return;
+      $('gw_host').value = g.host || ''; $('gw_port').value = g.port || 443;
+      $('gw_user').value = g.username || ''; $('gw_cert').value = g.cert_pem || '';
+      var fp = $('cert-fp');
+      if (g.cert_pem) { fp.style.display = ''; fp.innerHTML = '<b>Pinned</b> certificate from saved gateway.'; }
+      else { fp.style.display = 'none'; }
+    }
+    // Prefill from the layer's associated gateway.
+    if (LAYER_GW && gwById[LAYER_GW]) { var s = $('gw-select'); if (s) s.value = String(LAYER_GW); fillGateway(gwById[LAYER_GW]); }
+    var gwSel = $('gw-select');
+    if (gwSel) gwSel.addEventListener('change', function () { fillGateway(gwById[this.value]); });
+    $('use-mock').addEventListener('change', function () { $('gw-fields').disabled = this.checked; });
 
     $('fetch-cert').addEventListener('click', function () {
       var p = new URLSearchParams(); p.set('gw_host', $('gw_host').value); p.set('gw_port', $('gw_port').value);
@@ -139,8 +151,7 @@
           $('fetch-cert').textContent = 'Fetch & trust certificate'; $('fetch-cert').disabled = false;
           var fp = $('cert-fp'); fp.style.display = '';
           if (!res.ok) { fp.textContent = res.j.error || 'Failed'; return; }
-          $('gw_cert').value = res.j.pem;
-          fp.innerHTML = '<b>Pinned</b> · SHA-256 ' + res.j.fingerprint;
+          $('gw_cert').value = res.j.pem; fp.innerHTML = '<b>Pinned</b> · SHA-256 ' + res.j.fingerprint;
         })
         .catch(function () { $('fetch-cert').textContent = 'Fetch & trust certificate'; $('fetch-cert').disabled = false; });
     });
@@ -157,20 +168,18 @@
         ul.appendChild(li);
       });
     }
-
     function renderTrace(trace) {
       if (!trace || !trace.length) return '';
       var html = '<details style="margin-top:6px;"><summary>HTTP request / response trace (' + trace.length + ' calls)</summary>';
       trace.forEach(function (s) {
-        var statusPill = s.status ? ' <span class="pill ' + (s.status === 200 ? 'ok' : 'bad') + '">' + s.status + '</span>' : '';
+        var sp = s.status ? ' <span class="pill ' + (s.status === 200 ? 'ok' : 'bad') + '">' + s.status + '</span>' : '';
         var ms = (s.ms != null) ? ' <span class="muted">' + s.ms + ' ms</span>' : '';
-        html += '<div class="trace-step"><div class="trace-head"><span class="pill">' + esc(s.step) + '</span> <code>' + esc(s.method + ' ' + s.url) + '</code>' + statusPill + ms + '</div>';
+        html += '<div class="trace-step"><div class="trace-head"><span class="pill">' + esc(s.step) + '</span> <code>' + esc(s.method + ' ' + s.url) + '</code>' + sp + ms + '</div>';
         html += '<div class="trace-lbl">Request</div><pre>' + esc(JSON.stringify(s.request, null, 2)) + '</pre>';
         html += '<div class="trace-lbl">Response</div><pre>' + esc(JSON.stringify(s.response, null, 2)) + '</pre></div>';
       });
       return html + '</details>';
     }
-
     function poll(pid) {
       fetch('/layers/' + LAYER_ID + '/apply-status/' + pid).then(function (r) { return r.json(); }).then(function (p) {
         renderStepper(p.stages || [], p.done_stages || [], p.stage, p.status);
@@ -178,8 +187,7 @@
         var ok = p.status === 'succeeded';
         $('progress-title').textContent = ok ? 'Applied' : 'Apply failed';
         $('progress-sub').style.display = 'none';
-        var box = $('progress-result'); box.style.display = '';
-        var html = '';
+        var box = $('progress-result'); box.style.display = ''; var html = '';
         if (p.error) { html += '<div class="err" style="margin-top:10px;">' + esc(p.error) + '</div>'; }
         else if (p.summary) {
           var s = p.summary;
@@ -187,8 +195,7 @@
             (s.warnings ? ' · ' + s.warnings + ' warning(s)' : '') + (s.errors ? ' · ' + s.errors + ' error(s)' : '') + '.</p>';
         }
         html += renderTrace(p.trace);
-        box.innerHTML = html;
-        $('progress-close').style.display = '';
+        box.innerHTML = html; $('progress-close').style.display = '';
       }).catch(function () { setTimeout(function () { poll(pid); }, 800); });
     }
 
@@ -198,14 +205,12 @@
         .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
         .then(function (res) {
           if (!res.ok) { var e = $('apply-err'); e.style.display = ''; e.textContent = res.j.error || 'Failed to start'; return; }
-          $('progress-title').textContent = $('apply-target').value === 'gateway' ? 'Applying to gateway…' : 'Applying to mock gateway…';
+          $('progress-title').textContent = $('use-mock').checked ? 'Applying to mock gateway…' : 'Applying to gateway…';
           $('progress-sub').style.display = ''; $('progress-result').style.display = 'none'; $('progress-result').innerHTML = '';
-          $('progress-close').style.display = 'none';
-          $('progress-modal').hidden = false;
+          $('progress-close').style.display = 'none'; $('progress-modal').hidden = false;
           poll(res.j.progress_id);
         });
     });
-
     $('progress-close').addEventListener('click', function () { window.location.reload(); });
     $('progress-modal').addEventListener('click', function (e) {
       if (e.target === $('progress-modal') && $('progress-close').style.display !== 'none') window.location.reload();

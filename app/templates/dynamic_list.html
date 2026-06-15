@@ -12,19 +12,28 @@
 {% if not rows %}
 <div class="card"><p class="muted">No dynamic layers yet. Create one to author a rulebase and apply it to the built-in mock or a real R82 gateway.</p></div>
 {% else %}
+{% if gw_filters %}
+<div class="filterbar">
+  <button class="chip active" type="button" data-filter="all">All <span class="chipcount">{{ rows|length }}</span></button>
+  {% for f in gw_filters %}
+    <button class="chip" type="button" data-filter="{{ f.key }}">{{ f.name }} <span class="chipcount">{{ f.count }}</span></button>
+  {% endfor %}
+</div>
+{% endif %}
 <div class="card" style="padding:6px 6px 2px;">
 <div class="tablewrap">
-<table>
+<table id="layertable">
   <thead><tr>
-    <th>Name</th><th class="nowrap">Gateway layer</th><th class="nowrap">Objects</th><th class="nowrap">Rules</th><th>Last apply</th><th></th>
+    <th>Name</th><th class="nowrap">Gateway</th><th class="nowrap">Gateway layer</th><th class="nowrap">Objects</th><th class="nowrap">Rules</th><th>Last apply</th><th></th>
   </tr></thead>
   <tbody>
   {% for r in rows %}
-    <tr>
+    <tr data-gw="{{ r.gw_key }}">
       <td>
         <a class="feedname" href="/layers/{{ r.layer.id }}">{{ r.layer.name }}</a>
         {% if r.layer.description %}<div class="subsel">{{ r.layer.description }}</div>{% endif %}
       </td>
+      <td class="nowrap">{% if r.gateway %}<span class="pill">{{ r.gateway }}</span>{% else %}<span class="pill faint">—</span>{% endif %}</td>
       <td class="nowrap"><code>{{ r.layer.layer_name }}</code></td>
       <td class="nowrap">{{ r.objects }}</td>
       <td class="nowrap">{{ r.rules }}</td>
@@ -41,5 +50,22 @@
 </table>
 </div>
 </div>
+
+<script>
+  (function () {
+    var bar = document.querySelector('.filterbar');
+    if (!bar) return;
+    bar.addEventListener('click', function (e) {
+      var chip = e.target.closest('.chip');
+      if (!chip) return;
+      bar.querySelectorAll('.chip').forEach(function (c) { c.classList.remove('active'); });
+      chip.classList.add('active');
+      var f = chip.getAttribute('data-filter');
+      document.querySelectorAll('#layertable tbody tr').forEach(function (tr) {
+        tr.style.display = (f === 'all' || tr.getAttribute('data-gw') === f) ? '' : 'none';
+      });
+    });
+  })();
+</script>
 {% endif %}
 {% endblock %}
