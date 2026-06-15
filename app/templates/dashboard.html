@@ -6,15 +6,15 @@
     <h1>Your simulated feeds</h1>
     <p class="muted">Signed in as {{ user.username }}. Each URL below is what Check Point polls.</p>
   </div>
-  <a class="btn" href="/feeds/new">+ New Generic DC feed</a>
+  <a class="btn" href="/feeds/new">+ New feed</a>
 </div>
 
 {% if not rows %}
-<div class="card"><p class="muted">No feeds yet. Create your first Generic Data Center feed to get a pollable URL for SmartConsole.</p></div>
+<div class="card"><p class="muted">No feeds yet. Create your first feed to get a pollable URL for SmartConsole.</p></div>
 {% else %}
 <div class="card">
 <table>
-  <thead><tr><th>Name</th><th>Type</th><th>Objects</th><th>Interval</th><th>Auth</th><th>Feed URL</th></tr></thead>
+  <thead><tr><th>Name</th><th>Type</th><th>Items</th><th>Interval</th><th>Auth</th><th>Feed URL</th></tr></thead>
   <tbody>
   {% for r in rows %}
     <tr>
@@ -22,7 +22,7 @@
       <td><span class="pill">{{ r.feed.type.value }}</span></td>
       <td>{{ r.count }}</td>
       <td>{{ r.feed.interval_seconds }}s</td>
-      <td>{% if r.feed.auth_header_key %}<span class="pill">header</span>{% else %}<span class="pill">open</span>{% endif %}</td>
+      <td>{% if r.feed.auth_header_key %}<span class="pill">{{ 'basic' if r.feed.type.value == 'network_feed' else 'header' }}</span>{% else %}<span class="pill">open</span>{% endif %}</td>
       <td><span class="copy">{{ r.url }}</span></td>
     </tr>
   {% endfor %}

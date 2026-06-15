@@ -4,6 +4,7 @@ These are intentionally unauthenticated at the portal level (the gateway must re
 them), guarded only by an unguessable token plus the optional per-feed credential the
 SE configured. Every fetch is recorded as a FeedPoll to prove the sync is live.
 """
+import base64
 import hmac
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -59,4 +60,35 @@ def serve_generic_dc(token: str, request: Request, db: Session = Depends(get_db)
     body, media = render_feed(feed)
     _record_poll(db, feed, request, 200)
     # no-cache so each poll reflects the latest edit immediately
+    return Response(content=body, media_type=media, headers={"Cache-Control": "no-store"})
+
+
+def _basic_auth_ok(feed: Feed, request: Request) -> bool:
+    """Network Feed uses HTTP Basic auth (username in auth_header_key, password in value)."""
+    if not feed.auth_header_key:
+        return True
+    header = request.headers.get("authorization", "")
+    if not header.lower().startswith("basic "):
+        return False
+    try:
+        user, _, pw = base64.b64decode(header.split(" ", 1)[1]).decode().partition(":")
+    except Exception:
+        return False
+    return hmac.compare_digest(user, feed.auth_header_key or "") and hmac.compare_digest(
+        pw, feed.auth_header_value or ""
+    )
+
+
+@router.get("/netfeed/{token}")
+def serve_network_feed(token: str, request: Request, db: Session = Depends(get_db)) -> Response:
+    feed = _get_feed(db, token, FeedType.network_feed)
+    if not _basic_auth_ok(feed, request):
+        _record_poll(db, feed, request, 401)
+        return Response(
+            "Unauthorized",
+            status_code=401,
+            headers={"WWW-Authenticate": 'Basic realm="network-feed"'},
+        )
+    body, media = render_feed(feed)
+    _record_poll(db, feed, request, 200)
     return Response(content=body, media_type=media, headers={"Cache-Control": "no-store"})

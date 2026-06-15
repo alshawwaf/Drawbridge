@@ -12,14 +12,17 @@ from ..db import get_db
 from ..links import public_url
 from ..models import Feed, FeedType, User
 from ..security import get_user_or_none, new_feed_token, verify_password
-from ..services.render import normalize_generic_dc_content, render_feed
+from ..services.render import (
+    normalize_generic_dc_content,
+    normalize_network_feed_content,
+    render_feed,
+)
 
 router = APIRouter(include_in_schema=False)
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
-# Default example shown in the new-feed form — the canonical sk167210 sample
-# (one IPv4 object, one IPv6 object) so the form is one-click submittable.
+# --- Generic Data Center default (the canonical sk167210 sample) -----------------------
 DEFAULT_FEED_NAME = "Generic-DC-Example"
 DEFAULT_FEED_DESCRIPTION = "Generic Data Center file example"
 DEFAULT_OBJECTS_TEXT = (
@@ -27,6 +30,17 @@ DEFAULT_OBJECTS_TEXT = (
     "Object B name = 2001:0db8:85a3:0000:0000:8a2e:0370:7334, "
     "0064:ff9b:0000:0000:0000:0000:1234:5678/96, "
     "2001:0db8:85a3:0000:0000:8a2e:2020:0-2001:0db8:85a3:0000:0000:8a2e:2020:5 | Example for IPv6 addresses"
+)
+
+# --- Network Feed default (a small mixed blocklist) ------------------------------------
+DEFAULT_NETFEED_NAME = "Network-Feed-Example"
+DEFAULT_NETFEED_DESCRIPTION = "Demo blocklist"
+DEFAULT_NETFEED_ENTRIES = (
+    "198.51.100.0/24\n"
+    "203.0.113.10\n"
+    "203.0.113.20-203.0.113.40\n"
+    "*.malicious-example.com\n"
+    "phishing-example.net"
 )
 
 
@@ -40,9 +54,20 @@ def _default_form() -> dict:
     }
 
 
+def _default_network_form() -> dict:
+    return {
+        "name": DEFAULT_NETFEED_NAME,
+        "description": DEFAULT_NETFEED_DESCRIPTION,
+        "data_type": "ip_domain",
+        "feed_format": "flat",
+        "entries_text": DEFAULT_NETFEED_ENTRIES,
+        "interval_seconds": 3600,
+        "basic_user": "",
+    }
+
+
 def parse_objects_text(text: str) -> list[dict]:
-    """Parse the quick-entry textarea: one object per line,
-    'Name = range1, range2' with an optional '| description' suffix."""
+    """Generic DC quick-entry: one object per line, 'Name = range1, range2 | optional description'."""
     objects: list[dict] = []
     for raw in text.splitlines():
         line = raw.strip()
@@ -63,11 +88,26 @@ def parse_objects_text(text: str) -> list[dict]:
     return objects
 
 
-def _require_user(request: Request, db: Session) -> User:
-    user = get_user_or_none(request, db)
-    if user is None:
-        raise HTTPException(status_code=307, headers={"Location": "/login"})
-    return user
+def parse_entries_text(text: str) -> list[str]:
+    """Network Feed quick-entry: one entry per line; '#' lines and blanks are ignored."""
+    entries = [ln.strip() for ln in text.splitlines() if ln.strip() and not ln.strip().startswith("#")]
+    if not entries:
+        raise ValueError("Enter at least one entry.")
+    return entries
+
+
+def _item_count(feed: Feed) -> int:
+    if feed.type == FeedType.network_feed:
+        return len(feed.content.get("entries", []))
+    return len(feed.content.get("objects", []))
+
+
+def _flash(request: Request, text: str, kind: str = "success") -> None:
+    request.session["flash"] = {"text": text, "type": kind}
+
+
+def _pop_flash(request: Request) -> dict | None:
+    return request.session.pop("flash", None)
 
 
 def _owned(db: Session, feed_id: int, user: User) -> Feed:
@@ -77,6 +117,7 @@ def _owned(db: Session, feed_id: int, user: User) -> Feed:
     return feed
 
 
+# --- Auth ------------------------------------------------------------------------------
 @router.get("/login", response_class=HTMLResponse)
 def login_page(request: Request):
     return templates.TemplateResponse(request, "login.html", {"error": None})
@@ -104,6 +145,7 @@ def logout(request: Request):
     return RedirectResponse("/login", status_code=303)
 
 
+# --- Dashboard -------------------------------------------------------------------------
 @router.get("/", response_class=HTMLResponse)
 def dashboard(request: Request, db: Session = Depends(get_db)):
     user = get_user_or_none(request, db)
@@ -112,22 +154,31 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
     feeds = db.scalars(
         select(Feed).where(Feed.owner_id == user.id).order_by(Feed.created_at.desc())
     ).all()
-    rows = [{"feed": f, "url": public_url(f), "count": len(f.content.get("objects", []))} for f in feeds]
-    return templates.TemplateResponse(request, "dashboard.html", {"user": user, "rows": rows})
-
-
-@router.get("/feeds/new", response_class=HTMLResponse)
-def new_feed_page(request: Request, db: Session = Depends(get_db)):
-    user = get_user_or_none(request, db)
-    if user is None:
-        return RedirectResponse("/login", status_code=303)
+    rows = [{"feed": f, "url": public_url(f), "count": _item_count(f)} for f in feeds]
     return templates.TemplateResponse(
-        request, "feed_new.html", {"error": None, "form": _default_form()}
+        request, "dashboard.html", {"user": user, "rows": rows, "flash": _pop_flash(request)}
     )
 
 
-@router.post("/feeds/new")
-def create_feed_form(
+# --- New feed: chooser then per-type forms ---------------------------------------------
+@router.get("/feeds/new", response_class=HTMLResponse)
+def new_feed_chooser(request: Request, db: Session = Depends(get_db)):
+    if get_user_or_none(request, db) is None:
+        return RedirectResponse("/login", status_code=303)
+    return templates.TemplateResponse(request, "feed_choose.html", {})
+
+
+@router.get("/feeds/new/generic-dc", response_class=HTMLResponse)
+def new_generic_page(request: Request, db: Session = Depends(get_db)):
+    if get_user_or_none(request, db) is None:
+        return RedirectResponse("/login", status_code=303)
+    return templates.TemplateResponse(
+        request, "feed_new_generic.html", {"error": None, "form": _default_form()}
+    )
+
+
+@router.post("/feeds/new/generic-dc")
+def create_generic(
     request: Request,
     name: str = Form(...),
     description: str = Form(""),
@@ -141,12 +192,11 @@ def create_feed_form(
     if user is None:
         return RedirectResponse("/login", status_code=303)
     try:
-        objects = parse_objects_text(objects_text)
-        content = normalize_generic_dc_content(objects, description)
-    except Exception as exc:  # ValidationError or ValueError → re-render with the message
+        content = normalize_generic_dc_content(parse_objects_text(objects_text), description)
+    except Exception as exc:
         return templates.TemplateResponse(
             request,
-            "feed_new.html",
+            "feed_new_generic.html",
             {"error": str(exc), "form": {
                 "name": name, "description": description, "interval_seconds": interval_seconds,
                 "auth_header_key": auth_header_key, "objects_text": objects_text,
@@ -167,9 +217,67 @@ def create_feed_form(
     db.add(feed)
     db.commit()
     db.refresh(feed)
+    _flash(request, f"Generic Data Center feed “{name}” created.")
     return RedirectResponse(f"/feeds/{feed.id}", status_code=303)
 
 
+@router.get("/feeds/new/network-feed", response_class=HTMLResponse)
+def new_network_page(request: Request, db: Session = Depends(get_db)):
+    if get_user_or_none(request, db) is None:
+        return RedirectResponse("/login", status_code=303)
+    return templates.TemplateResponse(
+        request, "feed_new_network.html", {"error": None, "form": _default_network_form()}
+    )
+
+
+@router.post("/feeds/new/network-feed")
+def create_network(
+    request: Request,
+    name: str = Form(...),
+    description: str = Form(""),
+    data_type: str = Form("ip_domain"),
+    feed_format: str = Form("flat"),
+    entries_text: str = Form(""),
+    interval_seconds: int = Form(3600),
+    basic_user: str = Form(""),
+    basic_pass: str = Form(""),
+    db: Session = Depends(get_db),
+):
+    user = get_user_or_none(request, db)
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+    try:
+        content = normalize_network_feed_content(parse_entries_text(entries_text), data_type, feed_format)
+    except Exception as exc:
+        return templates.TemplateResponse(
+            request,
+            "feed_new_network.html",
+            {"error": str(exc), "form": {
+                "name": name, "description": description, "data_type": data_type,
+                "feed_format": feed_format, "entries_text": entries_text,
+                "interval_seconds": interval_seconds, "basic_user": basic_user,
+            }},
+            status_code=400,
+        )
+    feed = Feed(
+        token=new_feed_token(),
+        type=FeedType.network_feed,
+        name=name,
+        description=description,
+        content=content,
+        interval_seconds=interval_seconds,
+        auth_header_key=basic_user or None,
+        auth_header_value=basic_pass or None,
+        owner_id=user.id,
+    )
+    db.add(feed)
+    db.commit()
+    db.refresh(feed)
+    _flash(request, f"Network Feed “{name}” created.")
+    return RedirectResponse(f"/feeds/{feed.id}", status_code=303)
+
+
+# --- Feed detail / polls / delete ------------------------------------------------------
 @router.get("/feeds/{feed_id}", response_class=HTMLResponse)
 def feed_detail(feed_id: int, request: Request, db: Session = Depends(get_db)):
     user = get_user_or_none(request, db)
@@ -180,7 +288,7 @@ def feed_detail(feed_id: int, request: Request, db: Session = Depends(get_db)):
     return templates.TemplateResponse(
         request,
         "feed_detail.html",
-        {"feed": feed, "url": public_url(feed), "preview": body},
+        {"feed": feed, "url": public_url(feed), "preview": body, "flash": _pop_flash(request)},
     )
 
 
@@ -199,6 +307,8 @@ def delete_feed_form(feed_id: int, request: Request, db: Session = Depends(get_d
     if user is None:
         return RedirectResponse("/login", status_code=303)
     feed = _owned(db, feed_id, user)
+    name = feed.name
     db.delete(feed)
     db.commit()
+    _flash(request, f"Feed “{name}” deleted.")
     return RedirectResponse("/", status_code=303)
