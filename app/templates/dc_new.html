@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}New OpenStack datacenter{% endblock %}
+{% block content %}
+<h1>New OpenStack datacenter</h1>
+<p class="muted">Define the inventory the mock OpenStack API (Keystone + Nova + Neutron) will serve. Point a SmartConsole OpenStack Data Center object at the portal to import it.</p>
+{% if error %}<div class="err" style="margin:12px 0;">{{ error }}</div>{% endif %}
+
+<form method="post" action="/datacenters/new" class="card">
+  <label>Name</label>
+  <input name="name" value="{{ form.name }}" placeholder="OpenStack-lab" required>
+
+  <label>Description (optional)</label>
+  <input name="description" value="{{ form.description }}">
+
+  <label>Instances — one per line: <code>name = ip | tag1, tag2</code></label>
+  <textarea name="instances_text" placeholder="web-1 = 10.0.0.11 | web, prod">{{ form.instances_text }}</textarea>
+  <p class="muted">Served as Nova instances (addresses + Secure Tags). Tags after <code>|</code> become the instance's tags.</p>
+
+  <label>Subnets — one per line: <code>name = cidr</code></label>
+  <textarea name="subnets_text" style="min-height:80px;" placeholder="app-subnet = 10.0.0.0/24">{{ form.subnets_text }}</textarea>
+
+  <label>Security groups — one per line</label>
+  <textarea name="secgroups_text" style="min-height:80px;" placeholder="web-sg">{{ form.secgroups_text }}</textarea>
+
+  <div class="row" style="margin-top:18px;">
+    <button type="submit">Create datacenter</button>
+    <a class="btn secondary" href="/datacenters">Cancel</a>
+  </div>
+</form>
+{% endblock %}
