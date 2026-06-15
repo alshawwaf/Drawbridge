@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Activity log{% endblock %}
+{% block content %}
+<div class="row">
+  <div class="grow">
+    <h1>Activity log</h1>
+    <p class="muted">Every gateway feed poll, mock Gaia API call, and layer apply — with the actual request &amp; response. Live; secrets redacted.</p>
+  </div>
+  <form method="post" action="/activity/clear">
+    <button class="danger" type="submit" data-confirm="Clear the entire activity log?">Clear log</button>
+  </form>
+</div>
+
+<div class="filterbar">
+  <a class="chip {{ 'active' if kind == 'all' else '' }}" href="/activity?kind=all">All <span class="chipcount">{{ counts.get('all', 0) }}</span></a>
+  {% for k, label in kind_labels.items() %}
+    <a class="chip {{ 'active' if kind == k else '' }}" href="/activity?kind={{ k }}">{{ label }} <span class="chipcount">{{ counts.get(k, 0) }}</span></a>
+  {% endfor %}
+</div>
+
+<div class="card" style="padding:4px 18px;">
+  <div id="rows"><p class="muted">Loading…</p></div>
+</div>
+
+<script>
+  (function () {
+    var kind = {{ kind | tojson }};
+    var rows = document.getElementById('rows');
+    function load() {
+      // Don't clobber a row the user has expanded to read.
+      if (rows.querySelector('details[open]')) return;
+      fetch('/activity/rows?kind=' + encodeURIComponent(kind))
+        .then(function (r) { return r.text(); })
+        .then(function (html) { rows.innerHTML = html; })
+        .catch(function () {});
+    }
+    load();
+    setInterval(load, 4000);
+  })();
+</script>
+{% endblock %}

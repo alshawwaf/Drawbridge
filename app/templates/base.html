@@ -89,7 +89,7 @@
 
     /* Filter chips */
     .filterbar { display:flex; gap:8px; margin:18px 0 0; flex-wrap:wrap; }
-    .chip { background:var(--surface); color:var(--muted); border:1px solid var(--line); border-radius:var(--r-pill); padding:7px 14px; font-size:13px; font-weight:600; cursor:pointer; }
+    .chip { background:var(--surface); color:var(--muted); border:1px solid var(--line); border-radius:var(--r-pill); padding:7px 14px; font-size:13px; font-weight:600; cursor:pointer; text-decoration:none; display:inline-block; }
     .chip:hover { border-color:#cfd6e2; color:var(--text); background:var(--surface); }
     .chip.active, .chip.active:hover { background:var(--navy); color:#fff; border-color:var(--navy); }
     .chipcount { opacity:.65; margin-left:5px; }
@@ -159,6 +159,7 @@
     {% block nav %}<nav>
       <a href="/">Feeds</a>
       <a href="/layers">Dynamic Layers</a>
+      <a href="/activity">Activity</a>
       <div class="menu">
         <a href="#" class="menu-trigger">New ▾</a>
         <div class="menu-items">

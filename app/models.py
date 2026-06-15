@@ -132,3 +132,22 @@ class LayerTask(Base):
     user_agent: Mapped[str] = mapped_column(String(255), default="")
 
     layer: Mapped["DynamicLayer"] = relationship(back_populates="tasks")
+
+
+class ActivityLog(Base):
+    """App-wide log of integration traffic — feed polls, mock Gaia API calls, and layer
+    applies — each with the actual (redacted) request/response for troubleshooting + demos."""
+
+    __tablename__ = "activity_log"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    kind: Mapped[str] = mapped_column(String(32), index=True)  # feed_poll|gaia_mock|layer_apply
+    direction: Mapped[str] = mapped_column(String(12), default="inbound")  # inbound|outbound
+    method: Mapped[str] = mapped_column(String(10), default="")
+    path: Mapped[str] = mapped_column(String(400), default="")
+    source_ip: Mapped[str] = mapped_column(String(64), default="")
+    status: Mapped[int] = mapped_column(Integer, default=0)
+    duration_ms: Mapped[int] = mapped_column(Integer, default=0)
+    summary: Mapped[str] = mapped_column(String(300), default="")
+    detail: Mapped[dict] = mapped_column(JSON, default=dict)  # {request:{...}, response:{...}} or {trace}
