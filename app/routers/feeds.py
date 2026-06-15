@@ -8,7 +8,11 @@ from ..db import get_db
 from ..links import public_url
 from ..models import Feed, FeedType, User
 from ..security import current_user, new_feed_token
-from ..services.render import normalize_generic_dc_content, render_feed
+from ..services.render import (
+    normalize_generic_dc_content,
+    normalize_network_feed_content,
+    render_feed,
+)
 
 router = APIRouter(prefix="/api", tags=["feeds"])
 
@@ -20,7 +24,12 @@ class FeedCreate(BaseModel):
     interval_seconds: int = Field(default=10, ge=1)
     auth_header_key: str | None = None
     auth_header_value: str | None = None
+    # generic_dc
     objects: list[dict] = Field(default_factory=list)
+    # network_feed
+    entries: list[str] = Field(default_factory=list)
+    feed_format: str = "flat"
+    data_type: str = "ip_domain"
 
 
 class FeedUpdate(BaseModel):
@@ -30,15 +39,32 @@ class FeedUpdate(BaseModel):
     auth_header_key: str | None = None
     auth_header_value: str | None = None
     objects: list[dict] | None = None
+    entries: list[str] | None = None
 
 
-def _build_content(ftype: FeedType, objects: list[dict], description: str) -> dict:
-    if ftype != FeedType.generic_dc:
-        raise HTTPException(status_code=400, detail=f"feed type '{ftype.value}' not yet supported (M2/M3)")
+def _build_content(
+    ftype: FeedType,
+    *,
+    objects: list[dict] | None = None,
+    entries: list[str] | None = None,
+    feed_format: str = "flat",
+    data_type: str = "ip_domain",
+    description: str = "",
+) -> dict:
     try:
-        return normalize_generic_dc_content(objects, description)
+        if ftype == FeedType.generic_dc:
+            return normalize_generic_dc_content(objects or [], description)
+        if ftype == FeedType.network_feed:
+            return normalize_network_feed_content(entries or [], data_type, feed_format)
     except (ValidationError, ValueError) as exc:
-        raise HTTPException(status_code=422, detail=f"Invalid Generic DC objects: {exc}")
+        raise HTTPException(status_code=422, detail=f"Invalid {ftype.value} content: {exc}")
+    raise HTTPException(status_code=400, detail=f"feed type '{ftype.value}' not yet supported (M2)")
+
+
+def _item_count(feed: Feed) -> int:
+    if feed.type == FeedType.network_feed:
+        return len(feed.content.get("entries", []))
+    return len(feed.content.get("objects", []))
 
 
 def _owned(db: Session, feed_id: int, user: User) -> Feed:
@@ -58,7 +84,7 @@ def feed_to_dict(feed: Feed) -> dict:
         "url": public_url(feed),
         "interval_seconds": feed.interval_seconds,
         "auth_required": bool(feed.auth_header_key),
-        "object_count": len(feed.content.get("objects", [])),
+        "item_count": _item_count(feed),
         "created_at": feed.created_at.isoformat(),
         "updated_at": feed.updated_at.isoformat(),
     }
@@ -66,7 +92,14 @@ def feed_to_dict(feed: Feed) -> dict:
 
 @router.post("/feeds", status_code=201)
 def create_feed(body: FeedCreate, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict:
-    content = _build_content(body.type, body.objects, body.description)
+    content = _build_content(
+        body.type,
+        objects=body.objects,
+        entries=body.entries,
+        feed_format=body.feed_format,
+        data_type=body.data_type,
+        description=body.description,
+    )
     feed = Feed(
         token=new_feed_token(),
         type=body.type,
@@ -115,8 +148,16 @@ def update_feed(
         feed.auth_header_key = body.auth_header_key or None
     if body.auth_header_value is not None:
         feed.auth_header_value = body.auth_header_value or None
-    if body.objects is not None:
-        feed.content = _build_content(feed.type, body.objects, feed.description)
+    if body.objects is not None and feed.type == FeedType.generic_dc:
+        feed.content = _build_content(feed.type, objects=body.objects, description=feed.description)
+    if body.entries is not None and feed.type == FeedType.network_feed:
+        feed.content = _build_content(
+            feed.type,
+            entries=body.entries,
+            feed_format=feed.content.get("format", "flat"),
+            data_type=feed.content.get("data_type", "ip_domain"),
+            description=feed.description,
+        )
     db.commit()
     db.refresh(feed)
     return feed_to_dict(feed)

@@ -16,7 +16,7 @@ Network Feed object, hit **Test Connection**, and watch objects sync live.
 | M0 | Foundation (app, config, DB, portal auth, Docker/Caddy) | ✅ done |
 | M1 | **Generic Data Center** feed end-to-end (the hero demo, 10s sync) | ✅ done |
 | M2 | IoC feed (CSV Check Point format) | ⏳ next |
-| M3 | Network Feed (flat list + JSON/JQ) | ⏳ |
+| M3 | Network Feed (flat list + JSON/JQ, HTTP Basic auth) | ✅ done |
 | M4 | Demo scenario engine + live request-log UI | ⏳ |
 | M5 | One cloud-API datacenter mock (OpenStack/Kubernetes) | ⏳ |
 | M6 | Branded UI, templates/presets, import/export | ⏳ |

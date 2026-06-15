@@ -1,11 +1,11 @@
 {% extends "base.html" %}
-{% block title %}New feed{% endblock %}
+{% block title %}New Generic DC feed{% endblock %}
 {% block content %}
 <h1>New Generic Data Center feed</h1>
 <p class="muted">Pre-filled with the Generic Data Center example from sk167210 — edit or replace it, then Create. The portal serves it as the exact JSON Check Point fetches.</p>
 {% if error %}<div class="err" style="margin:12px 0;">{{ error }}</div>{% endif %}
 
-<form method="post" action="/feeds/new" class="card">
+<form method="post" action="/feeds/new/generic-dc" class="card">
   <label>Feed name</label>
   <input name="name" value="{{ form.name }}" placeholder="Boston-financial-lab" required>
 
@@ -28,7 +28,7 @@
 
   <div style="margin-top:20px;" class="row">
     <button type="submit">Create feed</button>
-    <a class="btn secondary" href="/">Cancel</a>
+    <a class="btn secondary" href="/feeds/new">Back</a>
   </div>
 </form>
 {% endblock %}

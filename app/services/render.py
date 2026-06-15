@@ -4,6 +4,7 @@ import uuid
 
 from ..models import Feed, FeedType
 from ..schemas.generic_dc import GDCObjectIn, GENERIC_DC_VERSION
+from ..schemas.network_feed import NetworkFeedConfig
 
 
 def normalize_generic_dc_content(objects: list[dict], description: str = "") -> dict:
@@ -42,9 +43,25 @@ def render_generic_dc(feed: Feed) -> tuple[str, str]:
     return json.dumps(doc, indent=2), "application/json"
 
 
+def normalize_network_feed_content(entries: list[str], data_type: str, fmt: str) -> dict:
+    """Validate Network Feed entries; returns the dict persisted in Feed.content."""
+    cfg = NetworkFeedConfig(format=fmt, data_type=data_type, entries=entries)
+    return {"format": cfg.format, "data_type": cfg.data_type, "entries": cfg.entries}
+
+
+def render_network_feed(feed: Feed) -> tuple[str, str]:
+    entries = feed.content.get("entries", [])
+    if feed.content.get("format") == "json":
+        return json.dumps({"entries": entries}, indent=2), "application/json"
+    # Flat list: one entry per line.
+    return "\n".join(entries) + "\n", "text/plain; charset=utf-8"
+
+
 def render_feed(feed: Feed) -> tuple[str, str]:
     """Dispatch to the per-type renderer. Returns (body, media_type)."""
     if feed.type == FeedType.generic_dc:
         return render_generic_dc(feed)
-    # IoC (M2) and Network Feed (M3) renderers slot in here.
+    if feed.type == FeedType.network_feed:
+        return render_network_feed(feed)
+    # IoC (M2) renderer slots in here.
     raise NotImplementedError(f"rendering not implemented for feed type {feed.type.value}")
