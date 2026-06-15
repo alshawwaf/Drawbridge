@@ -18,14 +18,24 @@
 {% if not rows %}
 <div class="card"><p class="muted">No feeds yet. Create your first feed to get a pollable URL for SmartConsole.</p></div>
 {% else %}
+{% set typelabels = {'generic_dc': 'Generic Data Center', 'network_feed': 'Network Feed', 'ioc': 'IoC'} %}
+<div class="filterbar">
+  <button class="chip active" type="button" data-filter="all">All <span class="chipcount">{{ rows|length }}</span></button>
+  {% for t, n in type_counts.items() %}
+    <button class="chip" type="button" data-filter="{{ t }}">{{ typelabels.get(t, t) }} <span class="chipcount">{{ n }}</span></button>
+  {% endfor %}
+</div>
 <div class="card">
-<table>
+<table id="feedtable">
   <thead><tr><th>Name</th><th>Type</th><th>Items</th><th>Interval</th><th>Auth</th><th>Feed URL</th></tr></thead>
   <tbody>
   {% for r in rows %}
-    <tr>
+    <tr data-feedtype="{{ r.feed.type.value }}">
       <td><a href="/feeds/{{ r.feed.id }}">{{ r.feed.name }}</a></td>
-      <td><span class="pill">{{ r.feed.type.value }}</span></td>
+      <td>
+        <span class="pill">{{ r.feed.type.value }}</span>
+        {% if r.selections %}<div class="muted" style="font-size:11px; margin-top:3px;">{{ r.selections }}</div>{% endif %}
+      </td>
       <td>{{ r.count }}</td>
       <td>{{ r.feed.interval_seconds }}s</td>
       <td>{% if r.feed.auth_header_key %}<span class="pill">{{ 'basic' if r.feed.type.value == 'network_feed' else 'header' }}</span>{% else %}<span class="pill">open</span>{% endif %}</td>
@@ -40,5 +50,21 @@
   </tbody>
 </table>
 </div>
+<script>
+  (function () {
+    var bar = document.querySelector('.filterbar');
+    if (!bar) return;
+    bar.addEventListener('click', function (e) {
+      var chip = e.target.closest('.chip');
+      if (!chip) return;
+      bar.querySelectorAll('.chip').forEach(function (c) { c.classList.remove('active'); });
+      chip.classList.add('active');
+      var f = chip.getAttribute('data-filter');
+      document.querySelectorAll('#feedtable tbody tr').forEach(function (tr) {
+        tr.style.display = (f === 'all' || tr.getAttribute('data-feedtype') === f) ? '' : 'none';
+      });
+    });
+  })();
+</script>
 {% endif %}
 {% endblock %}
