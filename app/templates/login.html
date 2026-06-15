@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Sign in{% endblock %}
+{% block nav %}{% endblock %}
+{% block content %}
+<div class="card" style="max-width:380px; margin:56px auto;">
+  <h1>Sign in</h1>
+  <p class="muted">Check Point DC Integration Simulator</p>
+  {% if error %}<div class="err" style="margin-top:12px;">{{ error }}</div>{% endif %}
+  <form method="post" action="/login">
+    <label>Username</label>
+    <input name="username" autofocus autocomplete="username">
+    <label>Password</label>
+    <input name="password" type="password" autocomplete="current-password">
+    <div style="margin-top:18px;"><button type="submit">Sign in</button></div>
+  </form>
+</div>
+{% endblock %}
