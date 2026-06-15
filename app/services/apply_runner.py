@@ -18,6 +18,7 @@ from ..config import get_settings
 from ..db import SessionLocal
 from ..models import DynamicLayer, LayerTask
 from ..schemas.dynamic_layer import build_set_dynamic_content, evaluate_dynamic_content
+from .activity import write_activity
 
 GAIA_VERSION = "v1.9"
 _MASK = "(session token masked)"
@@ -238,6 +239,12 @@ def _run(pid, *, layer_id, target, dry_run, gateway_host, gateway_port, user, pa
         db.add(task)
         db.commit()
         db.refresh(task)
+        total_ms = sum((s.get("ms") or 0) for s in result.get("trace", []))
+        write_activity(kind="layer_apply", direction="outbound", method="POST",
+                       path=f"set-dynamic-content [{target}]", source_ip=(gateway_host or "mock"),
+                       status=status_code or (200 if status == "succeeded" else 0),
+                       duration_ms=total_ms, summary=f"Apply “{layer.name}” → {target}: {status}",
+                       detail={"trace": result.get("trace", [])})
         _finish(pid, status=status, result=result, task_id=task.task_id)
     except Exception as exc:
         _PROGRESS[pid].update(stage="done", status="failed", error=str(exc))
