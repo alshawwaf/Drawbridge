@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}Dynamic Layers{% endblock %}
+{% block content %}
+<div class="row">
+  <div class="grow">
+    <h1>Dynamic Layers</h1>
+    <p class="muted">Author Access Control rules here, then push them to a gateway with <code>set-dynamic-content</code> — saved on the portal, reflected on the gateway (no policy install).</p>
+  </div>
+  <a class="btn" href="/layers/new">+ New Dynamic Layer</a>
+</div>
+
+{% if not rows %}
+<div class="card"><p class="muted">No dynamic layers yet. Create one to author a rulebase and apply it to the built-in mock or a real R82 gateway.</p></div>
+{% else %}
+<div class="card" style="padding:6px 6px 2px;">
+<div class="tablewrap">
+<table>
+  <thead><tr>
+    <th>Name</th><th class="nowrap">Gateway layer</th><th class="nowrap">Objects</th><th class="nowrap">Rules</th><th>Last apply</th><th></th>
+  </tr></thead>
+  <tbody>
+  {% for r in rows %}
+    <tr>
+      <td>
+        <a class="feedname" href="/layers/{{ r.layer.id }}">{{ r.layer.name }}</a>
+        {% if r.layer.description %}<div class="subsel">{{ r.layer.description }}</div>{% endif %}
+      </td>
+      <td class="nowrap"><code>{{ r.layer.layer_name }}</code></td>
+      <td class="nowrap">{{ r.objects }}</td>
+      <td class="nowrap">{{ r.rules }}</td>
+      <td class="nowrap">
+        {% if r.last %}
+          <span class="pill {{ 'ok' if r.last.status == 'succeeded' else 'bad' }}">{{ r.last.status }}</span>
+          <span class="muted" style="font-size:11px;">{{ r.last.target }}{% if r.last.dry_run %} · dry-run{% endif %} · {{ r.last.at.strftime('%Y-%m-%d %H:%M') }}</span>
+        {% else %}<span class="pill faint">never applied</span>{% endif %}
+      </td>
+      <td class="nowrap"><a class="copybtn" href="/layers/{{ r.layer.id }}">Open</a></td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+</div>
+{% endif %}
+{% endblock %}

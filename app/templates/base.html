@@ -114,6 +114,19 @@
     .toast { position:fixed; bottom:20px; right:20px; background:var(--navy); color:#fff; padding:13px 18px; border-radius:10px; box-shadow:var(--shadow-lg); z-index:1100; font-size:14px; max-width:380px; pointer-events:none; transition:opacity .35s, transform .35s; }
     .toast.error { background:var(--danger); }
     .toast.hide { opacity:0; transform:translateY(10px); }
+    /* Headings inside cards */
+    h3 { font-size:13px; font-weight:650; margin:16px 0 8px; color:var(--text); }
+    .pill.bad { background:var(--danger-bg); color:var(--danger); }
+    /* Builder item rows + controls */
+    .itemrow { display:flex; align-items:center; gap:8px; padding:9px 2px; border-bottom:1px solid var(--line-soft); font-size:13px; flex-wrap:wrap; }
+    .itemrow:last-child { border-bottom:none; }
+    .minibtn { margin-left:auto; background:#fff; color:var(--danger); border:1px solid var(--danger-line); border-radius:6px; padding:4px 11px; font-size:12px; font-weight:600; cursor:pointer; white-space:nowrap; }
+    .minibtn:hover { background:var(--danger-bg); }
+    .err-inline { color:var(--danger); font-size:12.5px; margin-top:8px; }
+    .row.endalign { align-items:flex-end; }
+    .check { display:flex; align-items:center; gap:7px; }
+    .check input { width:auto; }
+    .check label { margin:0; }
   </style>
 </head>
 <body>
@@ -121,12 +134,14 @@
     <span class="brand">DC Integration Simulator</span>
     <span class="tag">PoV</span>
     {% block nav %}<nav>
-      <a href="/">Dashboard</a>
+      <a href="/">Feeds</a>
+      <a href="/layers">Dynamic Layers</a>
       <div class="menu">
-        <a href="#" class="menu-trigger">New feed ▾</a>
+        <a href="#" class="menu-trigger">New ▾</a>
         <div class="menu-items">
-          <a href="/feeds/new/generic-dc">Generic Data Center</a>
+          <a href="/feeds/new/generic-dc">Generic Data Center feed</a>
           <a href="/feeds/new/network-feed">Network Feed</a>
+          <a href="/layers/new">Dynamic Layer</a>
         </div>
       </div>
       <a href="/logout">Sign out</a>

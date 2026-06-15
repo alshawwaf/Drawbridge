@@ -1,0 +1,113 @@
+{% extends "base.html" %}
+{% block title %}{{ layer.name }}{% endblock %}
+{% block content %}
+<div class="row">
+  <div class="grow">
+    <h1>{{ layer.name }} <span class="pill">dynamic layer</span></h1>
+    <p class="muted">Gateway layer <code>{{ layer.layer_name }}</code>{% if layer.description %} · {{ layer.description }}{% endif %}</p>
+  </div>
+  <form method="post" action="/layers/{{ layer.id }}/delete">
+    <button class="danger" type="submit" data-confirm="Delete “{{ layer.name }}”? This removes the layer and its apply history.">Delete</button>
+  </form>
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0;">Apply</h2>
+  <form method="post" action="/layers/{{ layer.id }}/apply">
+    <div class="row endalign">
+      <div>
+        <label>Target</label>
+        <select name="target" id="apply-target">
+          <option value="mock">Built-in mock gateway</option>
+          <option value="gateway">Real gateway</option>
+        </select>
+      </div>
+      <div class="check" style="padding-bottom:9px;">
+        <input type="checkbox" name="dry_run" id="dry_run" value="1"><label for="dry_run">Dry-run (validate only)</label>
+      </div>
+    </div>
+    <div id="gw-fields" style="display:none;">
+      <div class="row">
+        <div class="grow"><label>Gateway address</label><input name="gw_host" placeholder="10.1.1.1"></div>
+        <div style="width:120px;"><label>Port</label><input name="gw_port" value="443"></div>
+      </div>
+      <div class="row">
+        <div class="grow"><label>Username</label><input name="gw_user" placeholder="admin"></div>
+        <div class="grow"><label>Password</label><input name="gw_pass" type="password"></div>
+      </div>
+      <label>Gateway certificate (PEM, optional — to pin a self-signed gateway)</label>
+      <textarea name="gw_cert" style="min-height:90px;" placeholder="-----BEGIN CERTIFICATE-----"></textarea>
+      <p class="muted">TLS verification is always on (no skip-verify). The password is used only for this call and never stored.</p>
+    </div>
+    <div style="margin-top:14px;"><button type="submit">Apply</button></div>
+  </form>
+</div>
+
+{% if latest %}
+<div class="card">
+  <div class="row"><h2 style="margin:0;" class="grow">Latest result</h2>
+    <span class="pill {{ 'ok' if latest.t.status == 'succeeded' else 'bad' }}">{{ latest.t.status }}</span></div>
+  <p class="muted">{{ latest.t.target }}{% if latest.t.dry_run %} · dry-run{% endif %} · {{ latest.t.at.strftime('%Y-%m-%d %H:%M:%S') }}{% if latest.t.gateway_host %} · {{ latest.t.gateway_host }}{% endif %} · task <code>{{ latest.t.task_id[:18] }}</code></p>
+  {% if latest.errors %}
+    <h3 style="color:var(--danger);">Errors</h3>
+    {% for e in latest.errors %}<div class="err" style="margin:6px 0;">{{ e.message }}</div>{% endfor %}
+  {% endif %}
+  <div class="row" style="align-items:flex-start; gap:28px;">
+    <div class="grow">
+      <h3>Rules created ({{ latest.rules_created }})</h3>
+      {% for lyr in latest.layers %}
+        {% for rn in lyr.rules.create %}<span class="pill ok" style="margin:2px;">{{ rn }}</span>{% endfor %}
+      {% else %}<span class="muted">none</span>{% endfor %}
+    </div>
+    <div class="grow">
+      <h3>Objects created ({{ latest.objects_created|length }})</h3>
+      {% for o in latest.objects_created %}<span class="pill" style="margin:2px;">{{ o }}</span>{% else %}<span class="muted">none</span>{% endfor %}
+    </div>
+  </div>
+  {% if latest.warnings %}
+    <h3>Warnings ({{ latest.warnings|length }})</h3>
+    {% for w in latest.warnings %}<div class="muted" style="font-size:12.5px; margin:3px 0;">⚠ {{ w.message }}</div>{% endfor %}
+  {% endif %}
+</div>
+{% endif %}
+
+<div class="card">
+  <h2 style="margin-top:0;">set-dynamic-content payload</h2>
+  <div class="row" style="gap:8px; align-items:center; flex-wrap:nowrap; margin-bottom:10px;">
+    <span class="muted grow">POST to the mock at <code>{{ mock_url }}/set-dynamic-content</code> — or your gateway's Gaia API.</span>
+    <button class="copybtn" type="button" data-copy="{{ payload_json }}">Copy JSON</button>
+  </div>
+  <pre style="max-height:360px;">{{ payload_json }}</pre>
+</div>
+
+{% if tasks %}
+<div class="card">
+  <h2 style="margin-top:0;">Apply history</h2>
+  <div class="tablewrap"><table>
+    <thead><tr><th class="nowrap">When (UTC)</th><th>Target</th><th>Mode</th><th>Status</th><th>Rules</th><th>Objects</th><th>Warnings</th></tr></thead>
+    <tbody>
+    {% for v in tasks %}
+      <tr>
+        <td class="nowrap">{{ v.t.at.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+        <td><span class="pill">{{ v.t.target }}</span></td>
+        <td class="nowrap">{{ 'dry-run' if v.t.dry_run else 'apply' }}</td>
+        <td><span class="pill {{ 'ok' if v.t.status == 'succeeded' else 'bad' }}">{{ v.t.status }}</span></td>
+        <td>{{ v.rules_created }}</td>
+        <td>{{ v.objects_created|length }}</td>
+        <td>{{ v.warnings|length }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+</div>
+{% endif %}
+
+<script>
+  (function () {
+    var sel = document.getElementById('apply-target');
+    var gw = document.getElementById('gw-fields');
+    function sync() { gw.style.display = sel.value === 'gateway' ? '' : 'none'; }
+    sel.addEventListener('change', sync); sync();
+  })();
+</script>
+{% endblock %}
