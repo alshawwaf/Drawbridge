@@ -1,0 +1,50 @@
+"""Render a stored Feed into the exact wire format the gateway fetches."""
+import json
+import uuid
+
+from ..models import Feed, FeedType
+from ..schemas.generic_dc import GDCObjectIn, GENERIC_DC_VERSION
+
+
+def normalize_generic_dc_content(objects: list[dict], description: str = "") -> dict:
+    """Validate SE-entered objects and assign a stable UUID to any without one.
+
+    Returns the dict persisted in Feed.content. Raises pydantic ValidationError /
+    ValueError on malformed input so the API can surface a clean 422.
+    """
+    normalized = []
+    seen_ids: set[str] = set()
+    for raw in objects:
+        obj = GDCObjectIn.model_validate(raw)
+        oid = obj.id or str(uuid.uuid4())
+        while oid in seen_ids:  # guarantee uniqueness even if caller supplied dupes
+            oid = str(uuid.uuid4())
+        seen_ids.add(oid)
+        normalized.append(
+            {"name": obj.name, "id": oid, "description": obj.description, "ranges": obj.ranges}
+        )
+    return {"objects": normalized}
+
+
+def render_generic_dc(feed: Feed) -> tuple[str, str]:
+    doc: dict = {"version": GENERIC_DC_VERSION}
+    if feed.description:
+        doc["description"] = feed.description
+    out = []
+    for o in feed.content.get("objects", []):
+        # Key order mirrors the sk167210 example: name, id, description, ranges.
+        item: dict = {"name": o["name"], "id": o.get("id") or str(uuid.uuid4())}
+        if o.get("description"):
+            item["description"] = o["description"]
+        item["ranges"] = o["ranges"]
+        out.append(item)
+    doc["objects"] = out
+    return json.dumps(doc, indent=2), "application/json"
+
+
+def render_feed(feed: Feed) -> tuple[str, str]:
+    """Dispatch to the per-type renderer. Returns (body, media_type)."""
+    if feed.type == FeedType.generic_dc:
+        return render_generic_dc(feed)
+    # IoC (M2) and Network Feed (M3) renderers slot in here.
+    raise NotImplementedError(f"rendering not implemented for feed type {feed.type.value}")

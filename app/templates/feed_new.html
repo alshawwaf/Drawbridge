@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}New feed{% endblock %}
+{% block content %}
+<h1>New Generic Data Center feed</h1>
+<p class="muted">Pre-filled with the Generic Data Center example from sk167210 — edit or replace it, then Create. The portal serves it as the exact JSON Check Point fetches.</p>
+{% if error %}<div class="err" style="margin:12px 0;">{{ error }}</div>{% endif %}
+
+<form method="post" action="/feeds/new" class="card">
+  <label>Feed name</label>
+  <input name="name" value="{{ form.name }}" placeholder="Boston-financial-lab" required>
+
+  <label>Description (optional) — becomes the top-level <code>description</code> in the JSON</label>
+  <input name="description" value="{{ form.description }}" placeholder="Generic Data Center file example">
+
+  <label>Objects — one per line: <code>Name = range1, range2 | optional description</code></label>
+  <textarea name="objects_text" placeholder="Object A name = 91.198.174.192, 20.0.0.0/24 | Example">{{ form.objects_text }}</textarea>
+  <p class="muted">Each range is a single IP, a CIDR (<code>a.b.c.d/len</code>), or <code>start-end</code> — IPv4 and IPv6. A unique UUID <code>id</code> is generated per object automatically. Text after <code>|</code> is that object's description.</p>
+
+  <label>Poll interval (seconds)</label>
+  <input name="interval_seconds" type="number" min="1" value="{{ form.interval_seconds }}" style="width:140px">
+
+  <h2>Optional: require a Custom Header</h2>
+  <p class="muted">Mirrors the Generic DC "Custom Header" auth. Leave blank for an open feed.</p>
+  <div class="row">
+    <div class="grow"><label>Header key</label><input name="auth_header_key" value="{{ form.auth_header_key }}" placeholder="X-Feed-Token"></div>
+    <div class="grow"><label>Header value</label><input name="auth_header_value" type="password" placeholder="(secret)"></div>
+  </div>
+
+  <div style="margin-top:20px;" class="row">
+    <button type="submit">Create feed</button>
+    <a class="btn secondary" href="/">Cancel</a>
+  </div>
+</form>
+{% endblock %}

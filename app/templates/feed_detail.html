@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}{{ feed.name }}{% endblock %}
+{% block content %}
+<div class="row">
+  <div class="grow">
+    <h1>{{ feed.name }} <span class="pill">{{ feed.type.value }}</span></h1>
+    <p class="muted">{{ feed.description or "No description" }}</p>
+  </div>
+  <form method="post" action="/feeds/{{ feed.id }}/delete" onsubmit="return confirm('Delete this feed?')">
+    <button class="danger" type="submit">Delete</button>
+  </form>
+</div>
+
+<div class="card">
+  <h2>Feed URL — paste into SmartConsole</h2>
+  <div class="copy">{{ url }}</div>
+  <p class="muted">Poll interval {{ feed.interval_seconds }}s.{% if feed.auth_header_key %} Requires header <code>{{ feed.auth_header_key }}</code>.{% endif %}</p>
+  <p class="muted"><b>In SmartConsole:</b> Objects → New → More → Cloud → Data Center → <i>New Generic Data Center…</i>, paste the URL, set the interval{% if feed.auth_header_key %}, add the Custom Header{% endif %}, then click <i>Test Connection</i>.</p>
+  <h2>Test from a shell</h2>
+  <pre>curl -s {% if feed.auth_header_key %}-H "{{ feed.auth_header_key }}: &lt;value&gt;" {% endif %}{{ url }}</pre>
+</div>
+
+<div class="card">
+  <h2>What Check Point sees</h2>
+  <pre>{{ preview }}</pre>
+</div>
+
+<div class="card">
+  <h2>Live polls <span class="muted">— auto-refreshes every 3s</span></h2>
+  <p class="muted">Each row is a real fetch of this feed. When your gateway or management starts polling, it appears here — live proof the integration is syncing.</p>
+  <div hx-get="/feeds/{{ feed.id }}/polls-fragment" hx-trigger="load, every 3s" hx-swap="innerHTML">
+    <p class="muted">Loading…</p>
+  </div>
+</div>
+{% endblock %}

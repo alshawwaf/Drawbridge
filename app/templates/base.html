@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}DC Simulator{% endblock %}</title>
+  <script src="https://unpkg.com/htmx.org@2.0.3" crossorigin="anonymous"></script>
+  <style>
+    :root { --navy:#1f2a44; --navy2:#2c3a5e; --accent:#e6007e; --ok:#1a8a4b; --bg:#f4f6fa; --line:#dde3ec; }
+    * { box-sizing: border-box; }
+    body { margin:0; font-family: -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; background:var(--bg); color:#1c2330; }
+    header { background:var(--navy); color:#fff; padding:14px 22px; display:flex; align-items:center; gap:14px; }
+    header .brand { font-weight:700; letter-spacing:.2px; }
+    header .tag { background:var(--accent); color:#fff; font-size:11px; padding:2px 8px; border-radius:10px; }
+    header nav { margin-left:auto; display:flex; gap:16px; }
+    header a { color:#cfd8ea; text-decoration:none; font-size:14px; }
+    header a:hover { color:#fff; }
+    main { max-width:980px; margin:26px auto; padding:0 22px; }
+    h1 { font-size:22px; margin:0 0 4px; }
+    h2 { font-size:16px; margin:24px 0 10px; }
+    .muted { color:#6b7689; font-size:13px; }
+    .card { background:#fff; border:1px solid var(--line); border-radius:10px; padding:18px; margin:14px 0; }
+    table { width:100%; border-collapse:collapse; font-size:14px; }
+    th, td { text-align:left; padding:9px 10px; border-bottom:1px solid var(--line); }
+    th { color:#6b7689; font-weight:600; font-size:12px; text-transform:uppercase; letter-spacing:.4px; }
+    a.btn, button { background:var(--accent); color:#fff; border:none; border-radius:7px; padding:9px 15px; font-size:14px; cursor:pointer; text-decoration:none; display:inline-block; }
+    a.btn.secondary, button.secondary { background:#fff; color:var(--navy); border:1px solid var(--line); }
+    a.btn.danger, button.danger { background:#fff; color:#b0263c; border:1px solid #f0c6cd; }
+    input, textarea { width:100%; padding:9px 11px; border:1px solid var(--line); border-radius:7px; font-size:14px; font-family:inherit; }
+    label { display:block; font-size:13px; font-weight:600; margin:12px 0 5px; }
+    textarea { min-height:120px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    pre { background:#0f1626; color:#d6e2ff; padding:14px; border-radius:8px; overflow:auto; font-size:12.5px; line-height:1.5; }
+    code { background:#eef1f7; padding:1px 6px; border-radius:4px; font-size:12.5px; }
+    .pill { font-size:11px; padding:2px 9px; border-radius:10px; background:#eef1f7; color:#42506b; }
+    .pill.ok { background:#e3f4ea; color:var(--ok); }
+    .err { background:#fdeaed; color:#b0263c; border:1px solid #f0c6cd; padding:10px 12px; border-radius:7px; font-size:14px; }
+    .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+    .grow { flex:1; }
+    .copy { font-family: ui-monospace, monospace; font-size:13px; background:#eef1f7; padding:8px 11px; border-radius:7px; word-break:break-all; }
+  </style>
+</head>
+<body>
+  <header>
+    <span class="brand">Check&nbsp;Point · DC Integration Simulator</span>
+    <span class="tag">PoV</span>
+    {% block nav %}<nav>
+      <a href="/">Dashboard</a>
+      <a href="/feeds/new">New feed</a>
+      <a href="/logout">Sign out</a>
+    </nav>{% endblock %}
+  </header>
+  <main>{% block content %}{% endblock %}</main>
+</body>
+</html>
