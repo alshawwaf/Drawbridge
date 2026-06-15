@@ -25,20 +25,23 @@
     <button class="chip" type="button" data-filter="{{ t }}">{{ typelabels.get(t, t) }} <span class="chipcount">{{ n }}</span></button>
   {% endfor %}
 </div>
-<div class="card">
+<div class="card" style="padding:6px 6px 2px;">
+<div class="tablewrap">
 <table id="feedtable">
-  <thead><tr><th>Name</th><th>Type</th><th>Items</th><th>Interval</th><th>Auth</th><th>Feed URL</th></tr></thead>
+  <thead><tr>
+    <th>Name</th><th>Type</th><th class="nowrap">Items</th><th class="nowrap">Interval</th><th>Auth</th><th>Feed URL</th>
+  </tr></thead>
   <tbody>
   {% for r in rows %}
     <tr data-feedtype="{{ r.feed.type.value }}">
-      <td><a href="/feeds/{{ r.feed.id }}">{{ r.feed.name }}</a></td>
+      <td><a class="feedname" href="/feeds/{{ r.feed.id }}">{{ r.feed.name }}</a></td>
       <td>
         <span class="pill">{{ r.feed.type.value }}</span>
-        {% if r.selections %}<div class="muted" style="font-size:11px; margin-top:3px;">{{ r.selections }}</div>{% endif %}
+        {% if r.selections %}<div class="subsel">{{ r.selections }}</div>{% endif %}
       </td>
-      <td>{{ r.count }}</td>
-      <td>{{ r.feed.interval_seconds }}s</td>
-      <td>{% if r.feed.auth_header_key %}<span class="pill">{{ 'basic' if r.feed.type.value == 'network_feed' else 'header' }}</span>{% else %}<span class="pill">open</span>{% endif %}</td>
+      <td class="nowrap">{{ r.count }}</td>
+      <td class="nowrap">{{ r.feed.interval_seconds }}s</td>
+      <td>{% if r.feed.auth_header_key %}<span class="pill">{{ 'basic' if r.feed.type.value == 'network_feed' else 'header' }}</span>{% else %}<span class="pill faint">open</span>{% endif %}</td>
       <td>
         <div class="urlcell">
           <span class="urltext" title="{{ r.url }}">{{ r.url }}</span>
@@ -50,6 +53,9 @@
   </tbody>
 </table>
 </div>
+</div>
+{% endif %}
+
 <script>
   (function () {
     var bar = document.querySelector('.filterbar');
@@ -66,5 +72,4 @@
     });
   })();
 </script>
-{% endif %}
 {% endblock %}

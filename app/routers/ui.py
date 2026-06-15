@@ -125,8 +125,9 @@ _DT_LABELS = {"ip": "IP", "domain": "Domain", "ip_domain": "IP/Domain"}
 
 
 def _count_label(feed: Feed) -> str:
+    # JSON feeds have a custom structure we don't parse, so item count is N/A.
     if feed.type == FeedType.network_feed and feed.content.get("format") == "json":
-        return "custom JSON"
+        return "—"
     return str(_item_count(feed))
 
 
