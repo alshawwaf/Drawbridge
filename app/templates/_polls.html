@@ -1,0 +1,17 @@
+{% if not polls %}
+<p class="muted">No polls yet. Point a gateway at the URL above (or run the curl command) and watch this fill in.</p>
+{% else %}
+<table>
+  <thead><tr><th>When (UTC)</th><th>Source IP</th><th>Status</th><th>User-Agent</th></tr></thead>
+  <tbody>
+  {% for p in polls %}
+    <tr>
+      <td>{{ p.at.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+      <td>{{ p.source_ip }}</td>
+      <td>{% if p.status == 200 %}<span class="pill ok">{{ p.status }}</span>{% else %}<span class="pill">{{ p.status }}</span>{% endif %}</td>
+      <td class="muted">{{ (p.user_agent or "")[:60] }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
