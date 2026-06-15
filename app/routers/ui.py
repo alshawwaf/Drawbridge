@@ -161,11 +161,12 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
 
 
 # --- New feed: chooser then per-type forms ---------------------------------------------
-@router.get("/feeds/new", response_class=HTMLResponse)
-def new_feed_chooser(request: Request, db: Session = Depends(get_db)):
+@router.get("/feeds/new")
+def new_feed_redirect(request: Request, db: Session = Depends(get_db)):
+    # The feed-type picker is a dropdown menu now; send direct hits to the Generic DC form.
     if get_user_or_none(request, db) is None:
         return RedirectResponse("/login", status_code=303)
-    return templates.TemplateResponse(request, "feed_choose.html", {})
+    return RedirectResponse("/feeds/new/generic-dc", status_code=303)
 
 
 @router.get("/feeds/new/generic-dc", response_class=HTMLResponse)
