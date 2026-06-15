@@ -10,7 +10,8 @@ from ..models import Feed, FeedType, User
 from ..security import current_user, new_feed_token
 from ..services.render import (
     normalize_generic_dc_content,
-    normalize_network_feed_content,
+    normalize_network_feed_flat,
+    normalize_network_feed_json,
     render_feed,
 )
 
@@ -26,10 +27,13 @@ class FeedCreate(BaseModel):
     auth_header_value: str | None = None
     # generic_dc
     objects: list[dict] = Field(default_factory=list)
-    # network_feed
+    # network_feed (flat list)
     entries: list[str] = Field(default_factory=list)
     feed_format: str = "flat"
     data_type: str = "ip_domain"
+    # network_feed (custom JSON)
+    json_body: str = ""
+    jq_query: str = ""
 
 
 class FeedUpdate(BaseModel):
@@ -40,6 +44,8 @@ class FeedUpdate(BaseModel):
     auth_header_value: str | None = None
     objects: list[dict] | None = None
     entries: list[str] | None = None
+    json_body: str | None = None
+    jq_query: str | None = None
 
 
 def _build_content(
@@ -49,13 +55,17 @@ def _build_content(
     entries: list[str] | None = None,
     feed_format: str = "flat",
     data_type: str = "ip_domain",
+    json_body: str = "",
+    jq_query: str = "",
     description: str = "",
 ) -> dict:
     try:
         if ftype == FeedType.generic_dc:
             return normalize_generic_dc_content(objects or [], description)
         if ftype == FeedType.network_feed:
-            return normalize_network_feed_content(entries or [], data_type, feed_format)
+            if feed_format == "json":
+                return normalize_network_feed_json(json_body, jq_query, data_type)
+            return normalize_network_feed_flat(entries or [], data_type)
     except (ValidationError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=f"Invalid {ftype.value} content: {exc}")
     raise HTTPException(status_code=400, detail=f"feed type '{ftype.value}' not yet supported (M2)")
@@ -98,6 +108,8 @@ def create_feed(body: FeedCreate, user: User = Depends(current_user), db: Sessio
         entries=body.entries,
         feed_format=body.feed_format,
         data_type=body.data_type,
+        json_body=body.json_body,
+        jq_query=body.jq_query,
         description=body.description,
     )
     feed = Feed(
@@ -150,12 +162,14 @@ def update_feed(
         feed.auth_header_value = body.auth_header_value or None
     if body.objects is not None and feed.type == FeedType.generic_dc:
         feed.content = _build_content(feed.type, objects=body.objects, description=feed.description)
-    if body.entries is not None and feed.type == FeedType.network_feed:
+    if feed.type == FeedType.network_feed and (body.entries is not None or body.json_body is not None):
         feed.content = _build_content(
             feed.type,
-            entries=body.entries,
+            entries=body.entries or [],
             feed_format=feed.content.get("format", "flat"),
             data_type=feed.content.get("data_type", "ip_domain"),
+            json_body=body.json_body or "",
+            jq_query=body.jq_query if body.jq_query is not None else feed.content.get("jq_query", ""),
             description=feed.description,
         )
     db.commit()

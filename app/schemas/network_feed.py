@@ -1,13 +1,15 @@
-"""Validation for Network Feed entries.
+"""Validation for Network Feed content.
 
-Per the docs, a Network Feed entry may be a single IP, a range (a-b), an IP+masklen
-(a.b.c.d/len), an FQDN (host.example.com), or a non-FQDN wildcard (*.example.com). Which
-shapes are accepted depends on the feed's data type: ip | domain | ip_domain. The feed is
-served either as a flat list (one entry per line) or as JSON parsed by a JQ query on the gateway.
+Two authoring modes:
+- Flat list: one entry per line. Each entry may be a single IP, a range (a-b), an IP+masklen
+  (a.b.c.d/len), an FQDN (host.example.com), or a wildcard (*.example.com); which shapes are
+  accepted depends on the data type (ip | domain | ip_domain).
+- JSON: the SE authors arbitrary JSON and supplies the JQ query the gateway uses to extract the
+  values. The docs don't fix a schema, so the portal only validates the JSON parses and serves
+  it verbatim.
 """
+import json
 import re
-
-from pydantic import BaseModel, Field, field_validator
 
 from .generic_dc import validate_range
 
@@ -59,21 +61,9 @@ def validate_entry(value: str, data_type: str) -> str:
         raise ValueError(f"{v!r} is not a valid IP, range, CIDR, or domain")
 
 
-class NetworkFeedConfig(BaseModel):
-    format: str = "flat"
-    data_type: str = "ip_domain"
-    entries: list[str] = Field(min_length=1)
-
-    @field_validator("format")
-    @classmethod
-    def _check_format(cls, v: str) -> str:
-        if v not in FORMATS:
-            raise ValueError(f"format must be one of {FORMATS}")
-        return v
-
-    @field_validator("data_type")
-    @classmethod
-    def _check_data_type(cls, v: str) -> str:
-        if v not in DATA_TYPES:
-            raise ValueError(f"data_type must be one of {DATA_TYPES}")
-        return v
+def validate_json_body(body: str) -> None:
+    """Ensure the custom JSON body parses. The structure is intentionally unconstrained."""
+    try:
+        json.loads(body)
+    except Exception as exc:
+        raise ValueError(f"JSON body is not valid JSON: {exc}")

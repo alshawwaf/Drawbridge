@@ -2,7 +2,7 @@
 {% block title %}New Network Feed{% endblock %}
 {% block content %}
 <h1>New Network Feed</h1>
-<p class="muted">Pre-filled with a sample list — edit or replace it, then Create. The portal serves it as a flat list (or JSON) for a Network Feed object.</p>
+<p class="muted">Pre-filled with a sample — edit or replace it, then Create. Serve a simple flat list, or author your own JSON that the gateway parses with a JQ query.</p>
 {% if error %}<div class="err" style="margin:12px 0;">{{ error }}</div>{% endif %}
 
 <form method="post" action="/feeds/new/network-feed" class="card">
@@ -23,16 +23,26 @@
     </div>
     <div class="grow">
       <label>Format</label>
-      <select name="feed_format">
+      <select name="feed_format" id="feed_format">
         <option value="flat" {{ 'selected' if form.feed_format == 'flat' else '' }}>Flat list</option>
-        <option value="json" {{ 'selected' if form.feed_format == 'json' else '' }}>JSON (JQ on the gateway)</option>
+        <option value="json" {{ 'selected' if form.feed_format == 'json' else '' }}>JSON (your own structure + JQ)</option>
       </select>
     </div>
   </div>
 
-  <label>Entries — one per line</label>
-  <textarea name="entries_text" placeholder="203.0.113.10&#10;198.51.100.0/24&#10;*.malicious-example.com">{{ form.entries_text }}</textarea>
-  <p class="muted">Single IP, range (<code>a-b</code>), CIDR (<code>a.b.c.d/len</code>), FQDN (<code>host.example.com</code>), or wildcard (<code>*.example.com</code>) — matching the data type. JSON mode serves <code>{"entries":[…]}</code> (JQ query <code>.entries[]</code>).</p>
+  <div id="flat-fields">
+    <label>Entries — one per line</label>
+    <textarea name="entries_text" placeholder="203.0.113.10&#10;198.51.100.0/24&#10;*.malicious-example.com">{{ form.entries_text }}</textarea>
+    <p class="muted">Single IP, range (<code>a-b</code>), CIDR (<code>a.b.c.d/len</code>), FQDN (<code>host.example.com</code>), or wildcard (<code>*.example.com</code>) — matching the data type.</p>
+  </div>
+
+  <div id="json-fields">
+    <label>JSON body — your own structure, served verbatim</label>
+    <textarea name="json_body" style="min-height:190px;">{{ form.json_body }}</textarea>
+    <label>JQ query — how the gateway extracts the values</label>
+    <input name="jq_query" value="{{ form.jq_query }}" placeholder=".blocklist[].value">
+    <p class="muted">The docs don't fix a schema — author any valid JSON and give the JQ query you'll paste into SmartConsole. The portal serves the JSON exactly as written.</p>
+  </div>
 
   <label>Poll interval (seconds)</label>
   <input name="interval_seconds" type="number" min="1" value="{{ form.interval_seconds }}" style="width:140px">
@@ -53,20 +63,30 @@
 
 <script id="netfeed-examples" type="application/json">{{ examples | tojson }}</script>
 <script>
-  // When the data type changes, swap the sample entries to a matching set — but only while
-  // the textarea still holds one of the known samples (don't clobber the user's own input).
   (function () {
+    // Show flat-list fields or JSON fields based on the Format select.
+    var fmt = document.getElementById('feed_format');
+    var flat = document.getElementById('flat-fields');
+    var jsonf = document.getElementById('json-fields');
+    function sync() {
+      var isJson = fmt.value === 'json';
+      flat.style.display = isJson ? 'none' : '';
+      jsonf.style.display = isJson ? '' : 'none';
+    }
+    fmt.addEventListener('change', sync);
+    sync();
+
+    // Flat-list: swap the sample to match the data type (only while it's still a known sample).
     var examples = JSON.parse(document.getElementById('netfeed-examples').textContent);
     var dt = document.querySelector('select[name="data_type"]');
     var ta = document.querySelector('textarea[name="entries_text"]');
-    if (!dt || !ta) return;
-    var samples = Object.keys(examples).map(function (k) { return examples[k]; });
-    dt.addEventListener('change', function () {
-      var cur = ta.value.trim();
-      if (cur === '' || samples.indexOf(cur) !== -1) {
-        ta.value = examples[dt.value] || '';
-      }
-    });
+    if (dt && ta) {
+      var samples = Object.keys(examples).map(function (k) { return examples[k]; });
+      dt.addEventListener('change', function () {
+        var cur = ta.value.trim();
+        if (cur === '' || samples.indexOf(cur) !== -1) { ta.value = examples[dt.value] || ''; }
+      });
+    }
   })();
 </script>
 {% endblock %}
