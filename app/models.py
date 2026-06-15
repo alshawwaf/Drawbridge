@@ -151,3 +151,20 @@ class ActivityLog(Base):
     duration_ms: Mapped[int] = mapped_column(Integer, default=0)
     summary: Mapped[str] = mapped_column(String(300), default="")
     detail: Mapped[dict] = mapped_column(JSON, default=dict)  # {request:{...}, response:{...}} or {trace}
+
+
+class Gateway(Base):
+    """A saved gateway connection profile. The password is NEVER stored — it is entered per
+    apply (org policy). Optionally pins a self-signed cert (PEM) for TLS verification."""
+
+    __tablename__ = "gateways"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    token: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(200))
+    host: Mapped[str] = mapped_column(String(200))
+    port: Mapped[int] = mapped_column(Integer, default=443)
+    username: Mapped[str] = mapped_column(String(120), default="")
+    cert_pem: Mapped[str] = mapped_column(Text, default="")
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

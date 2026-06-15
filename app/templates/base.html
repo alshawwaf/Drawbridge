@@ -150,6 +150,8 @@
     .trace-head { display:flex; gap:8px; align-items:center; font-size:12.5px; margin-bottom:6px; flex-wrap:wrap; }
     .trace-lbl { color:var(--faint); font-size:11px; text-transform:uppercase; letter-spacing:.4px; margin:8px 0 3px; }
     .trace-step pre { margin:0; max-height:230px; font-size:11.5px; }
+    fieldset { border:none; padding:0; margin:0; transition:opacity .15s; }
+    fieldset:disabled { opacity:.5; }
   </style>
 </head>
 <body>
@@ -159,6 +161,7 @@
     {% block nav %}<nav>
       <a href="/">Feeds</a>
       <a href="/layers">Dynamic Layers</a>
+      <a href="/gateways">Gateways</a>
       <a href="/activity">Activity</a>
       <div class="menu">
         <a href="#" class="menu-trigger">New ▾</a>

@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Edit gateway' if gw else 'New gateway' }}{% endblock %}
+{% block content %}
+<h1>{{ 'Edit gateway' if gw else 'New gateway' }}</h1>
+<p class="muted">A reusable connection profile for applying Dynamic Layers. The password is entered at apply time and never stored.</p>
+{% if error %}<div class="err" style="margin:12px 0;">{{ error }}</div>{% endif %}
+
+<form method="post" action="{{ action }}" class="card">
+  <label>Name</label>
+  <input name="name" value="{{ gw.name if gw else '' }}" placeholder="Boston-GW-01" required>
+
+  <div class="row">
+    <div class="grow"><label>Gateway address</label><input name="host" value="{{ gw.host if gw else '' }}" placeholder="10.1.1.1" required></div>
+    <div style="width:120px;"><label>Port</label><input name="port" value="{{ gw.port if gw else 443 }}"></div>
+  </div>
+
+  <label>Username (optional)</label>
+  <input name="username" value="{{ gw.username if gw else '' }}" placeholder="admin">
+
+  <label>Pinned certificate (PEM, optional — to trust a self-signed gateway)</label>
+  <textarea name="cert_pem" style="min-height:90px;" placeholder="-----BEGIN CERTIFICATE-----">{{ gw.cert_pem if gw else '' }}</textarea>
+  <p class="muted">TLS verification stays on; a pinned certificate lets the apply trust a self-signed gateway without disabling verification.</p>
+
+  <div class="row" style="margin-top:18px;">
+    <button type="submit">{{ 'Save changes' if gw else 'Add gateway' }}</button>
+    <a class="btn secondary" href="/gateways">Cancel</a>
+  </div>
+</form>
+{% endblock %}
