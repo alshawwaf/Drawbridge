@@ -22,7 +22,7 @@ Access Control rulebase in the portal and apply it to a gateway's Gaia API — o
 | M2 | IoC feed (CSV Check Point format) | ⏳ next |
 | M3 | Network Feed (flat list + JSON/JQ, HTTP Basic auth) | ✅ done |
 | M4 | Demo scenario engine + live request-log UI | ⏳ |
-| M5 | One cloud-API datacenter mock (OpenStack/Kubernetes) | ⏳ |
+| DC | **Data Centers** — mock OpenStack (Keystone + Nova + Neutron) CP connects to; template for more providers | ✅ done |
 | M6 | Branded UI, templates/presets, import/export | ⏳ |
 | DL | **Dynamic Layer** (set-dynamic-content): builder, mock Gaia API + real-gateway push, live progress + HTTP trace | ✅ done |
 | Logs | App-wide **Activity log** (`/activity`): feed polls, mock Gaia calls, applies — live, filterable, full request/response (redacted) | ✅ done |
