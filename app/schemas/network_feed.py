@@ -7,7 +7,7 @@ served either as a flat list (one entry per line) or as JSON parsed by a JQ quer
 """
 import re
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator
 
 from .generic_dc import validate_range
 
@@ -39,14 +39,24 @@ def validate_entry(value: str, data_type: str) -> str:
     if not v:
         raise ValueError("empty entry")
     if data_type == "ip":
-        return validate_range(v)
+        try:
+            return validate_range(v)
+        except ValueError:
+            raise ValueError(f"{v!r} is not a valid IP, range, or CIDR (data type is 'IP Address')")
     if data_type == "domain":
-        return validate_domain(v)
+        try:
+            return validate_domain(v)
+        except ValueError:
+            raise ValueError(f"{v!r} is not a valid domain (data type is 'Domain')")
     # ip_domain: accept an IP/range/CIDR, otherwise a domain.
     try:
         return validate_range(v)
     except ValueError:
+        pass
+    try:
         return validate_domain(v)
+    except ValueError:
+        raise ValueError(f"{v!r} is not a valid IP, range, CIDR, or domain")
 
 
 class NetworkFeedConfig(BaseModel):
@@ -67,8 +77,3 @@ class NetworkFeedConfig(BaseModel):
         if v not in DATA_TYPES:
             raise ValueError(f"data_type must be one of {DATA_TYPES}")
         return v
-
-    @model_validator(mode="after")
-    def _validate_entries(self):
-        self.entries = [validate_entry(e, self.data_type) for e in self.entries]
-        return self

@@ -35,13 +35,17 @@ DEFAULT_OBJECTS_TEXT = (
 # --- Network Feed default (a small mixed blocklist) ------------------------------------
 DEFAULT_NETFEED_NAME = "Network-Feed-Example"
 DEFAULT_NETFEED_DESCRIPTION = "Demo blocklist"
-DEFAULT_NETFEED_ENTRIES = (
-    "198.51.100.0/24\n"
-    "203.0.113.10\n"
-    "203.0.113.20-203.0.113.40\n"
-    "*.malicious-example.com\n"
-    "phishing-example.net"
-)
+# Per-data-type example entries; the form swaps to the matching set when data type changes,
+# so the prefilled sample always validates under the selected type.
+NETFEED_EXAMPLES = {
+    "ip": "198.51.100.0/24\n203.0.113.10\n203.0.113.20-203.0.113.40",
+    "domain": "*.malicious-example.com\nphishing-example.net\nbad.example.org",
+    "ip_domain": (
+        "198.51.100.0/24\n203.0.113.10\n203.0.113.20-203.0.113.40\n"
+        "*.malicious-example.com\nphishing-example.net"
+    ),
+}
+DEFAULT_NETFEED_ENTRIES = NETFEED_EXAMPLES["ip_domain"]
 
 
 def _default_form() -> dict:
@@ -227,7 +231,9 @@ def new_network_page(request: Request, db: Session = Depends(get_db)):
     if get_user_or_none(request, db) is None:
         return RedirectResponse("/login", status_code=303)
     return templates.TemplateResponse(
-        request, "feed_new_network.html", {"error": None, "form": _default_network_form()}
+        request,
+        "feed_new_network.html",
+        {"error": None, "form": _default_network_form(), "examples": NETFEED_EXAMPLES},
     )
 
 
@@ -253,7 +259,7 @@ def create_network(
         return templates.TemplateResponse(
             request,
             "feed_new_network.html",
-            {"error": str(exc), "form": {
+            {"error": str(exc), "examples": NETFEED_EXAMPLES, "form": {
                 "name": name, "description": description, "data_type": data_type,
                 "feed_format": feed_format, "entries_text": entries_text,
                 "interval_seconds": interval_seconds, "basic_user": basic_user,
