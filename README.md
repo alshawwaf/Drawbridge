@@ -24,7 +24,8 @@ Access Control rulebase in the portal and apply it to a gateway's Gaia API — o
 | M4 | Demo scenario engine + live request-log UI | ⏳ |
 | M5 | One cloud-API datacenter mock (OpenStack/Kubernetes) | ⏳ |
 | M6 | Branded UI, templates/presets, import/export | ⏳ |
-| DL | **Dynamic Layer** (set-dynamic-content): builder, mock Gaia API + real-gateway push | ✅ done |
+| DL | **Dynamic Layer** (set-dynamic-content): builder, mock Gaia API + real-gateway push, live progress + HTTP trace | ✅ done |
+| Logs | App-wide **Activity log** (`/activity`): feed polls, mock Gaia calls, applies — live, filterable, full request/response (redacted) | ✅ done |
 
 See [PLAN.md](PLAN.md) for the full design and the verified feed formats.
 
