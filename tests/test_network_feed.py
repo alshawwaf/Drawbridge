@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from app.routers.ui import DEFAULT_NETFEED_ENTRIES, parse_entries_text
+from app.routers.ui import DEFAULT_NETFEED_ENTRIES, NETFEED_EXAMPLES, parse_entries_text
 from app.schemas.network_feed import validate_domain, validate_entry
 from app.services.render import normalize_network_feed_content, render_network_feed
 
@@ -74,3 +74,10 @@ def test_render_json_mode():
 def test_default_netfeed_example_is_valid():
     content = normalize_network_feed_content(parse_entries_text(DEFAULT_NETFEED_ENTRIES), "ip_domain", "flat")
     assert len(content["entries"]) == 5
+
+
+def test_each_example_validates_under_its_data_type():
+    """Guards the dynamic form: every sample must pass under the data type it's shown for."""
+    for data_type, text in NETFEED_EXAMPLES.items():
+        content = normalize_network_feed_content(parse_entries_text(text), data_type, "flat")
+        assert content["entries"], f"example for {data_type} failed to validate"
