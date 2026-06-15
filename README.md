@@ -9,6 +9,10 @@ You define objects/feeds in the UI; the portal serves them at stable HTTPS URLs 
 format SmartConsole and the gateway expect. Paste the URL into a Generic Data Center / IoC /
 Network Feed object, hit **Test Connection**, and watch objects sync live.
 
+It also supports **Dynamic Layers** (R82 `set-dynamic-content`, a *push* model): author an
+Access Control rulebase in the portal and apply it to a gateway's Gaia API — or to a built-in
+**mock gateway** for a no-hardware demo, complete with async task + change-summary.
+
 ## Status
 
 | Milestone | Scope | State |
@@ -20,6 +24,7 @@ Network Feed object, hit **Test Connection**, and watch objects sync live.
 | M4 | Demo scenario engine + live request-log UI | ⏳ |
 | M5 | One cloud-API datacenter mock (OpenStack/Kubernetes) | ⏳ |
 | M6 | Branded UI, templates/presets, import/export | ⏳ |
+| DL | **Dynamic Layer** (set-dynamic-content): builder, mock Gaia API + real-gateway push | ✅ done |
 
 See [PLAN.md](PLAN.md) for the full design and the verified feed formats.
 
