@@ -14,7 +14,8 @@ from ..models import Feed, FeedType, User
 from ..security import get_user_or_none, new_feed_token, verify_password
 from ..services.render import (
     normalize_generic_dc_content,
-    normalize_network_feed_content,
+    normalize_network_feed_flat,
+    normalize_network_feed_json,
     render_feed,
 )
 
@@ -46,6 +47,18 @@ NETFEED_EXAMPLES = {
     ),
 }
 DEFAULT_NETFEED_ENTRIES = NETFEED_EXAMPLES["ip_domain"]
+# JSON mode is free-form: the SE authors any JSON and supplies the JQ query to extract values.
+DEFAULT_NETFEED_JSON_BODY = (
+    "{\n"
+    '  "version": "1.0",\n'
+    '  "blocklist": [\n'
+    '    { "value": "*.malicious-example.com" },\n'
+    '    { "value": "phishing-example.net" },\n'
+    '    { "value": "bad.example.org" }\n'
+    "  ]\n"
+    "}"
+)
+DEFAULT_JQ_QUERY = ".blocklist[].value"
 
 
 def _default_form() -> dict:
@@ -65,6 +78,8 @@ def _default_network_form() -> dict:
         "data_type": "ip_domain",
         "feed_format": "flat",
         "entries_text": DEFAULT_NETFEED_ENTRIES,
+        "json_body": DEFAULT_NETFEED_JSON_BODY,
+        "jq_query": DEFAULT_JQ_QUERY,
         "interval_seconds": 3600,
         "basic_user": "",
     }
@@ -104,6 +119,23 @@ def _item_count(feed: Feed) -> int:
     if feed.type == FeedType.network_feed:
         return len(feed.content.get("entries", []))
     return len(feed.content.get("objects", []))
+
+
+_DT_LABELS = {"ip": "IP", "domain": "Domain", "ip_domain": "IP/Domain"}
+
+
+def _count_label(feed: Feed) -> str:
+    if feed.type == FeedType.network_feed and feed.content.get("format") == "json":
+        return "custom JSON"
+    return str(_item_count(feed))
+
+
+def _selections_label(feed: Feed) -> str:
+    """Short description of a feed's format/data-type selections (shown + filterable in the table)."""
+    if feed.type != FeedType.network_feed:
+        return ""
+    fmt = "JSON" if feed.content.get("format") == "json" else "Flat list"
+    return f"{fmt} · {_DT_LABELS.get(feed.content.get('data_type', ''), '')}"
 
 
 def _flash(request: Request, text: str, kind: str = "success") -> None:
@@ -158,9 +190,17 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
     feeds = db.scalars(
         select(Feed).where(Feed.owner_id == user.id).order_by(Feed.created_at.desc())
     ).all()
-    rows = [{"feed": f, "url": public_url(f), "count": _item_count(f)} for f in feeds]
+    rows = [{
+        "feed": f, "url": public_url(f),
+        "count": _count_label(f), "selections": _selections_label(f),
+    } for f in feeds]
+    type_counts: dict[str, int] = {}
+    for f in feeds:
+        type_counts[f.type.value] = type_counts.get(f.type.value, 0) + 1
     return templates.TemplateResponse(
-        request, "dashboard.html", {"user": user, "rows": rows, "flash": _pop_flash(request)}
+        request,
+        "dashboard.html",
+        {"user": user, "rows": rows, "type_counts": type_counts, "flash": _pop_flash(request)},
     )
 
 
@@ -245,6 +285,8 @@ def create_network(
     data_type: str = Form("ip_domain"),
     feed_format: str = Form("flat"),
     entries_text: str = Form(""),
+    json_body: str = Form(""),
+    jq_query: str = Form(""),
     interval_seconds: int = Form(3600),
     basic_user: str = Form(""),
     basic_pass: str = Form(""),
@@ -254,7 +296,10 @@ def create_network(
     if user is None:
         return RedirectResponse("/login", status_code=303)
     try:
-        content = normalize_network_feed_content(parse_entries_text(entries_text), data_type, feed_format)
+        if feed_format == "json":
+            content = normalize_network_feed_json(json_body, jq_query, data_type)
+        else:
+            content = normalize_network_feed_flat(parse_entries_text(entries_text), data_type)
     except Exception as exc:
         return templates.TemplateResponse(
             request,
@@ -262,6 +307,7 @@ def create_network(
             {"error": str(exc), "examples": NETFEED_EXAMPLES, "form": {
                 "name": name, "description": description, "data_type": data_type,
                 "feed_format": feed_format, "entries_text": entries_text,
+                "json_body": json_body, "jq_query": jq_query,
                 "interval_seconds": interval_seconds, "basic_user": basic_user,
             }},
             status_code=400,

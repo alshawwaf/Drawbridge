@@ -26,7 +26,7 @@
     {% set dtypes = {'ip': 'IP Address', 'domain': 'Domain', 'ip_domain': 'IP Address / Domain'} %}
     {% set fmt = 'JSON' if feed.content.format == 'json' else 'Flat list' %}
     <p class="muted">Format <b>{{ fmt }}</b> · Data type <b>{{ dtypes[feed.content.data_type] }}</b>{% if feed.auth_header_key %} · Basic-auth user <code>{{ feed.auth_header_key }}</code>{% endif %}.</p>
-    <p class="muted"><b>In SmartConsole:</b> create a <i>Network Feed</i> object, set the URL above, Format = <b>{{ fmt }}</b>, Data type = <b>{{ dtypes[feed.content.data_type] }}</b>{% if feed.content.format == 'json' %}, JSON Query = <code>.entries[]</code>{% endif %}{% if feed.auth_header_key %}, and the username/password under Authentication{% endif %}.</p>
+    <p class="muted"><b>In SmartConsole:</b> create a <i>Network Feed</i> object, set the URL above, Format = <b>{{ fmt }}</b>, Data type = <b>{{ dtypes[feed.content.data_type] }}</b>{% if feed.content.format == 'json' %}, JSON Query = <code>{{ feed.content.jq_query }}</code>{% endif %}{% if feed.auth_header_key %}, and the username/password under Authentication{% endif %}.</p>
     <h2>Test from a shell</h2>
     <pre>curl -s {% if feed.auth_header_key %}-u "{{ feed.auth_header_key }}:&lt;password&gt;" {% endif %}{{ url }}</pre>
   {% endif %}
