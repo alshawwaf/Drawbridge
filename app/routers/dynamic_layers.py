@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from ..config import get_settings
 from ..db import get_db
-from ..models import DynamicLayer, User
+from ..models import DynamicLayer, Gateway, User
 from ..schemas.dynamic_layer import (
     OBJECT_SPECS,
     OBJECT_TYPES,
@@ -67,15 +67,26 @@ def layers_list(request: Request, db: Session = Depends(get_db)):
     layers = db.scalars(
         select(DynamicLayer).where(DynamicLayer.owner_id == user.id).order_by(DynamicLayer.created_at.desc())
     ).all()
+    gws = {g.id: g for g in db.scalars(select(Gateway).where(Gateway.owner_id == user.id)).all()}
     rows = []
+    gw_counts: dict[str, int] = {}
     for layer in layers:
         objs = sum(len(v or []) for v in (layer.content.get("objects") or {}).values())
+        gid = (layer.content or {}).get("gateway_id")
+        gw = gws.get(gid)
+        key = str(gid) if gw else "none"
+        gw_counts[key] = gw_counts.get(key, 0) + 1
         rows.append({
             "layer": layer, "objects": objs,
             "rules": len(layer.content.get("rulebase") or []),
             "last": layer.tasks[0] if layer.tasks else None,
+            "gateway": gw.name if gw else None, "gw_key": key,
         })
-    return templates.TemplateResponse(request, "dynamic_list.html", {"rows": rows, "flash": _pop_flash(request)})
+    gw_filters = [{"key": str(g.id), "name": g.name, "count": gw_counts.get(str(g.id), 0)} for g in gws.values()]
+    if gw_counts.get("none"):
+        gw_filters.append({"key": "none", "name": "No gateway", "count": gw_counts["none"]})
+    return templates.TemplateResponse(request, "dynamic_list.html",
+        {"rows": rows, "gw_filters": gw_filters, "flash": _pop_flash(request)})
 
 
 @router.get("/layers/new", response_class=HTMLResponse)
@@ -83,9 +94,11 @@ def layers_new(request: Request, db: Session = Depends(get_db)):
     user = _user(request, db)
     if user is None:
         return RedirectResponse("/login", status_code=303)
+    gateways = db.scalars(select(Gateway).where(Gateway.owner_id == user.id).order_by(Gateway.name)).all()
     ctx = dict(_BUILDER_CTX)
     ctx.update({
         "error": None, "default_content": DEFAULT_LAYER_CONTENT,
+        "gateways": gateways, "selected_gateway_id": "",
         "form": {"name": "Self-managed-demo", "layer_name": "dynamic_layer",
                  "description": "", "comments": "", "tags": ""},
     })
@@ -100,6 +113,7 @@ def layers_create(
     description: str = Form(""),
     comments: str = Form(""),
     tags: str = Form(""),
+    gateway_id: str = Form(""),
     objects_json: str = Form("{}"),
     rules_json: str = Form("[]"),
     referenced_json: str = Form("{}"),
@@ -117,11 +131,17 @@ def layers_create(
             "tags": [t.strip() for t in tags.split(",") if t.strip()],
             "objects": objects, "rulebase": rulebase, "referenced_objects": referenced,
         }
+        if gateway_id:
+            try:
+                content["gateway_id"] = int(gateway_id)
+            except ValueError:
+                pass
         validate_layer_content(content)
     except Exception as exc:
+        gateways = db.scalars(select(Gateway).where(Gateway.owner_id == user.id).order_by(Gateway.name)).all()
         ctx = dict(_BUILDER_CTX)
         ctx.update({
-            "error": str(exc),
+            "error": str(exc), "gateways": gateways, "selected_gateway_id": gateway_id,
             "default_content": {"objects": _safe_json(objects_json, {}),
                                 "rulebase": _safe_json(rules_json, []),
                                 "referenced_objects": _safe_json(referenced_json, {})},
@@ -171,9 +191,13 @@ def layer_detail(layer_id: int, request: Request, db: Session = Depends(get_db))
     payload_json = json.dumps(build_set_dynamic_content(layer), indent=2)
     base = get_settings().base_url.rstrip("/")
     tasks = [_task_view(t) for t in layer.tasks[:25]]
+    gws = db.scalars(select(Gateway).where(Gateway.owner_id == user.id).order_by(Gateway.name)).all()
+    gateways = [{"id": g.id, "name": g.name, "host": g.host, "port": g.port,
+                 "username": g.username, "cert_pem": g.cert_pem} for g in gws]
     return templates.TemplateResponse(request, "dynamic_detail.html", {
         "layer": layer, "payload_json": payload_json, "tasks": tasks,
         "latest": tasks[0] if tasks else None,
+        "gateways": gateways, "layer_gateway_id": (layer.content or {}).get("gateway_id"),
         "mock_url": f"{base}/gaia_api/v1.9", "flash": _pop_flash(request),
     })
 
@@ -182,7 +206,7 @@ def layer_detail(layer_id: int, request: Request, db: Session = Depends(get_db))
 def apply_start(
     layer_id: int,
     request: Request,
-    target: str = Form("mock"),
+    use_mock: str = Form(""),
     dry_run: str = Form(""),
     gw_host: str = Form(""),
     gw_port: str = Form("443"),
@@ -196,17 +220,18 @@ def apply_start(
         return JSONResponse({"error": "Not authenticated"}, status_code=401)
     layer = _owned(db, layer_id, user)
     dry = bool(dry_run)
-    if target == "gateway":
+    if use_mock:
+        pid = start_apply(layer_id=layer.id, target="mock", dry_run=dry)
+    else:
         if not (gw_host and gw_user and gw_pass):
-            return JSONResponse({"error": "Gateway address, username, and password are required."}, status_code=400)
+            return JSONResponse({"error": "Gateway address, username, and password are required "
+                                          "(or tick “Use mock gateway”)."}, status_code=400)
         try:
             port = int(gw_port or 443)
         except ValueError:
             port = 443
         pid = start_apply(layer_id=layer.id, target="gateway", dry_run=dry, gateway_host=gw_host,
                           gateway_port=port, user=gw_user, password=gw_pass, cert_pem=gw_cert or None)
-    else:
-        pid = start_apply(layer_id=layer.id, target="mock", dry_run=dry)
     return JSONResponse({"progress_id": pid})
 
 

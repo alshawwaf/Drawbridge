@@ -6,8 +6,15 @@ from ..models import ActivityLog
 
 # Headers that must never be logged in the clear.
 SENSITIVE_HEADERS = {"authorization", "x-chkp-sid", "cookie", "set-cookie", "proxy-authorization"}
-# Body keys (any casing) whose values must be redacted.
-SENSITIVE_KEYS = {"password", "pass", "secret", "token", "sid", "x-chkp-sid"}
+# Any body/field key whose name CONTAINS one of these is redacted (covers gw_pass, basic_pass,
+# auth_header_value, password, x-chkp-sid/sid, secrets/tokens, etc. across JSON and form bodies).
+SENSITIVE_SUBSTRINGS = ("password", "passwd", "pwd", "pass", "secret", "token",
+                        "credential", "sid", "auth_header_value", "private")
+
+
+def _is_sensitive(key: str) -> bool:
+    k = str(key).lower()
+    return any(s in k for s in SENSITIVE_SUBSTRINGS)
 
 
 def redact_headers(headers: dict) -> dict:
@@ -16,7 +23,7 @@ def redact_headers(headers: dict) -> dict:
 
 def redact_body(value):
     if isinstance(value, dict):
-        return {k: ("***" if k.lower() in SENSITIVE_KEYS else redact_body(v)) for k, v in value.items()}
+        return {k: ("***" if _is_sensitive(k) else redact_body(v)) for k, v in value.items()}
     if isinstance(value, list):
         return [redact_body(v) for v in value]
     return value
