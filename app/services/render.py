@@ -4,7 +4,7 @@ import uuid
 
 from ..models import Feed, FeedType
 from ..schemas.generic_dc import GDCObjectIn, GENERIC_DC_VERSION
-from ..schemas.network_feed import NetworkFeedConfig, validate_entry
+from ..schemas.network_feed import DATA_TYPES, validate_entry, validate_json_body
 
 
 def normalize_generic_dc_content(objects: list[dict], description: str = "") -> dict:
@@ -43,23 +43,35 @@ def render_generic_dc(feed: Feed) -> tuple[str, str]:
     return json.dumps(doc, indent=2), "application/json"
 
 
-def normalize_network_feed_content(entries: list[str], data_type: str, fmt: str) -> dict:
-    """Validate Network Feed config + entries; returns the dict persisted in Feed.content.
+def normalize_network_feed_flat(entries: list[str], data_type: str) -> dict:
+    """Validate a flat list of entries; returns the dict persisted in Feed.content."""
+    if data_type not in DATA_TYPES:
+        raise ValueError(f"data_type must be one of {DATA_TYPES}")
+    if not entries:
+        raise ValueError("Enter at least one entry.")
+    validated = [validate_entry(e, data_type) for e in entries]
+    return {"format": "flat", "data_type": data_type, "entries": validated}
 
-    Entry validation lives here (not in the pydantic model) so a bad entry raises a clean,
-    readable ValueError instead of a verbose pydantic ValidationError dump.
-    """
-    cfg = NetworkFeedConfig(format=fmt, data_type=data_type, entries=entries)
-    validated = [validate_entry(e, cfg.data_type) for e in cfg.entries]
-    return {"format": cfg.format, "data_type": cfg.data_type, "entries": validated}
+
+def normalize_network_feed_json(body: str, jq_query: str, data_type: str) -> dict:
+    """Validate a custom JSON body + JQ query. The JSON is served verbatim to the gateway,
+    which extracts values using the JQ query — so the structure is the SE's to design."""
+    if data_type not in DATA_TYPES:
+        raise ValueError(f"data_type must be one of {DATA_TYPES}")
+    validate_json_body(body)
+    query = (jq_query or "").strip()
+    if not query:
+        raise ValueError("Enter the JQ query the gateway uses to extract values from the JSON.")
+    return {"format": "json", "data_type": data_type, "jq_query": query, "body": body}
 
 
 def render_network_feed(feed: Feed) -> tuple[str, str]:
-    entries = feed.content.get("entries", [])
-    if feed.content.get("format") == "json":
-        return json.dumps({"entries": entries}, indent=2), "application/json"
+    content = feed.content
+    if content.get("format") == "json":
+        # Serve the SE's JSON exactly as authored.
+        return content.get("body", ""), "application/json"
     # Flat list: one entry per line.
-    return "\n".join(entries) + "\n", "text/plain; charset=utf-8"
+    return "\n".join(content.get("entries", [])) + "\n", "text/plain; charset=utf-8"
 
 
 def render_feed(feed: Feed) -> tuple[str, str]:
