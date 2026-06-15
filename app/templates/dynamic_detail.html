@@ -13,7 +13,7 @@
 
 <div class="card">
   <h2 style="margin-top:0;">Apply</h2>
-  <form method="post" action="/layers/{{ layer.id }}/apply">
+  <form id="apply-form">
     <div class="row endalign">
       <div>
         <label>Target</label>
@@ -28,18 +28,21 @@
     </div>
     <div id="gw-fields" style="display:none;">
       <div class="row">
-        <div class="grow"><label>Gateway address</label><input name="gw_host" placeholder="10.1.1.1"></div>
-        <div style="width:120px;"><label>Port</label><input name="gw_port" value="443"></div>
+        <div class="grow"><label>Gateway address</label><input name="gw_host" id="gw_host" placeholder="10.1.1.1"></div>
+        <div style="width:120px;"><label>Port</label><input name="gw_port" id="gw_port" value="443"></div>
       </div>
       <div class="row">
         <div class="grow"><label>Username</label><input name="gw_user" placeholder="admin"></div>
         <div class="grow"><label>Password</label><input name="gw_pass" type="password"></div>
       </div>
-      <label>Gateway certificate (PEM, optional — to pin a self-signed gateway)</label>
-      <textarea name="gw_cert" style="min-height:90px;" placeholder="-----BEGIN CERTIFICATE-----"></textarea>
-      <p class="muted">TLS verification is always on (no skip-verify). The password is used only for this call and never stored.</p>
+      <div class="row"><div class="grow"><label>Gateway certificate (PEM)</label></div>
+        <button type="button" class="secondary" id="fetch-cert">Fetch &amp; trust certificate</button></div>
+      <textarea name="gw_cert" id="gw_cert" style="min-height:84px;" placeholder="Paste the gateway's PEM, or use Fetch &amp; trust to pin it"></textarea>
+      <div id="cert-fp" class="fp" style="display:none; margin-top:8px;"></div>
+      <p class="muted">TLS verification is always on. For a self-signed gateway, fetch its certificate, review the fingerprint, and it gets pinned for this apply. The password is used only for this call and never stored.</p>
     </div>
-    <div style="margin-top:14px;"><button type="submit">Apply</button></div>
+    <div style="margin-top:14px;"><button type="button" id="apply-btn">Apply</button>
+      <span class="err-inline" id="apply-err" style="display:none;"></span></div>
   </form>
 </div>
 
@@ -48,26 +51,14 @@
   <div class="row"><h2 style="margin:0;" class="grow">Latest result</h2>
     <span class="pill {{ 'ok' if latest.t.status == 'succeeded' else 'bad' }}">{{ latest.t.status }}</span></div>
   <p class="muted">{{ latest.t.target }}{% if latest.t.dry_run %} · dry-run{% endif %} · {{ latest.t.at.strftime('%Y-%m-%d %H:%M:%S') }}{% if latest.t.gateway_host %} · {{ latest.t.gateway_host }}{% endif %} · task <code>{{ latest.t.task_id[:18] }}</code></p>
-  {% if latest.errors %}
-    <h3 style="color:var(--danger);">Errors</h3>
-    {% for e in latest.errors %}<div class="err" style="margin:6px 0;">{{ e.message }}</div>{% endfor %}
-  {% endif %}
+  {% if latest.errors %}<h3 style="color:var(--danger);">Errors</h3>{% for e in latest.errors %}<div class="err" style="margin:6px 0;">{{ e.message }}</div>{% endfor %}{% endif %}
   <div class="row" style="align-items:flex-start; gap:28px;">
-    <div class="grow">
-      <h3>Rules created ({{ latest.rules_created }})</h3>
-      {% for lyr in latest.layers %}
-        {% for rn in lyr.rules.create %}<span class="pill ok" style="margin:2px;">{{ rn }}</span>{% endfor %}
-      {% else %}<span class="muted">none</span>{% endfor %}
-    </div>
-    <div class="grow">
-      <h3>Objects created ({{ latest.objects_created|length }})</h3>
-      {% for o in latest.objects_created %}<span class="pill" style="margin:2px;">{{ o }}</span>{% else %}<span class="muted">none</span>{% endfor %}
-    </div>
+    <div class="grow"><h3>Rules created ({{ latest.rules_created }})</h3>
+      {% for lyr in latest.layers %}{% for rn in lyr.rules.create %}<span class="pill ok" style="margin:2px;">{{ rn }}</span>{% endfor %}{% else %}<span class="muted">none</span>{% endfor %}</div>
+    <div class="grow"><h3>Objects created ({{ latest.objects_created|length }})</h3>
+      {% for o in latest.objects_created %}<span class="pill" style="margin:2px;">{{ o }}</span>{% else %}<span class="muted">none</span>{% endfor %}</div>
   </div>
-  {% if latest.warnings %}
-    <h3>Warnings ({{ latest.warnings|length }})</h3>
-    {% for w in latest.warnings %}<div class="muted" style="font-size:12.5px; margin:3px 0;">⚠ {{ w.message }}</div>{% endfor %}
-  {% endif %}
+  {% if latest.warnings %}<h3>Warnings ({{ latest.warnings|length }})</h3>{% for w in latest.warnings %}<div class="muted" style="font-size:12.5px; margin:3px 0;">⚠ {{ w.message }}</div>{% endfor %}{% endif %}
 </div>
 {% endif %}
 
@@ -102,12 +93,100 @@
 </div>
 {% endif %}
 
+<!-- Progress modal -->
+<div class="modal-overlay" id="progress-modal" hidden>
+  <div class="modal">
+    <h3 id="progress-title">Applying to gateway…</h3>
+    <p class="muted" id="progress-sub">Running the Gaia API session.</p>
+    <ul class="stepper" id="stepper"></ul>
+    <div id="progress-result" style="display:none;"></div>
+    <div class="modal-actions">
+      <button type="button" class="secondary" id="progress-close" style="display:none;">Close</button>
+    </div>
+  </div>
+</div>
+
 <script>
   (function () {
-    var sel = document.getElementById('apply-target');
-    var gw = document.getElementById('gw-fields');
-    function sync() { gw.style.display = sel.value === 'gateway' ? '' : 'none'; }
-    sel.addEventListener('change', sync); sync();
+    var $ = function (id) { return document.getElementById(id); };
+    var LAYER_ID = {{ layer.id }};
+    function formData() { return new URLSearchParams(new FormData($('apply-form'))); }
+
+    $('apply-target').addEventListener('change', function () {
+      $('gw-fields').style.display = this.value === 'gateway' ? '' : 'none';
+    });
+
+    $('fetch-cert').addEventListener('click', function () {
+      var p = new URLSearchParams(); p.set('gw_host', $('gw_host').value); p.set('gw_port', $('gw_port').value);
+      $('fetch-cert').textContent = 'Fetching…'; $('fetch-cert').disabled = true;
+      fetch('/layers/' + LAYER_ID + '/fetch-cert', { method: 'POST', body: p })
+        .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+        .then(function (res) {
+          $('fetch-cert').textContent = 'Fetch & trust certificate'; $('fetch-cert').disabled = false;
+          if (!res.ok) { var e = $('cert-fp'); e.style.display = ''; e.textContent = res.j.error || 'Failed'; return; }
+          $('gw_cert').value = res.j.pem;
+          var fp = $('cert-fp'); fp.style.display = '';
+          fp.innerHTML = '<b>Pinned</b> · SHA-256 ' + res.j.fingerprint;
+        })
+        .catch(function () { $('fetch-cert').textContent = 'Fetch & trust certificate'; $('fetch-cert').disabled = false; });
+    });
+
+    var STAGE_FALLBACK = [['connecting','Connecting'],['logging_in','Logging in'],['pushing','Pushing policy'],['polling','Waiting for task'],['logging_out','Logging out'],['done','Done']];
+    function renderStepper(stages, doneStages, current, status) {
+      var ul = $('stepper'); ul.innerHTML = '';
+      stages.forEach(function (s) {
+        var key = s.key, label = s.label;
+        var li = document.createElement('li'); li.className = 'step';
+        var dot = '';
+        if (doneStages.indexOf(key) !== -1 || (key === 'done' && status !== 'running')) { li.className += ' done'; dot = '✓'; }
+        else if (key === current && status === 'running') { li.className += ' active'; }
+        else if (key === current && status === 'failed') { li.className += ' fail'; dot = '!'; }
+        var dotHtml = (li.className.indexOf('active') !== -1) ? '<span class="spin"></span>' : '<span class="dot">' + dot + '</span>';
+        li.innerHTML = dotHtml + '<span>' + label + '</span>';
+        ul.appendChild(li);
+      });
+    }
+
+    function poll(pid) {
+      fetch('/layers/' + LAYER_ID + '/apply-status/' + pid).then(function (r) { return r.json(); }).then(function (p) {
+        var stages = p.stages || STAGE_FALLBACK.map(function (x) { return { key: x[0], label: x[1] }; });
+        renderStepper(stages, p.done_stages || [], p.stage, p.status);
+        if (p.status === 'running') { setTimeout(function () { poll(pid); }, 500); return; }
+        // finished
+        var ok = p.status === 'succeeded';
+        $('progress-title').textContent = ok ? 'Applied' : 'Apply failed';
+        $('progress-sub').style.display = 'none';
+        var box = $('progress-result'); box.style.display = '';
+        if (p.error) {
+          box.innerHTML = '<div class="err" style="margin-top:10px;">' + p.error + '</div>';
+        } else if (p.summary) {
+          var s = p.summary;
+          box.innerHTML = '<p class="muted" style="margin-top:10px;">Created ' + s.rules + ' rule(s), ' + s.objects + ' object(s)' +
+            (s.warnings ? ' · ' + s.warnings + ' warning(s)' : '') + (s.errors ? ' · ' + s.errors + ' error(s)' : '') + '.</p>';
+        }
+        $('progress-close').style.display = '';
+      }).catch(function () { setTimeout(function () { poll(pid); }, 800); });
+    }
+
+    $('apply-btn').addEventListener('click', function () {
+      $('apply-err').style.display = 'none';
+      fetch('/layers/' + LAYER_ID + '/apply-start', { method: 'POST', body: formData() })
+        .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+        .then(function (res) {
+          if (!res.ok) { var e = $('apply-err'); e.style.display = ''; e.textContent = res.j.error || 'Failed to start'; return; }
+          // open modal
+          $('progress-title').textContent = $('apply-target').value === 'gateway' ? 'Applying to gateway…' : 'Applying to mock gateway…';
+          $('progress-sub').style.display = ''; $('progress-result').style.display = 'none'; $('progress-result').innerHTML = '';
+          $('progress-close').style.display = 'none';
+          $('progress-modal').hidden = false;
+          poll(res.j.progress_id);
+        });
+    });
+
+    $('progress-close').addEventListener('click', function () { window.location.reload(); });
+    $('progress-modal').addEventListener('click', function (e) {
+      if (e.target === $('progress-modal') && $('progress-close').style.display !== 'none') window.location.reload();
+    });
   })();
 </script>
 {% endblock %}

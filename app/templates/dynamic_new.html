@@ -26,42 +26,20 @@
   </div>
 
   <div class="card">
-    <h2 style="margin-top:0;">Objects</h2>
+    <div class="row"><h2 style="margin:0;" class="grow">Objects</h2><button type="button" class="secondary" id="open-obj">+ Add object</button></div>
     <p class="muted">Definitions created on the gateway by this apply — temporary and gateway-scoped.</p>
-    <div class="row endalign">
-      <div>
-        <label>Type</label>
-        <select id="obj-type">{% for t in object_types %}<option value="{{ t }}">{{ specs[t].label }}</option>{% endfor %}</select>
-      </div>
-      <div class="grow" id="obj-fields"></div>
-      <div><button type="button" class="secondary" id="add-obj">Add object</button></div>
-    </div>
-    <div class="err-inline" id="obj-err" style="display:none;"></div>
-    <div id="obj-list" style="margin-top:12px;"></div>
+    <div id="obj-list"></div>
   </div>
 
   <div class="card">
-    <h2 style="margin-top:0;">Rules</h2>
+    <div class="row"><h2 style="margin:0;" class="grow">Rules</h2><button type="button" class="secondary" id="open-rule">+ Add rule</button></div>
     <p class="muted">Applied top-to-bottom. Source / Destination / Service accept <code>any</code> or comma-separated object names.</p>
-    <div class="row endalign">
-      <div class="grow"><label>Name</label><input id="r-name" placeholder="rule name"></div>
-      <div><label>Action</label><select id="r-action">{% for a in actions %}<option>{{ a }}</option>{% endfor %}</select></div>
-      <div><label>Track</label><select id="r-track">{% for t in tracks %}<option {{ 'selected' if t == 'Log' else '' }}>{{ t }}</option>{% endfor %}</select></div>
-    </div>
-    <div class="row endalign">
-      <div class="grow"><label>Source</label><input id="r-source" value="any"></div>
-      <div class="grow"><label>Destination</label><input id="r-dest" value="any"></div>
-      <div class="grow"><label>Service</label><input id="r-service" value="any"></div>
-      <div class="check" style="padding-bottom:9px;"><input type="checkbox" id="r-negate"><label>Negate service</label></div>
-      <div><button type="button" class="secondary" id="add-rule">Add rule</button></div>
-    </div>
-    <div class="err-inline" id="rule-err" style="display:none;"></div>
-    <div id="rule-list" style="margin-top:12px;"></div>
+    <div id="rule-list"></div>
   </div>
 
   <div class="card">
-    <h2 style="margin-top:0;">Referenced objects <span class="muted" style="font-weight:400;">(optional)</span></h2>
-    <p class="muted">Names defined elsewhere on the gateway (e.g. <code>Facebook</code>, <code>ssh</code>, updatable objects). <code>any</code>, <code>internet</code>, <code>_GW_</code> are always available.</p>
+    <div class="row"><h2 style="margin:0;" class="grow">Referenced objects <span class="muted" style="font-weight:400;">(optional)</span></h2></div>
+    <p class="muted">Names defined elsewhere on the gateway (e.g. <code>Facebook</code>, <code>ssh</code>). <code>any</code>, <code>internet</code>, <code>_GW_</code> are always available.</p>
     <div class="row endalign">
       <div><label>Category</label><select id="ref-type">{% for t in ref_types %}<option>{{ t }}</option>{% endfor %}</select></div>
       <div class="grow"><label>Names (comma-separated)</label><input id="ref-names" placeholder="Facebook, Social Networking"></div>
@@ -81,6 +59,42 @@
   </div>
 </form>
 
+<!-- Add-object modal -->
+<div class="modal-overlay" id="obj-modal" hidden>
+  <div class="modal wide">
+    <h3>Add object</h3>
+    <label>Type</label>
+    <select id="obj-type">{% for t in object_types %}<option value="{{ t }}">{{ specs[t].label }}</option>{% endfor %}</select>
+    <div id="obj-fields"></div>
+    <div class="err-inline" id="obj-err" style="display:none;"></div>
+    <div class="modal-actions">
+      <button type="button" class="secondary" id="obj-cancel">Cancel</button>
+      <button type="button" id="obj-add">Add object</button>
+    </div>
+  </div>
+</div>
+
+<!-- Add-rule modal -->
+<div class="modal-overlay" id="rule-modal" hidden>
+  <div class="modal wide">
+    <h3>Add rule</h3>
+    <label>Name</label><input id="r-name" placeholder="rule name">
+    <div class="row">
+      <div class="grow"><label>Action</label><select id="r-action">{% for a in actions %}<option>{{ a }}</option>{% endfor %}</select></div>
+      <div class="grow"><label>Track</label><select id="r-track">{% for t in tracks %}<option {{ 'selected' if t == 'Log' else '' }}>{{ t }}</option>{% endfor %}</select></div>
+    </div>
+    <label>Source</label><input id="r-source" value="any">
+    <label>Destination</label><input id="r-dest" value="any">
+    <label>Service</label><input id="r-service" value="any">
+    <div class="check" style="margin-top:12px;"><input type="checkbox" id="r-negate"><label>Negate service</label></div>
+    <div class="err-inline" id="rule-err" style="display:none;"></div>
+    <div class="modal-actions">
+      <button type="button" class="secondary" id="rule-cancel">Cancel</button>
+      <button type="button" id="rule-add">Add rule</button>
+    </div>
+  </div>
+</div>
+
 <script id="specs" type="application/json">{{ specs | tojson }}</script>
 <script id="default-content" type="application/json">{{ default_content | tojson }}</script>
 <script>
@@ -95,23 +109,22 @@
     function el(tag, cls, html) { var e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; }
     function esc(s) { return String(s).replace(/[&<>]/g, function (c) { return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c]; }); }
     function flash(id, msg) { var e = $(id); e.textContent = msg; e.style.display = ''; setTimeout(function () { e.style.display = 'none'; }, 2600); }
+    function openModal(id) { $(id).hidden = false; }
+    function closeModal(id) { $(id).hidden = true; }
 
+    // ----- Add object modal -----
     function renderObjFields() {
       var spec = SPECS[$('obj-type').value];
-      var grid = el('div', 'row');
+      var box = $('obj-fields'); box.innerHTML = '';
       spec.fields.forEach(function (f) {
-        var w = el('div', 'grow');
-        w.appendChild(el('label', null, esc(f.label) + (f.required ? ' *' : '')));
+        box.appendChild(el('label', null, esc(f.label) + (f.required ? ' *' : '')));
         var input;
         if (f.kind === 'bool') { input = el('select'); input.innerHTML = '<option value="false">No</option><option value="true">Yes</option>'; }
         else { input = el('input'); input.placeholder = f.kind; }
-        input.setAttribute('data-field', f.name);
-        input.setAttribute('data-kind', f.kind);
-        w.appendChild(input); grid.appendChild(w);
+        input.setAttribute('data-field', f.name); input.setAttribute('data-kind', f.kind);
+        box.appendChild(input);
       });
-      $('obj-fields').innerHTML = ''; $('obj-fields').appendChild(grid);
     }
-
     function coerce(kind, v) {
       v = (v || '').trim();
       if (kind === 'int') return v === '' ? undefined : Number(v);
@@ -121,13 +134,12 @@
       return v === '' ? undefined : v;
     }
     function fieldVal(v) { return Array.isArray(v) ? v.join(', ') : (typeof v === 'object' ? JSON.stringify(v) : v); }
-    function parseRuleField(v) {
-      v = (v || '').trim();
-      if (v === '' || v.toLowerCase() === 'any') return 'any';
-      return v.split(',').map(function (s) { return s.trim(); }).filter(Boolean);
-    }
+    function parseRuleField(v) { v = (v || '').trim(); if (v === '' || v.toLowerCase() === 'any') return 'any'; return v.split(',').map(function (s) { return s.trim(); }).filter(Boolean); }
 
-    $('add-obj').addEventListener('click', function () {
+    $('open-obj').addEventListener('click', function () { renderObjFields(); openModal('obj-modal'); });
+    $('obj-cancel').addEventListener('click', function () { closeModal('obj-modal'); });
+    $('obj-type').addEventListener('change', renderObjFields);
+    $('obj-add').addEventListener('click', function () {
       var type = $('obj-type').value, obj = {};
       $('obj-fields').querySelectorAll('[data-field]').forEach(function (i) {
         var val = coerce(i.getAttribute('data-kind'), i.value);
@@ -135,40 +147,39 @@
       });
       if (!obj.name) { flash('obj-err', 'Name is required.'); return; }
       (objects[type] = objects[type] || []).push(obj);
-      $('obj-fields').querySelectorAll('[data-field]').forEach(function (i) { i.value = i.tagName === 'SELECT' ? 'false' : ''; });
-      sync();
+      closeModal('obj-modal'); sync();
     });
 
-    $('add-rule').addEventListener('click', function () {
+    // ----- Add rule modal -----
+    $('open-rule').addEventListener('click', function () { openModal('rule-modal'); });
+    $('rule-cancel').addEventListener('click', function () { closeModal('rule-modal'); });
+    $('rule-add').addEventListener('click', function () {
       var name = $('r-name').value.trim();
       if (!name) { flash('rule-err', 'Rule name is required.'); return; }
-      var rule = {
-        name: name, action: $('r-action').value, track: { type: $('r-track').value },
-        source: parseRuleField($('r-source').value),
-        destination: parseRuleField($('r-dest').value),
-        service: parseRuleField($('r-service').value),
-      };
+      var rule = { name: name, action: $('r-action').value, track: { type: $('r-track').value },
+        source: parseRuleField($('r-source').value), destination: parseRuleField($('r-dest').value),
+        service: parseRuleField($('r-service').value) };
       if ($('r-negate').checked) rule['service-negate'] = true;
       rules.push(rule);
       $('r-name').value = ''; $('r-source').value = 'any'; $('r-dest').value = 'any'; $('r-service').value = 'any'; $('r-negate').checked = false;
-      sync();
+      closeModal('rule-modal'); sync();
     });
 
+    // ----- Referenced objects -----
     $('add-ref').addEventListener('click', function () {
       var type = $('ref-type').value;
       var names = $('ref-names').value.split(',').map(function (s) { return s.trim(); }).filter(Boolean);
       if (!names.length) return;
-      refs[type] = (refs[type] || []).concat(names);
-      $('ref-names').value = ''; sync();
+      refs[type] = (refs[type] || []).concat(names); $('ref-names').value = ''; sync();
     });
 
+    // ----- Renderers -----
     function renderObjects() {
       var box = $('obj-list'); box.innerHTML = ''; var any = false;
       Object.keys(objects).forEach(function (type) {
         (objects[type] || []).forEach(function (o, i) {
           any = true;
-          var summary = Object.keys(o).filter(function (k) { return k !== 'name'; })
-            .map(function (k) { return k + '=' + fieldVal(o[k]); }).join(', ');
+          var summary = Object.keys(o).filter(function (k) { return k !== 'name'; }).map(function (k) { return k + '=' + fieldVal(o[k]); }).join(', ');
           var row = el('div', 'itemrow', '<span class="pill">' + esc(SPECS[type].label) + '</span> <b>' + esc(o.name) + '</b> <span class="muted">' + esc(summary) + '</span>');
           var rm = el('button', 'minibtn', 'Remove'); rm.type = 'button';
           rm.addEventListener('click', function () { objects[type].splice(i, 1); if (!objects[type].length) delete objects[type]; sync(); });
@@ -177,7 +188,6 @@
       });
       if (!any) box.innerHTML = '<p class="muted">No objects yet.</p>';
     }
-
     function renderRules() {
       var box = $('rule-list'); box.innerHTML = '';
       if (!rules.length) { box.innerHTML = '<p class="muted">No rules yet.</p>'; return; }
@@ -193,7 +203,6 @@
       });
       t.appendChild(tb); wrap.appendChild(t); box.appendChild(wrap);
     }
-
     function renderRefs() {
       var box = $('ref-list'); box.innerHTML = '';
       var keys = Object.keys(refs).filter(function (k) { return (refs[k] || []).length; });
@@ -205,7 +214,6 @@
         row.appendChild(rm); box.appendChild(row);
       });
     }
-
     function buildPayload() {
       var ln = ($('layer_name').value || 'dynamic_layer').trim();
       var ro = {}; Object.keys(refs).forEach(function (k) { if ((refs[k] || []).length) ro[k] = refs[k]; });
@@ -214,7 +222,6 @@
       return { 'dry-run': false, 'referenced-objects': ro, objects: objs,
         'access-layers-content': [{ name: ln, operation: 'replace', rulebase: rules }] };
     }
-
     function sync() {
       $('objects_json').value = JSON.stringify(objects);
       $('rules_json').value = JSON.stringify(rules);
@@ -223,9 +230,14 @@
       renderObjects(); renderRules(); renderRefs();
     }
 
-    $('obj-type').addEventListener('change', renderObjFields);
+    // Close modals on overlay click / Escape.
+    ['obj-modal', 'rule-modal'].forEach(function (id) {
+      $(id).addEventListener('click', function (e) { if (e.target === $(id)) closeModal(id); });
+    });
+    document.addEventListener('keydown', function (e) { if (e.key === 'Escape') { closeModal('obj-modal'); closeModal('rule-modal'); } });
+
     $('layer_name').addEventListener('input', sync);
-    renderObjFields(); sync();
+    sync();
   })();
 </script>
 {% endblock %}
