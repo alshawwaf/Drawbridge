@@ -61,6 +61,26 @@ def _owned(db: Session, layer_id: int, user: User) -> DynamicLayer:
     return layer
 
 
+def _gateway(db: Session, gateway_id: str, user: User) -> Gateway | None:
+    """Resolve a selected saved gateway owned by the user (connection details live on the profile)."""
+    try:
+        gw = db.get(Gateway, int(gateway_id)) if gateway_id else None
+    except (ValueError, TypeError):
+        gw = None
+    return gw if gw and gw.owner_id == user.id else None
+
+
+def _gateway_error(gw: Gateway | None, password: str) -> str | None:
+    if gw is None:
+        return ("Select a saved gateway (or tick “Use mock gateway”). "
+                "Define gateways on the Gateways page.")
+    if not gw.username:
+        return f"Gateway “{gw.name}” has no username — set it on the gateway profile (Gateways → edit)."
+    if not password:
+        return "Enter the gateway password (it is never stored)."
+    return None
+
+
 @router.get("/layers", response_class=HTMLResponse)
 def layers_list(request: Request, db: Session = Depends(get_db)):
     user = _user(request, db)
@@ -219,11 +239,8 @@ def apply_start(
     request: Request,
     use_mock: str = Form(""),
     dry_run: str = Form(""),
-    gw_host: str = Form(""),
-    gw_port: str = Form("443"),
-    gw_user: str = Form(""),
+    gateway_id: str = Form(""),
     gw_pass: str = Form(""),
-    gw_cert: str = Form(""),
     db: Session = Depends(get_db),
 ):
     user = _user(request, db)
@@ -234,15 +251,13 @@ def apply_start(
     if use_mock:
         pid = start_apply(layer_id=layer.id, target="mock", dry_run=dry)
     else:
-        if not (gw_host and gw_user and gw_pass):
-            return JSONResponse({"error": "Gateway address, username, and password are required "
-                                          "(or tick “Use mock gateway”)."}, status_code=400)
-        try:
-            port = int(gw_port or 443)
-        except ValueError:
-            port = 443
-        pid = start_apply(layer_id=layer.id, target="gateway", dry_run=dry, gateway_host=gw_host,
-                          gateway_port=port, user=gw_user, password=gw_pass, cert_pem=gw_cert or None)
+        gw = _gateway(db, gateway_id, user)
+        err = _gateway_error(gw, gw_pass)
+        if err:
+            return JSONResponse({"error": err}, status_code=400)
+        pid = start_apply(layer_id=layer.id, target="gateway", dry_run=dry, gateway_host=gw.host,
+                          gateway_port=gw.port, user=gw.username, password=gw_pass,
+                          cert_pem=gw.cert_pem or None)
     return JSONResponse({"progress_id": pid})
 
 
@@ -266,8 +281,7 @@ def apply_status(layer_id: int, pid: str, request: Request, db: Session = Depend
 @router.post("/layers/{layer_id}/fetch-content")
 def fetch_content(
     layer_id: int, request: Request,
-    use_mock: str = Form(""), gw_host: str = Form(""), gw_port: str = Form("443"),
-    gw_user: str = Form(""), gw_pass: str = Form(""), gw_cert: str = Form(""),
+    use_mock: str = Form(""), gateway_id: str = Form(""), gw_pass: str = Form(""),
     db: Session = Depends(get_db),
 ):
     """Read the dynamic layers / content a gateway (real or mock) currently has."""
@@ -278,15 +292,13 @@ def fetch_content(
     if use_mock:
         data = fetch_dynamic_content(target="mock", db=db, owner_id=user.id)
     else:
-        if not (gw_host and gw_user and gw_pass):
-            return JSONResponse({"error": "Gateway address, username, and password are required "
-                                          "(or tick “Use mock gateway”)."}, status_code=400)
-        try:
-            port = int(gw_port or 443)
-        except ValueError:
-            port = 443
-        data = fetch_dynamic_content(target="gateway", db=db, owner_id=user.id, host=gw_host,
-                                     port=port, user=gw_user, password=gw_pass, cert_pem=gw_cert or None)
+        gw = _gateway(db, gateway_id, user)
+        err = _gateway_error(gw, gw_pass)
+        if err:
+            return JSONResponse({"error": err}, status_code=400)
+        data = fetch_dynamic_content(target="gateway", db=db, owner_id=user.id, host=gw.host,
+                                     port=gw.port, user=gw.username, password=gw_pass,
+                                     cert_pem=gw.cert_pem or None)
     return JSONResponse(data)
 
 

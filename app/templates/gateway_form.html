@@ -14,8 +14,9 @@
     <div style="width:120px;"><label>Port</label><input name="port" id="gw_port" value="{{ gw.port if gw else 443 }}"></div>
   </div>
 
-  <label>Username (optional)</label>
+  <label>Username</label>
   <input name="username" value="{{ gw.username if gw else '' }}" placeholder="admin">
+  <p class="muted">Used to log in when applying or fetching a Dynamic Layer (the password is entered at that time, never stored).</p>
 
   <div class="row" style="align-items:flex-end;">
     <div class="grow"><label>Pinned certificate (PEM, optional — to trust a self-signed gateway)</label></div>
