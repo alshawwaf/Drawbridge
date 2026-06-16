@@ -1,5 +1,6 @@
 """Editing an existing Dynamic Layer: the builder renders in edit mode, and the content
 parser builds + validates the submitted JSON (shared by create and update)."""
+import datetime as dt
 import json
 
 import pytest
@@ -132,3 +133,52 @@ def test_gateway_view_macro_renders_referenced_objects():
                                 "referenced": ["Facebook", "ssh"]}])
     assert "Referenced objects" in html and "Facebook" in html and "ssh" in html
     assert "2 referenced" in html  # the count badge on the layer card
+
+
+def _task_obj(**kw):
+    return type("T", (), kw)()
+
+
+def test_layer_detail_merges_last_apply_and_links_to_history():
+    class _L:
+        id, name, layer_name, description = 5, "Demo", "dynamic_layer", ""
+        content = {"objects": {"hosts": [{"name": "client", "ip-address": "10.0.0.5"}]},
+                   "rulebase": [{"name": "allow_web", "source": ["client"],
+                                 "destination": "any", "service": ["https"]}]}
+    latest = {"t": _task_obj(status="succeeded", target="gateway", dry_run=False,
+                             task_id="abcdef0123456789xyz", gateway_host="gw.example",
+                             at=dt.datetime(2026, 6, 16, 23, 3, 14)),
+              "rules_created": 1, "objects_created": ["client"], "layers": [],
+              "warnings": [], "errors": [], "trace": []}
+    html = _render("dynamic_detail.html", layer=_L(), payload_json="{}", task_total=7,
+                   latest=latest, referenced=["https"], gateways=[], layer_gateway_id=None,
+                   mock_url="http://x/gaia_api/v1.9")
+    assert "last apply: succeeded" in html
+    assert "/layers/5/history" in html and "apply history (7)" in html
+    assert "client · 10.0.0.5" in html   # defined objects now shown in the merged card
+    assert "Rules created" not in html   # the redundant created-list is gone
+
+
+def test_history_page_lists_records_with_multidelete():
+    views = [
+        {"t": _task_obj(id=1, status="succeeded", target="gateway", dry_run=False,
+                        at=dt.datetime(2026, 6, 16, 23, 3, 14)),
+         "rules_created": 3, "objects_created": ["client", "lab_net"], "warnings": [], "errors": [], "trace": []},
+        {"t": _task_obj(id=2, status="failed", target="gateway", dry_run=False,
+                        at=dt.datetime(2026, 6, 16, 22, 25, 9)),
+         "rules_created": 0, "objects_created": [], "warnings": [], "errors": [{"message": "blade not enabled"}], "trace": []},
+    ]
+    class _L:
+        id, name = 5, "Demo"
+    html = _render("dynamic_history.html", layer=_L(), tasks=views, flash=None)
+    assert 'action="/layers/5/history/delete"' in html
+    assert 'name="task_ids" value="1"' in html and 'name="task_ids" value="2"' in html
+    assert "Delete selected" in html and "Select all (2)" in html
+    assert "blade not enabled" in html   # the failed row surfaces its error
+
+
+def test_history_page_empty_state_has_no_delete_form():
+    class _L:
+        id, name = 7, "Empty"
+    html = _render("dynamic_history.html", layer=_L(), tasks=[], flash=None)
+    assert "No applies recorded yet" in html and "task_ids" not in html
