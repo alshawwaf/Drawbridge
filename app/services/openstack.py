@@ -52,6 +52,23 @@ def keystone_token(dc, base_url: str, *, user: str = "admin", project: str = "de
     return uuid.uuid4().hex, body
 
 
+def keystone_projects(dc, base_url: str, *, project: str = "demo") -> dict:
+    """Projects available to the authenticated token (Keystone GET /v3/auth/projects).
+    CloudGuard calls this right after auth to discover which projects to scan — without it the
+    controller reports the Data Center as 'still initializing'. The project id matches the
+    tenant/project id used by every Nova/Neutron resource, so scoping resolves the inventory."""
+    base = f"{base_url.rstrip('/')}/openstack/{dc.token}"
+    pid = _id(dc.token, "project")
+    return {
+        "projects": [{
+            "id": pid, "name": project, "domain_id": "default", "enabled": True,
+            "is_domain": False, "parent_id": "default", "description": "dcsim mock project",
+            "tags": [], "links": {"self": f"{base}/v3/projects/{pid}"},
+        }],
+        "links": {"self": f"{base}/v3/auth/projects", "previous": None, "next": None},
+    }
+
+
 def nova_servers(dc) -> dict:
     servers = []
     for i, inst in enumerate(dc.content.get("instances", []) or []):

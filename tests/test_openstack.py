@@ -25,6 +25,16 @@ def test_keystone_catalog_points_back_at_portal():
     assert cat["identity"]["endpoints"][0]["url"] == "https://portal.example/openstack/tok123/v3"
 
 
+def test_keystone_projects_lists_the_scoped_project():
+    body = os_mock.keystone_projects(DC, "https://portal.example")
+    assert len(body["projects"]) == 1
+    p = body["projects"][0]
+    assert p["name"] == "demo" and p["enabled"] is True and p["domain_id"] == "default"
+    # the project id must equal the tenant_id used by Nova/Neutron, or scoping finds nothing
+    assert p["id"] == os_mock.nova_servers(DC)["servers"][0]["tenant_id"]
+    assert body["links"]["self"].endswith("/openstack/tok123/v3/auth/projects")
+
+
 def test_nova_servers_shape():
     server = os_mock.nova_servers(DC)["servers"][0]
     assert server["name"] == "web-1"
