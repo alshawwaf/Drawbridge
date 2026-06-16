@@ -4,7 +4,7 @@ import json
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from ..config import get_settings
@@ -27,8 +27,6 @@ from ..services.gaia_client import fetch_gateway_cert
 from .ui import _flash, _pop_flash, templates
 
 router = APIRouter(include_in_schema=False)
-
-APPLY_HISTORY_LIMIT = 8  # latest applies shown inline; full paginated history is in the Activity log
 
 # Pre-filled sample so the builder opens with a working example (the docs' "Simple Objects" shape).
 DEFAULT_LAYER_CONTENT = {
@@ -297,16 +295,14 @@ def layer_detail(layer_id: int, request: Request, db: Session = Depends(get_db))
     layer = _owned(db, layer_id, user)
     payload_json = json.dumps(build_set_dynamic_content(layer), indent=2)
     base = get_settings().base_url.rstrip("/")
-    # Latest few applies inline (COUNT + LIMIT keeps the page bounded as history grows);
-    # the full, paginated apply history lives in the Activity log.
+    # Only the latest apply is shown inline (merged into the Rulebase card); the full history
+    # lives on its own page (/layers/{id}/history), where records can be pruned.
     task_total = db.scalar(
         select(func.count()).select_from(LayerTask).where(LayerTask.layer_id == layer.id)
     ) or 0
-    recent = db.scalars(
-        select(LayerTask).where(LayerTask.layer_id == layer.id)
-        .order_by(LayerTask.at.desc()).limit(APPLY_HISTORY_LIMIT)
-    ).all()
-    tasks = [_task_view(t) for t in recent]
+    latest_task = db.scalar(
+        select(LayerTask).where(LayerTask.layer_id == layer.id).order_by(LayerTask.at.desc()).limit(1)
+    )
     gws = db.scalars(select(Gateway).where(Gateway.owner_id == user.id).order_by(Gateway.name)).all()
     gateways = [{"id": g.id, "name": g.name, "host": g.host, "port": g.port,
                  "username": g.username, "cert_pem": g.cert_pem,
@@ -314,8 +310,8 @@ def layer_detail(layer_id: int, request: Request, db: Session = Depends(get_db))
     c = layer.content or {}
     referenced = referenced_object_names(c.get("objects"), c.get("rulebase"), c.get("referenced_objects"))
     return templates.TemplateResponse(request, "dynamic_detail.html", {
-        "layer": layer, "payload_json": payload_json, "tasks": tasks, "task_total": task_total,
-        "latest": tasks[0] if tasks else None, "referenced": referenced,
+        "layer": layer, "payload_json": payload_json, "task_total": task_total,
+        "latest": _task_view(latest_task) if latest_task else None, "referenced": referenced,
         "gateways": gateways, "layer_gateway_id": (layer.content or {}).get("gateway_id"),
         "mock_url": f"{base}/gaia_api/v1.9", "flash": _pop_flash(request),
     })
@@ -410,6 +406,40 @@ def fetch_cert(layer_id: int, request: Request, gw_host: str = Form(""),
         return JSONResponse(fetch_gateway_cert(gw_host, port))
     except Exception as exc:
         return JSONResponse({"error": f"Could not fetch certificate from {gw_host}:{port} — {exc}"}, status_code=400)
+
+
+@router.get("/layers/{layer_id}/history", response_class=HTMLResponse)
+def layers_history(layer_id: int, request: Request, db: Session = Depends(get_db)):
+    """Full apply history for one layer (every recorded set-dynamic-content), with multi-delete."""
+    user = _user(request, db)
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+    layer = _owned(db, layer_id, user)
+    rows = db.scalars(
+        select(LayerTask).where(LayerTask.layer_id == layer.id).order_by(LayerTask.at.desc())
+    ).all()
+    return templates.TemplateResponse(request, "dynamic_history.html",
+        {"layer": layer, "tasks": [_task_view(t) for t in rows], "flash": _pop_flash(request)})
+
+
+@router.post("/layers/{layer_id}/history/delete")
+def layers_history_delete(layer_id: int, request: Request,
+                          task_ids: list[int] = Form(default=[]),
+                          db: Session = Depends(get_db)):
+    user = _user(request, db)
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+    layer = _owned(db, layer_id, user)
+    n = 0
+    if task_ids:
+        # Scoped to this layer's records, so a forged id can't reach another layer's history.
+        res = db.execute(delete(LayerTask).where(LayerTask.layer_id == layer.id,
+                                                 LayerTask.id.in_(task_ids)))
+        db.commit()
+        n = res.rowcount or 0
+    _flash(request, f"Deleted {n} apply record(s)." if n else "No records selected.",
+           "success" if n else "error")
+    return RedirectResponse(f"/layers/{layer_id}/history", status_code=303)
 
 
 @router.post("/layers/{layer_id}/delete")

@@ -1,44 +1,6 @@
 {% extends "base.html" %}
+{% import "_layers_view.html" as lv %}
 {% block title %}{{ layer.name }}{% endblock %}
-
-{% macro render_trace(trace) %}
-  {% for s in trace %}
-  <div class="trace-step">
-    <div class="trace-head">
-      <span class="pill">{{ s.step }}</span>
-      <code>{{ s.method }} {{ s.url }}</code>
-      {% if s.status %}<span class="pill {{ 'ok' if s.status == 200 else 'bad' }}">{{ s.status }}</span>{% endif %}
-      {% if s.ms is not none %}<span class="muted">{{ s.ms }} ms</span>{% endif %}
-    </div>
-    <div class="trace-lbl">Request</div><pre>{{ s.request | tojson(indent=2) }}</pre>
-    <div class="trace-lbl">Response</div><pre>{{ s.response | tojson(indent=2) }}</pre>
-  </div>
-  {% endfor %}
-{% endmacro %}
-
-{% macro _cell(v) %}{% if v is string %}{{ v }}{% elif v %}{{ v | join(', ') }}{% else %}Any{% endif %}{% endmacro %}
-
-{% macro render_rulebase(rulebase) %}
-{% set actcls = {'accept': 'ok', 'drop': 'bad', 'reject': 'bad', 'drop with block message': 'bad'} %}
-<div class="tablewrap">
-  <table class="rulebase">
-    <thead><tr><th>#</th><th>Name</th><th>Source</th><th>Destination</th><th>Service</th><th>Action</th><th>Track</th></tr></thead>
-    <tbody>
-    {% for r in rulebase %}
-      <tr>
-        <td class="muted">{{ loop.index }}</td>
-        <td><b>{{ r.name or 'rule-' ~ loop.index }}</b></td>
-        <td>{{ _cell(r.source) }}</td>
-        <td>{{ _cell(r.destination) }}</td>
-        <td>{{ _cell(r.service) }}</td>
-        <td><span class="pill {{ actcls.get((r.action or '')|lower, '') }}">{{ r.action or '—' }}</span></td>
-        <td class="muted">{% if r.track is mapping %}{{ r.track.type or 'None' }}{% else %}{{ r.track or 'None' }}{% endif %}</td>
-      </tr>
-    {% endfor %}
-    </tbody>
-  </table>
-</div>
-{% endmacro %}
 
 {% block content %}
 <div class="row">
@@ -81,48 +43,25 @@
 
 {% if layer.content.rulebase %}
 <div class="card">
-  <h2 style="margin-top:0;">Rulebase <span class="muted" style="font-weight:400;">— {{ layer.content.rulebase|length }} rule(s) in “{{ layer.layer_name }}”</span></h2>
-  {{ render_rulebase(layer.content.rulebase) }}
-  {% if referenced %}
-  <div class="trace-lbl" style="margin-top:14px;">Referenced objects <span class="muted" style="font-weight:400; text-transform:none; letter-spacing:0;">— used by these rules, resolved on the gateway (defined elsewhere)</span></div>
-  <div style="margin:4px 0;">{% for n in referenced %}<span class="pill faint" style="margin:2px;">{{ n }}</span>{% endfor %}</div>
+  <div class="row" style="align-items:center;"><h2 style="margin:0;" class="grow">Rulebase <span class="muted" style="font-weight:400;">— {{ layer.content.rulebase|length }} rule(s) in “{{ layer.layer_name }}”</span></h2>
+    {% if latest %}<span class="pill {{ 'ok' if latest.t.status == 'succeeded' else 'bad' }}">last apply: {{ latest.t.status }}</span>{% endif %}</div>
+  {{ lv.render_rulebase(layer.content.rulebase) }}
+  {% if layer.content.objects and (layer.content.objects.values() | map('length') | sum) %}
+  {{ lv.render_objects(layer.content.objects) }}
   {% endif %}
-</div>
-{% endif %}
+  {% if referenced %}{{ lv.render_referenced(referenced) }}{% endif %}
 
-{% if latest %}
-<div class="card">
-  <div class="row"><h2 style="margin:0;" class="grow">Latest result</h2>
-    <span class="pill {{ 'ok' if latest.t.status == 'succeeded' else 'bad' }}">{{ latest.t.status }}</span></div>
-  <p class="muted">{{ latest.t.target }}{% if latest.t.dry_run %} · dry-run{% endif %} · {{ latest.t.at.strftime('%Y-%m-%d %H:%M:%S') }}{% if latest.t.gateway_host %} · {{ latest.t.gateway_host }}{% endif %} · task <code>{{ latest.t.task_id[:18] }}</code></p>
-  {% if latest.errors %}<h3 style="color:var(--danger);">Errors</h3>{% for e in latest.errors %}<div class="err" style="margin:6px 0;">{{ e.message }}</div>{% endfor %}{% endif %}
-  <div class="row" style="align-items:flex-start; gap:28px;">
-    <div class="grow"><h3>Rules created ({{ latest.rules_created }})</h3>
-      {% for lyr in latest.layers %}{% for rn in lyr.rules.create %}<span class="pill ok" style="margin:2px;">{{ rn }}</span>{% endfor %}{% else %}<span class="muted">none</span>{% endfor %}</div>
-    <div class="grow"><h3>Objects created ({{ latest.objects_created|length }})</h3>
-      {% for o in latest.objects_created %}<span class="pill" style="margin:2px;">{{ o }}</span>{% else %}<span class="muted">none</span>{% endfor %}</div>
+  {% if latest %}
+  <div style="border-top:1px solid var(--line); margin-top:16px; padding-top:12px;">
+    <div class="trace-lbl">Last apply</div>
+    <p class="muted" style="margin:4px 0;">{{ latest.t.target }}{% if latest.t.dry_run %} · dry-run{% endif %} · {{ latest.t.at.strftime('%Y-%m-%d %H:%M:%S') }}{% if latest.t.gateway_host %} · {{ latest.t.gateway_host }}{% endif %} · task <code>{{ latest.t.task_id[:18] }}</code>{% if task_total %} · <a href="/layers/{{ layer.id }}/history">apply history ({{ task_total }}) →</a>{% endif %}</p>
+    {% if latest.errors %}{% for e in latest.errors %}<div class="err" style="margin:6px 0;">{{ e.message }}</div>{% endfor %}{% endif %}
+    {% if latest.warnings %}{% for w in latest.warnings %}<div class="muted" style="font-size:12.5px; margin:3px 0;">⚠ {{ w.message }}</div>{% endfor %}{% endif %}
+    {% if latest.trace %}<details style="margin-top:8px;"><summary>HTTP request / response trace ({{ latest.trace|length }} calls)</summary>{{ lv.render_trace(latest.trace) }}</details>{% endif %}
   </div>
-  {% if latest.warnings %}<h3>Warnings ({{ latest.warnings|length }})</h3>{% for w in latest.warnings %}<div class="muted" style="font-size:12.5px; margin:3px 0;">⚠ {{ w.message }}</div>{% endfor %}{% endif %}
-  {% if latest.trace %}<details style="margin-top:10px;"><summary>HTTP request / response trace ({{ latest.trace|length }} calls)</summary>{{ render_trace(latest.trace) }}</details>{% endif %}
-</div>
-{% endif %}
-
-{% if tasks %}
-<div class="card">
-  <h2 style="margin-top:0;">Apply history <span class="muted" style="font-weight:400;">— expand a row for the full request / response</span></h2>
-  {% for v in tasks %}
-  <details class="itemrow" style="display:block;">
-    <summary style="color:var(--text);">
-      <span class="muted" style="font-family:ui-monospace,monospace; font-size:12px;">{{ v.t.at.strftime('%Y-%m-%d %H:%M:%S') }}</span>
-      <span class="pill">{{ v.t.target }}</span>
-      <span class="pill faint">{{ 'dry-run' if v.t.dry_run else 'apply' }}</span>
-      <span class="pill {{ 'ok' if v.t.status == 'succeeded' else 'bad' }}">{{ v.t.status }}</span>
-      <span class="muted">{{ v.rules_created }} rule(s) · {{ v.objects_created|length }} object(s){% if v.warnings %} · {{ v.warnings|length }} warning(s){% endif %}</span>
-    </summary>
-    {% if v.trace %}{{ render_trace(v.trace) }}{% else %}<p class="muted">No trace captured.</p>{% endif %}
-  </details>
-  {% endfor %}
-  <p class="muted" style="margin-top:12px;">Showing the latest {{ tasks|length }} of {{ task_total }}. <a href="/activity?kind=layer_apply">View full apply history →</a></p>
+  {% else %}
+  <p class="muted" style="margin-top:14px;">Not applied yet — click <b>Apply</b> above to push this layer to the gateway.</p>
+  {% endif %}
 </div>
 {% endif %}
 

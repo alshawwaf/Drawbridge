@@ -61,3 +61,18 @@
 <p class="muted">No dynamic layers found on the gateway.</p>
 {% endfor %}
 {% endmacro %}
+
+{% macro render_trace(trace) %}
+  {% for s in trace %}
+  <div class="trace-step">
+    <div class="trace-head">
+      <span class="pill">{{ s.step }}</span>
+      <code>{{ s.method }} {{ s.url }}</code>
+      {% if s.status %}<span class="pill {{ 'ok' if s.status == 200 else 'bad' }}">{{ s.status }}</span>{% endif %}
+      {% if s.ms is not none %}<span class="muted">{{ s.ms }} ms</span>{% endif %}
+    </div>
+    <div class="trace-lbl">Request</div><pre>{{ s.request | tojson(indent=2) }}</pre>
+    <div class="trace-lbl">Response</div><pre>{{ s.response | tojson(indent=2) }}</pre>
+  </div>
+  {% endfor %}
+{% endmacro %}
