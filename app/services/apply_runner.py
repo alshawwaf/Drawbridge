@@ -272,19 +272,25 @@ def _run_gateway(pid, payload, dry_run, *, host, port, user, password, cert_pem)
                             status_code = t0.get("status-code", status_code)
                             break
                         time.sleep(0.4)
-                    if terminal == "failed":
+                    verrs = details.get("validation-errors") or []
+                    if terminal == "failed" or verrs:
+                        # Task failed, OR it completed ("succeeded"/"partially succeeded") but the
+                        # gateway rejected content (e.g. an application used on a layer without the
+                        # Application & URL Filtering blade). Either way the policy was NOT fully
+                        # applied — report failed and surface the gateway's own message, don't
+                        # paint it green.
                         status = "failed"
                         result = {"change_summary": details.get("change-summary", {}),
                                   "validation_warnings": details.get("validation-warnings", []),
-                                  "validation_errors": (details.get("validation-errors") or
+                                  "validation_errors": (verrs or
                                       [{"layer": "", "rule": "", "object": "",
                                         "message": "Gateway reported the set-dynamic-content task as failed."}]),
                                   "dry_run": dry_run}
-                    elif terminal:  # succeeded / partially succeeded
+                    elif terminal:  # succeeded with no validation errors
                         status = "succeeded"
                         result = {"change_summary": details.get("change-summary") or _summary_from_payload(payload),
                                   "validation_warnings": details.get("validation-warnings", []),
-                                  "validation_errors": details.get("validation-errors", []), "dry_run": dry_run}
+                                  "validation_errors": [], "dry_run": dry_run}
                     else:
                         # Accepted (task-id returned) but show-task never confirmed a terminal state in
                         # the poll window — report accepted, summarizing from the pushed payload.

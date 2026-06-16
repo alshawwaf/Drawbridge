@@ -115,6 +115,63 @@ class _Resp:
         return self._body
 
 
+class _FakeClient:
+    """Scripts httpx.Client.post by URL substring so we can exercise _run_gateway end-to-end."""
+    def __init__(self, script):
+        self.script = script
+    def __enter__(self):
+        return self
+    def __exit__(self, *a):
+        return False
+    def post(self, url, json=None, headers=None):
+        for key, resp in self.script.items():
+            if key in url:
+                return resp
+        raise AssertionError("unexpected URL: " + url)
+
+
+def _gw_script(show_task):
+    return {"/login": _Resp(200, {"sid": "S"}),
+            "/set-dynamic-content": _Resp(200, {"task-id": "abc"}),
+            "/show-task": _Resp(200, show_task),
+            "/logout": _Resp(200, {"message": "bye"})}
+
+
+def _gw_progress(pid):
+    apply_runner._PROGRESS[pid] = {"stage": "queued", "status": "running",
+                                   "done_stages": [], "failed_stage": None}
+
+
+def test_run_gateway_failed_when_task_reports_validation_errors(monkeypatch):
+    # The gateway returns the task as "partially succeeded" but with validation errors (e.g. an
+    # application used on a layer without the App & URL Filtering blade) — that is NOT a success.
+    monkeypatch.setattr(apply_runner.time, "sleep", lambda *a, **k: None)
+    errs = [{"layer": "dl", "rule": "block_facebook", "object": "Facebook",
+             "message": "Service and Applications column cannot contain applications or categories ..."}]
+    show = {"tasks": [{"task-id": "abc", "status": "partially succeeded", "status-code": 200,
+            "task-details": [{"change-summary": {}, "validation-errors": errs, "validation-warnings": []}]}]}
+    monkeypatch.setattr(apply_runner.httpx, "Client", lambda **kw: _FakeClient(_gw_script(show)))
+    _gw_progress("gwf")
+    result, status, code, task_id = apply_runner._run_gateway(
+        "gwf", PAYLOAD, False, host="h", port=443, user="u", password="p", cert_pem=None)
+    assert status == "failed" and task_id == "abc"          # not painted green
+    assert "applications or categories" in result["validation_errors"][0]["message"]
+
+
+def test_run_gateway_succeeds_on_clean_task(monkeypatch):
+    monkeypatch.setattr(apply_runner.time, "sleep", lambda *a, **k: None)
+    show = {"tasks": [{"task-id": "abc", "status": "succeeded", "status-code": 200,
+            "task-details": [{"change-summary": {"layers": [{"name": "dl", "rules": {"create": ["r"]}}],
+                              "objects": {"create": ["h"]}}, "validation-errors": [],
+                              "validation-warnings": []}]}]}
+    monkeypatch.setattr(apply_runner.httpx, "Client", lambda **kw: _FakeClient(_gw_script(show)))
+    _gw_progress("gws")
+    result, status, code, task_id = apply_runner._run_gateway(
+        "gws", PAYLOAD, False, host="h", port=443, user="u", password="p", cert_pem=None)
+    assert status == "succeeded" and not result["validation_errors"]
+    assert result["change_summary"]["objects"]["create"] == ["h"]
+
+
 def test_login_error_clean_for_401():
     msg = apply_runner._login_error(_Resp(401, {"message": "Authentication required"}))
     assert "401" in msg and "rejected the username/password" in msg
