@@ -19,7 +19,7 @@
     <span class="muted" style="font-size:11px;">{{ r.duration_ms }} ms</span>
   </summary>
   {% set d = r.detail or {} %}
-  {% if r.kind == 'layer_apply' %}
+  {% if r.kind in ['layer_apply', 'gateway_read'] %}
     {% for s in d.get('trace', []) %}
       <div class="trace-step">
         <div class="trace-head"><span class="pill">{{ s.step }}</span> <code>{{ s.method }} {{ s.url }}</code>

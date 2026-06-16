@@ -12,7 +12,7 @@ from .ui import _flash, _pop_flash, templates
 router = APIRouter(include_in_schema=False)
 
 KIND_LABELS = {"feed_poll": "Feed poll", "gaia_mock": "Mock Gaia API", "layer_apply": "Layer apply",
-               "datacenter": "Data Center", "api": "API", "ui": "Page view"}
+               "gateway_read": "Gateway read", "datacenter": "Data Center", "api": "API", "ui": "Page view"}
 
 PAGE_SIZE = 50  # events per page in the full Activity log view
 

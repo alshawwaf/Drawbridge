@@ -20,7 +20,7 @@ from ..schemas.dynamic_layer import (
     validate_layer_content,
 )
 from ..security import get_user_or_none, new_feed_token
-from ..services.apply_runner import STAGES, get_progress, start_apply
+from ..services.apply_runner import STAGES, fetch_dynamic_content, get_progress, start_apply
 from ..services.gaia_client import fetch_gateway_cert
 from .ui import _flash, _pop_flash, templates
 
@@ -250,6 +250,33 @@ def apply_status(layer_id: int, pid: str, request: Request, db: Session = Depend
         "trace": p.get("trace", []),
         "stages": [{"key": k, "label": label} for k, label in STAGES],
     })
+
+
+@router.post("/layers/{layer_id}/fetch-content")
+def fetch_content(
+    layer_id: int, request: Request,
+    use_mock: str = Form(""), gw_host: str = Form(""), gw_port: str = Form("443"),
+    gw_user: str = Form(""), gw_pass: str = Form(""), gw_cert: str = Form(""),
+    db: Session = Depends(get_db),
+):
+    """Read the dynamic layers / content a gateway (real or mock) currently has."""
+    user = _user(request, db)
+    if user is None:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    _owned(db, layer_id, user)
+    if use_mock:
+        data = fetch_dynamic_content(target="mock", db=db, owner_id=user.id)
+    else:
+        if not (gw_host and gw_user and gw_pass):
+            return JSONResponse({"error": "Gateway address, username, and password are required "
+                                          "(or tick “Use mock gateway”)."}, status_code=400)
+        try:
+            port = int(gw_port or 443)
+        except ValueError:
+            port = 443
+        data = fetch_dynamic_content(target="gateway", db=db, owner_id=user.id, host=gw_host,
+                                     port=port, user=gw_user, password=gw_pass, cert_pem=gw_cert or None)
+    return JSONResponse(data)
 
 
 @router.post("/layers/{layer_id}/fetch-cert")

@@ -56,6 +56,38 @@ def test_pinned_context_is_pinning_not_skip_verify(monkeypatch):
     assert ctx.verify_flags & ssl.VERIFY_X509_PARTIAL_CHAIN  # pinned leaf honored as trust anchor
 
 
+def test_parse_layers_handles_known_and_unknown_shapes():
+    out = apply_runner._parse_layers({"dynamic-layers": [
+        {"name": "dl", "rulebase": [{"name": "r1"}], "objects": {"hosts": [{"name": "h"}]}}]})
+    assert out[0]["name"] == "dl" and out[0]["rulebase"][0]["name"] == "r1"
+    # alternate keys + non-dict items are tolerated
+    out2 = apply_runner._parse_layers({"layers": [{"layer": "x", "rules": [{"name": "a"}]}, "junk"]})
+    assert len(out2) == 1 and out2[0]["name"] == "x" and out2[0]["rulebase"][0]["name"] == "a"
+    assert apply_runner._parse_layers({}) == []
+
+
+def test_fetch_mock_reflects_authored_layers(monkeypatch):
+    monkeypatch.setattr(apply_runner, "write_activity", lambda **_k: None)  # no DB side effect
+
+    class _Layer:
+        def __init__(self, layer_name, name, content):
+            self.layer_name, self.name, self.content = layer_name, name, content
+
+    class _Scalars:
+        def __init__(self, rows): self._rows = rows
+        def all(self): return self._rows
+
+    class _DB:
+        def scalars(self, *_a, **_k):
+            return _Scalars([_Layer("dynamic_layer", "Demo",
+                {"objects": {"hosts": [{"name": "h"}]}, "rulebase": [{"name": "r1"}]})])
+
+    data = apply_runner.fetch_dynamic_content(target="mock", db=_DB(), owner_id=1)
+    assert data["ok"] and data["error"] is None
+    assert data["layers"][0]["name"] == "dynamic_layer" and data["layers"][0]["display_name"] == "Demo"
+    assert [s["step"] for s in data["trace"]] == ["login", "show-dynamic-content", "logout"]
+
+
 def _progress(stage, done):
     return {"stage": stage, "status": "running", "done_stages": list(done), "failed_stage": None,
             "task_id": None, "summary": None, "error": None, "trace": []}
