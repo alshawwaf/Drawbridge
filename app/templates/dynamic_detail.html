@@ -85,25 +85,6 @@
 </div>
 {% endif %}
 
-<div class="card">
-  <h2 style="margin-top:0;">Gaia API calls <span class="muted" style="font-weight:400;">— what runs behind the scenes</span></h2>
-  <p class="muted" style="margin:0 0 6px;">Apply (push) → layer <code>{{ layer.layer_name }}</code></p>
-  <div class="apiflow">
-    <span class="apicall"><span class="pill">POST</span>login</span><span class="apiarrow">→</span>
-    <span class="apicall"><span class="pill">POST</span>set-dynamic-content</span><span class="apiarrow">→</span>
-    <span class="apicall"><span class="pill">POST</span>show-task</span><span class="apiarrow">→</span>
-    <span class="apicall"><span class="pill">POST</span>logout</span>
-  </div>
-  <p class="muted" style="margin:16px 0 6px;">Fetch (read)</p>
-  <div class="apiflow">
-    <span class="apicall"><span class="pill">POST</span>login</span><span class="apiarrow">→</span>
-    <span class="apicall"><span class="pill">POST</span>show-dynamic-layers</span><span class="apiarrow">→</span>
-    <span class="apicall"><span class="pill">POST</span>show-dynamic-layer</span><span class="apiarrow">→</span>
-    <span class="apicall"><span class="pill">POST</span>logout</span>
-  </div>
-  <p class="muted" style="font-size:12px; margin-top:14px;">Base <code>https://&lt;gateway&gt;:{{ '{}'.format(gateways[0].port) if gateways else '443' }}/gaia_api/v1.9/</code> · session header <code>X-chkp-sid</code> · a returned <code>task-id</code> means accepted, <code>show-task</code> confirms the outcome · TLS verified (pinned cert for self-signed).</p>
-</div>
-
 {% if latest %}
 <div class="card">
   <div class="row"><h2 style="margin:0;" class="grow">Latest result</h2>
@@ -120,15 +101,6 @@
   {% if latest.trace %}<details style="margin-top:10px;"><summary>HTTP request / response trace ({{ latest.trace|length }} calls)</summary>{{ render_trace(latest.trace) }}</details>{% endif %}
 </div>
 {% endif %}
-
-<div class="card">
-  <h2 style="margin-top:0;">set-dynamic-content payload</h2>
-  <div class="row" style="gap:8px; align-items:center; flex-wrap:nowrap; margin-bottom:10px;">
-    <span class="muted grow">POST to the mock at <code>{{ mock_url }}/set-dynamic-content</code> — or your gateway's Gaia API.</span>
-    <button class="copybtn" type="button" data-copy="{{ payload_json }}">Copy JSON</button>
-  </div>
-  <pre style="max-height:360px;">{{ payload_json }}</pre>
-</div>
 
 {% if tasks %}
 <div class="card">
@@ -148,6 +120,33 @@
   <p class="muted" style="margin-top:12px;">Showing the latest {{ tasks|length }} of {{ task_total }}. <a href="/activity?kind=layer_apply">View full apply history →</a></p>
 </div>
 {% endif %}
+
+<details class="card">
+  <summary style="font-weight:650;">Behind the scenes — Gaia API calls &amp; payload</summary>
+  <div style="margin-top:14px;">
+    <p class="muted" style="margin:0 0 6px;">Apply (push) → layer <code>{{ layer.layer_name }}</code></p>
+    <div class="apiflow">
+      <span class="apicall"><span class="pill">POST</span>login</span><span class="apiarrow">→</span>
+      <span class="apicall"><span class="pill">POST</span>set-dynamic-content</span><span class="apiarrow">→</span>
+      <span class="apicall"><span class="pill">POST</span>show-task</span><span class="apiarrow">→</span>
+      <span class="apicall"><span class="pill">POST</span>logout</span>
+    </div>
+    <p class="muted" style="margin:16px 0 6px;">Fetch (read)</p>
+    <div class="apiflow">
+      <span class="apicall"><span class="pill">POST</span>login</span><span class="apiarrow">→</span>
+      <span class="apicall"><span class="pill">POST</span>show-dynamic-layers</span><span class="apiarrow">→</span>
+      <span class="apicall"><span class="pill">POST</span>show-dynamic-layer</span><span class="apiarrow">→</span>
+      <span class="apicall"><span class="pill">POST</span>logout</span>
+    </div>
+    <p class="muted" style="font-size:12px; margin-top:14px;">Base <code>https://&lt;gateway&gt;:{{ '{}'.format(gateways[0].port) if gateways else '443' }}/gaia_api/v1.9/</code> · session header <code>X-chkp-sid</code> · a returned <code>task-id</code> means accepted, <code>show-task</code> confirms the outcome · TLS verified (pinned cert for self-signed).</p>
+    <h3 style="margin-top:20px;">set-dynamic-content payload</h3>
+    <div class="row" style="gap:8px; align-items:center; flex-wrap:nowrap; margin-bottom:10px;">
+      <span class="muted grow">POST to the mock at <code>{{ mock_url }}/set-dynamic-content</code> — or your gateway's Gaia API.</span>
+      <button class="copybtn" type="button" data-copy="{{ payload_json }}">Copy JSON</button>
+    </div>
+    <pre style="max-height:360px;">{{ payload_json }}</pre>
+  </div>
+</details>
 
 <div class="modal-overlay" id="progress-modal" hidden>
   <div class="modal wide">
