@@ -81,8 +81,7 @@
 
 {% if layer.content.rulebase %}
 <div class="card">
-  <div class="row"><h2 style="margin:0;" class="grow">Rulebase <span class="muted" style="font-weight:400;">— {{ layer.content.rulebase|length }} rule(s) in “{{ layer.layer_name }}”</span></h2>
-    <a class="copybtn" href="/layers/{{ layer.id }}/edit">✎ Edit rules</a></div>
+  <h2 style="margin-top:0;">Rulebase <span class="muted" style="font-weight:400;">— {{ layer.content.rulebase|length }} rule(s) in “{{ layer.layer_name }}”</span></h2>
   {{ render_rulebase(layer.content.rulebase) }}
   {% if referenced %}
   <div class="trace-lbl" style="margin-top:14px;">Referenced objects <span class="muted" style="font-weight:400; text-transform:none; letter-spacing:0;">— used by these rules, resolved on the gateway (defined elsewhere)</span></div>
