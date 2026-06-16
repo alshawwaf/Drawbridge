@@ -74,11 +74,9 @@
         <div class="grow"><label>Username</label><input name="gw_user" id="gw_user" placeholder="admin"></div>
         <div class="grow"><label>Password</label><input name="gw_pass" id="gw_pass" type="password"></div>
       </div>
-      <div class="row"><div class="grow"><label>Gateway certificate (PEM)</label></div>
-        <button type="button" class="secondary" id="fetch-cert">Fetch &amp; trust certificate</button></div>
-      <textarea name="gw_cert" id="gw_cert" style="min-height:84px;" placeholder="Paste the gateway's PEM, or use Fetch &amp; trust to pin it"></textarea>
-      <div id="cert-fp" class="fp" style="display:none; margin-top:8px;"></div>
-      <p class="muted">TLS stays verified — the fetched certificate is pinned by its fingerprint, so a self-signed cert (or a hostname that doesn't match the cert) won't block the apply. The password is used only for this call and never stored.</p>
+      <input type="hidden" name="gw_cert" id="gw_cert">
+      <div id="cert-status" class="muted" style="margin-top:6px; font-size:12.5px;"></div>
+      <p class="muted">TLS stays verified. A self-signed gateway's certificate is pinned on its <a href="/gateways">gateway profile</a> (Gateways → edit → <i>Fetch &amp; trust certificate</i>) and reused here automatically. The password is used only for this call and never stored.</p>
     </fieldset>
     <div style="margin-top:14px;"><button type="button" id="apply-btn">Apply</button>
       <button type="button" class="secondary" id="fetch-btn" title="Read the dynamic layers and content this gateway currently has">⤓ Fetch from gateway</button>
@@ -170,7 +168,7 @@
 </div>
 
 <div class="modal-overlay" id="fetch-modal" hidden>
-  <div class="modal wide">
+  <div class="modal xwide">
     <h3 id="fetch-title">Dynamic layers on the gateway</h3>
     <p class="muted" id="fetch-sub">Reading current content…</p>
     <div id="fetch-result"></div>
@@ -191,46 +189,24 @@
     function esc(s) { return String(s).replace(/[&<>]/g, function (c) { return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c]; }); }
     function formData() { return new URLSearchParams(new FormData($('apply-form'))); }
 
+    function _certStatus(hasCert) {
+      var el = $('cert-status'); if (!el) return;
+      el.textContent = hasCert
+        ? '🔒 Using the pinned certificate from the saved gateway.'
+        : 'No pinned certificate — for a self-signed gateway, pin it on its profile first (see below).';
+    }
     function fillGateway(g) {
-      if (!g) return;
+      if (!g) { $('gw_cert').value = ''; _certStatus(false); return; }
       $('gw_host').value = g.host || ''; $('gw_port').value = g.port || 443;
       $('gw_user').value = g.username || ''; $('gw_cert').value = g.cert_pem || '';
-      var fp = $('cert-fp');
-      if (g.cert_pem) { fp.style.display = ''; fp.innerHTML = '<b>Pinned</b> certificate from saved gateway.'; }
-      else { fp.style.display = 'none'; }
+      _certStatus(!!g.cert_pem);
     }
-    // Prefill from the layer's associated gateway.
+    // Prefill from the layer's associated gateway (else set the manual-entry state).
     if (LAYER_GW && gwById[LAYER_GW]) { var s = $('gw-select'); if (s) s.value = String(LAYER_GW); fillGateway(gwById[LAYER_GW]); }
+    else { fillGateway(null); }
     var gwSel = $('gw-select');
     if (gwSel) gwSel.addEventListener('change', function () { fillGateway(gwById[this.value]); });
     $('use-mock').addEventListener('change', function () { $('gw-fields').disabled = this.checked; });
-
-    $('fetch-cert').addEventListener('click', function () {
-      var p = new URLSearchParams(); p.set('gw_host', $('gw_host').value); p.set('gw_port', $('gw_port').value);
-      $('fetch-cert').textContent = 'Fetching…'; $('fetch-cert').disabled = true;
-      fetch('/layers/' + LAYER_ID + '/fetch-cert', { method: 'POST', body: p })
-        .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
-        .then(function (res) {
-          $('fetch-cert').textContent = 'Fetch & trust certificate'; $('fetch-cert').disabled = false;
-          var fp = $('cert-fp'); fp.style.display = '';
-          if (!res.ok) { fp.textContent = res.j.error || 'Failed'; return; }
-          $('gw_cert').value = res.j.pem;
-          var gid = $('gw-select') ? $('gw-select').value : '';
-          if (gid && gwById[gid]) {
-            // Persist onto the saved gateway so it's reused next time (no re-fetching).
-            var pp = new URLSearchParams(); pp.set('cert_pem', res.j.pem);
-            fetch('/gateways/' + gid + '/cert', { method: 'POST', body: pp })
-              .then(function () {
-                gwById[gid].cert_pem = res.j.pem;  // keep in-page state consistent
-                fp.innerHTML = '<b>Pinned</b> · SHA-256 ' + res.j.fingerprint + ' — saved to “' + esc(gwById[gid].name) + '”, reused next time.';
-              })
-              .catch(function () { fp.innerHTML = '<b>Pinned</b> · SHA-256 ' + res.j.fingerprint + ' (this apply only — save failed).'; });
-          } else {
-            fp.innerHTML = '<b>Pinned</b> · SHA-256 ' + res.j.fingerprint + ' — for this apply. Save it as a gateway to reuse it.';
-          }
-        })
-        .catch(function () { $('fetch-cert').textContent = 'Fetch & trust certificate'; $('fetch-cert').disabled = false; });
-    });
 
     function renderStepper(stages, doneStages, current, status, failedStage) {
       var ul = $('stepper'); ul.innerHTML = '';
@@ -309,6 +285,27 @@
       return '<div class="tablewrap"><table class="rulebase"><thead><tr><th>#</th><th>Name</th><th>Source</th>' +
         '<th>Destination</th><th>Service</th><th>Action</th><th>Track</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
     }
+    function _objDetail(o) {
+      if (o['ip-address']) return o['ip-address'];
+      if (o.subnet4) return o.subnet4 + (o['mask-length4'] != null ? '/' + o['mask-length4'] : '');
+      if (o.subnet6) return o.subnet6 + (o['mask-length6'] != null ? '/' + o['mask-length6'] : '');
+      if (Array.isArray(o.members)) return o.members.join(', ');
+      if (o['ipv4-address-first']) return o['ipv4-address-first'] + ' – ' + (o['ipv4-address-last'] || '');
+      return '';
+    }
+    function renderObjects(objs) {
+      var types = Object.keys(objs || {}).filter(function (k) { return (objs[k] || []).length; });
+      if (!types.length) return '';
+      var html = '<div class="trace-lbl" style="margin-top:10px;">Objects</div>';
+      types.forEach(function (t) {
+        var items = (objs[t] || []).map(function (o) {
+          var d = _objDetail(o);
+          return '<span class="pill" style="margin:2px;">' + esc(o.name || '?') + (d ? ' · ' + esc(d) : '') + '</span>';
+        }).join('');
+        html += '<div style="margin:3px 0;"><span class="muted" style="font-size:11px; text-transform:uppercase; letter-spacing:.4px;">' + esc(t) + '</span> ' + items + '</div>';
+      });
+      return html;
+    }
     function renderLayers(layers) {
       if (!layers || !layers.length) return '<p class="muted">No dynamic layers reported by the gateway.</p>';
       var header = '<p class="muted" style="margin:0 0 8px;"><b>' + layers.length + '</b> dynamic layer' +
@@ -325,7 +322,7 @@
           '<b>' + esc(l.name || '(unnamed)') + '</b>' +
           (l.display_name ? ' <span class="muted">— ' + esc(l.display_name) + '</span>' : '') +
           '<div class="muted" style="margin:6px 0;">' + (l.rulebase || []).length + ' rule(s) · ' + objCount + ' object(s)</div>' +
-          renderRulebaseTable(l.rulebase) + meta + '</div>';
+          renderRulebaseTable(l.rulebase) + renderObjects(l.objects) + meta + '</div>';
       }).join('');
     }
     $('fetch-btn').addEventListener('click', function () {
