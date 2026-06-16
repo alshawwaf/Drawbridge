@@ -60,23 +60,17 @@
     </div>
     <fieldset id="gw-fields">
       {% if gateways %}
-      <label>Saved gateway</label>
-      <select id="gw-select">
-        <option value="">— enter manually —</option>
+      <label>Gateway</label>
+      <select name="gateway_id" id="gw-select">
         {% for g in gateways %}<option value="{{ g.id }}">{{ g.name }} ({{ g.host }}:{{ g.port }})</option>{% endfor %}
       </select>
+      <div id="gw-summary" class="muted" style="margin:6px 0 0; font-size:12.5px;"></div>
+      <label>Password</label>
+      <input name="gw_pass" id="gw_pass" type="password" placeholder="Gateway password — entered per apply, never stored">
+      <p class="muted">Address, port, username and the pinned certificate come from the selected <a href="/gateways">gateway profile</a>. Only the password is entered here — used for this call and never stored.</p>
+      {% else %}
+      <p class="muted">No saved gateways yet. <a href="/gateways/new">Add a gateway</a> first (address, port, username, certificate), then select it here.</p>
       {% endif %}
-      <div class="row">
-        <div class="grow"><label>Gateway address</label><input name="gw_host" id="gw_host" placeholder="10.1.1.1"></div>
-        <div style="width:120px;"><label>Port</label><input name="gw_port" id="gw_port" value="443"></div>
-      </div>
-      <div class="row">
-        <div class="grow"><label>Username</label><input name="gw_user" id="gw_user" placeholder="admin"></div>
-        <div class="grow"><label>Password</label><input name="gw_pass" id="gw_pass" type="password"></div>
-      </div>
-      <input type="hidden" name="gw_cert" id="gw_cert">
-      <div id="cert-status" class="muted" style="margin-top:6px; font-size:12.5px;"></div>
-      <p class="muted">TLS stays verified. A self-signed gateway's certificate is pinned on its <a href="/gateways">gateway profile</a> (Gateways → edit → <i>Fetch &amp; trust certificate</i>) and reused here automatically. The password is used only for this call and never stored.</p>
     </fieldset>
     <div style="margin-top:14px;"><button type="button" id="apply-btn">Apply</button>
       <button type="button" class="secondary" id="fetch-btn" title="Read the dynamic layers and content this gateway currently has">⤓ Fetch from gateway</button>
@@ -189,23 +183,18 @@
     function esc(s) { return String(s).replace(/[&<>]/g, function (c) { return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c]; }); }
     function formData() { return new URLSearchParams(new FormData($('apply-form'))); }
 
-    function _certStatus(hasCert) {
-      var el = $('cert-status'); if (!el) return;
-      el.textContent = hasCert
-        ? '🔒 Using the pinned certificate from the saved gateway.'
-        : 'No pinned certificate — for a self-signed gateway, pin it on its profile first (see below).';
+    function gwSummary(g) {
+      var el = $('gw-summary'); if (!el) return;
+      el.textContent = !g ? '' :
+        (g.username || '⚠ no username set') + ' @ ' + g.host + ':' + g.port +
+        (g.cert_pem ? ' · 🔒 pinned certificate' : ' · no pinned cert');
     }
-    function fillGateway(g) {
-      if (!g) { $('gw_cert').value = ''; _certStatus(false); return; }
-      $('gw_host').value = g.host || ''; $('gw_port').value = g.port || 443;
-      $('gw_user').value = g.username || ''; $('gw_cert').value = g.cert_pem || '';
-      _certStatus(!!g.cert_pem);
-    }
-    // Prefill from the layer's associated gateway (else set the manual-entry state).
-    if (LAYER_GW && gwById[LAYER_GW]) { var s = $('gw-select'); if (s) s.value = String(LAYER_GW); fillGateway(gwById[LAYER_GW]); }
-    else { fillGateway(null); }
     var gwSel = $('gw-select');
-    if (gwSel) gwSel.addEventListener('change', function () { fillGateway(gwById[this.value]); });
+    if (gwSel) {
+      if (LAYER_GW && gwById[LAYER_GW]) gwSel.value = String(LAYER_GW);
+      gwSummary(gwById[gwSel.value]);
+      gwSel.addEventListener('change', function () { gwSummary(gwById[this.value]); });
+    }
     $('use-mock').addEventListener('change', function () { $('gw-fields').disabled = this.checked; });
 
     function renderStepper(stages, doneStages, current, status, failedStage) {
