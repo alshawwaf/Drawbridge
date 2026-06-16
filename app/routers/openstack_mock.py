@@ -47,6 +47,14 @@ def keystone_auth(token: str, body: dict, db: Session = Depends(get_db)):
     return JSONResponse(resp, status_code=201, headers={"X-Subject-Token": subject})
 
 
+@router.get("/openstack/{token}/v3/auth/projects")
+def keystone_projects(token: str, db: Session = Depends(get_db),
+                      x_auth_token: str | None = Header(default=None)):
+    """Projects the token can access — CloudGuard enumerates these after authenticating."""
+    _require_token(x_auth_token)
+    return os_mock.keystone_projects(_dc(db, token), get_settings().base_url)
+
+
 @router.get("/openstack/{token}/nova/v2.1/servers/detail")
 @router.get("/openstack/{token}/nova/v2.1/servers")
 def nova_servers(token: str, db: Session = Depends(get_db), x_auth_token: str | None = Header(default=None)):
