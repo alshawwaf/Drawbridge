@@ -2,7 +2,7 @@
 {% block title %}{{ 'Edit gateway' if gw else 'New gateway' }}{% endblock %}
 {% block content %}
 <h1>{{ 'Edit gateway' if gw else 'New gateway' }}</h1>
-<p class="muted">A reusable connection profile for applying Dynamic Layers. The password is entered at apply time and never stored.</p>
+<p class="muted">A reusable connection profile for applying Dynamic Layers. Optionally save the login password (encrypted); otherwise it's entered each time you apply or fetch.</p>
 {% if error %}<div class="err" style="margin:12px 0;">{{ error }}</div>{% endif %}
 
 <form method="post" action="{{ action }}" class="card">
@@ -16,7 +16,22 @@
 
   <label>Username</label>
   <input name="username" value="{{ gw.username if gw else '' }}" placeholder="admin">
-  <p class="muted">Used to log in when applying or fetching a Dynamic Layer (the password is entered at that time, never stored).</p>
+  <p class="muted">Used to log in when applying or fetching a Dynamic Layer.</p>
+
+  <label>Password <span class="muted" style="font-weight:400;">— optional, stored AES-256-encrypted</span></label>
+  {% if crypto_ok %}
+  <input name="password" type="password" autocomplete="new-password"
+         placeholder="{{ 'Leave blank to keep the saved password' if has_password else 'Stored encrypted; reused for apply & fetch' }}">
+  {% if has_password %}
+  <div class="check" style="margin-top:8px;"><input type="checkbox" id="clear_password" name="clear_password" value="1"><label for="clear_password">Clear the saved password</label></div>
+  <p class="muted">A password is currently <b>saved (encrypted)</b>. Type a new one to replace it, tick “Clear” to remove it, or leave blank to keep it.</p>
+  {% else %}
+  <p class="muted">If set, it's encrypted with <b>AES-256-GCM</b> and reused for apply &amp; fetch so you don't retype it. Leave blank to enter it each time instead.</p>
+  {% endif %}
+  {% else %}
+  <input type="password" disabled placeholder="Encryption unavailable — password can't be stored in this environment">
+  <p class="muted">Storing a password needs the encryption library, which isn't available in this environment. The password is entered per apply/fetch for now.</p>
+  {% endif %}
 
   <div class="row" style="align-items:flex-end;">
     <div class="grow"><label>Pinned certificate (PEM, optional — to trust a self-signed gateway)</label></div>

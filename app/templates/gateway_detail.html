@@ -16,8 +16,9 @@
 <div class="card">
   <h2 style="margin-top:0;">Connection</h2>
   <p class="muted">Address <code>{{ gw.host }}:{{ gw.port }}</code> · Username <code>{{ gw.username or '—' }}</code> ·
-    TLS {% if gw.cert_pem %}<span class="pill ok">pinned certificate</span>{% else %}<span class="pill faint">system trust</span>{% endif %}</p>
-  <p class="muted">Edit these on the <a href="/gateways/{{ gw.id }}/edit">gateway profile</a>. The password is entered per fetch/apply and never stored.</p>
+    TLS {% if gw.cert_pem %}<span class="pill ok">pinned certificate</span>{% else %}<span class="pill faint">system trust</span>{% endif %} ·
+    Password {% if has_password %}<span class="pill ok">saved (encrypted)</span>{% else %}<span class="pill faint">entered per apply</span>{% endif %}</p>
+  <p class="muted">Edit these on the <a href="/gateways/{{ gw.id }}/edit">gateway profile</a>.{% if not has_password %} The password is entered per fetch/apply; save one on the profile to skip retyping.{% endif %}</p>
 </div>
 
 <div class="card">
@@ -26,8 +27,12 @@
   {% if snapshot and not snapshot.ok and snapshot.error %}<div class="err" style="margin:10px 0;">{{ snapshot.error }}</div>{% endif %}
 
   <form method="post" action="/gateways/{{ gw.id }}/fetch" class="row endalign" style="gap:8px; margin:12px 0;">
-    <div class="grow" style="max-width:340px;"><label>Gateway password</label>
-      <input name="password" type="password" placeholder="Password (used for this call, never stored)" required></div>
+    <div class="grow" style="max-width:360px;"><label>Gateway password</label>
+      {% if has_password %}
+      <input name="password" type="password" placeholder="Using the saved password — leave blank, or type to override">
+      {% else %}
+      <input name="password" type="password" placeholder="Password (used for this call, never stored)" required>
+      {% endif %}</div>
     <button type="submit">⤓ Fetch now</button>
   </form>
 

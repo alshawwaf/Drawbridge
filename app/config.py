@@ -17,6 +17,11 @@ class Settings(BaseSettings):
     # If empty, an ephemeral key is generated at startup (dev only — logs out on restart).
     session_secret: str = ""
 
+    # Dedicated key for encrypting secrets at rest (the optional saved gateway password,
+    # AES-256-GCM). Falls back to session_secret. If both are empty, stored passwords cannot
+    # be decrypted after a restart — set DCSIM_ENCRYPTION_KEY (or DCSIM_SESSION_SECRET) in prod.
+    encryption_key: str = ""
+
     # Seed portal admin. Never hardcode a password — set DCSIM_ADMIN_PASSWORD via env.
     # If empty, a random password is generated and printed once at startup (dev convenience).
     admin_username: str = "admin"
