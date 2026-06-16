@@ -245,6 +245,7 @@ def apply_status(layer_id: int, pid: str, request: Request, db: Session = Depend
         return JSONResponse({"error": "unknown progress id"}, status_code=404)
     return JSONResponse({
         "stage": p["stage"], "status": p["status"], "done_stages": p["done_stages"],
+        "failed_stage": p.get("failed_stage"),
         "summary": p.get("summary"), "error": p.get("error"), "task_id": p.get("task_id"),
         "trace": p.get("trace", []),
         "stages": [{"key": k, "label": label} for k, label in STAGES],

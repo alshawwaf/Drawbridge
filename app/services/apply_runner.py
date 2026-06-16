@@ -6,8 +6,7 @@ HTTP step is captured into a trace (method, URL, request, response, status, ms) 
 inspect the actual data. TLS verification is never disabled. Secrets are redacted: the gateway
 password is never recorded, and the session token (X-chkp-sid) is masked.
 """
-import os
-import tempfile
+import ssl
 import threading
 import time
 import uuid
@@ -83,11 +82,24 @@ def _advance(pid: str, stage: str) -> None:
 
 def _finish(pid: str, *, status: str, result: dict, task_id: str) -> None:
     p = _PROGRESS[pid]
-    for key, _ in STAGES:
-        if key != "done" and key not in p["done_stages"]:
-            p["done_stages"].append(key)
-    p.update(stage="done", status=status, task_id=task_id, summary=_summary(result),
-             trace=result.get("trace", []))
+    fstage = result.get("failed_stage")
+    if fstage:
+        # A transport/session step failed: mark that step (red), keep the steps before it done,
+        # and leave the rest pending — so the modal shows exactly where it broke.
+        order = [k for k, _ in STAGES]
+        if fstage not in order:
+            fstage = "connecting"
+        p["done_stages"] = order[: order.index(fstage)]
+        p["failed_stage"] = fstage
+        p["stage"] = fstage
+    else:
+        # The Gaia session completed end-to-end (the task itself may still report a validation
+        # failure, surfaced in the result box below) — so every step is done.
+        for key, _ in STAGES:
+            if key != "done" and key not in p["done_stages"]:
+                p["done_stages"].append(key)
+        p["stage"] = "done"
+    p.update(status=status, task_id=task_id, summary=_summary(result), trace=result.get("trace", []))
     if result.get("validation_errors"):
         p["error"] = result["validation_errors"][0].get("message", "")
 
@@ -96,7 +108,7 @@ def start_apply(*, layer_id: int, target: str, dry_run: bool, gateway_host: str 
                 gateway_port: int = 443, user: str | None = None, password: str | None = None,
                 cert_pem: str | None = None) -> str:
     pid = uuid.uuid4().hex
-    _PROGRESS[pid] = {"stage": "queued", "status": "running", "target": target,
+    _PROGRESS[pid] = {"stage": "queued", "status": "running", "target": target, "failed_stage": None,
                       "done_stages": [], "task_id": None, "summary": None, "error": None, "trace": []}
     threading.Thread(
         target=_run, args=(pid,),
@@ -140,25 +152,51 @@ def _run_mock(pid, payload, dry_run):
     return result, result["status"], result["status_code"], task_id
 
 
+def _pinned_ssl_context(cert_pem: str) -> ssl.SSLContext:
+    """Build an SSL context that trusts ONLY the pinned certificate.
+
+    TLS verification stays ON (CERT_REQUIRED, TLS 1.2+) — this is certificate *pinning*, not a
+    skip-verify toggle. Hostname matching is turned off because a self-signed gateway is commonly
+    reached via a DNS name its certificate was never issued for (e.g. a cloud-lab hostname);
+    pinning the exact, operator-reviewed certificate is a stronger identity check than the
+    hostname match. The peer must still present a certificate that validates against the pin.
+    """
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_REQUIRED
+    # Honor the pinned certificate as a trust anchor on its own — so it works whether the gateway
+    # presents a self-signed cert or a leaf issued by an internal CA (we only fetched the leaf).
+    ctx.verify_flags |= ssl.VERIFY_X509_PARTIAL_CHAIN
+    ctx.load_verify_locations(cadata=cert_pem)
+    return ctx
+
+
 def _run_gateway(pid, payload, dry_run, *, host, port, user, password, cert_pem):
-    verify: bool | str = True
-    cert_file = None
-    if cert_pem and cert_pem.strip():
-        cert_file = tempfile.NamedTemporaryFile("w", suffix=".pem", delete=False)
-        cert_file.write(cert_pem); cert_file.close(); verify = cert_file.name
+    pinned = bool(cert_pem and cert_pem.strip())
+    verify = _pinned_ssl_context(cert_pem) if pinned else True
     base = f"https://{host}:{port}/gaia_api/{GAIA_VERSION}"
     trace = []
     result = {"change_summary": {}, "validation_warnings": [], "validation_errors": [], "dry_run": dry_run}
     status, status_code, task_id = "failed", 0, ""
+    failed_stage = None
     try:
         with httpx.Client(verify=verify, timeout=30.0) as client:
             _advance(pid, "connecting")
-            t = time.perf_counter()
-            login = client.post(f"{base}/login", json={"user": user, "password": password})
-            trace.append(_trace_entry("login", "POST", f"{base}/login",
-                headers={"Content-Type": "application/json"},
-                body={"user": user, "password": "***"}, resp=login, ms=round((time.perf_counter() - t) * 1000)))
-            login.raise_for_status()
+            try:
+                t = time.perf_counter()
+                login = client.post(f"{base}/login", json={"user": user, "password": password})
+                trace.append(_trace_entry("login", "POST", f"{base}/login",
+                    headers={"Content-Type": "application/json"},
+                    body={"user": user, "password": "***"}, resp=login,
+                    ms=round((time.perf_counter() - t) * 1000)))
+                login.raise_for_status()
+            except httpx.HTTPStatusError:
+                failed_stage = "logging_in"   # reached the gateway, but it rejected the login
+                raise
+            except Exception:
+                failed_stage = "connecting"   # couldn't establish the session (TLS / timeout / unreachable)
+                raise
             sid = login.json().get("sid")
             _advance(pid, "logging_in")
             headers = {"X-chkp-sid": sid, "Content-Type": "application/json"}
@@ -192,6 +230,10 @@ def _run_gateway(pid, payload, dry_run, *, host, port, user, password, cert_pem)
                 result = {"change_summary": details.get("change-summary", {}),
                           "validation_warnings": details.get("validation-warnings", []),
                           "validation_errors": details.get("validation-errors", []), "dry_run": dry_run}
+            except Exception:
+                if failed_stage is None:
+                    failed_stage = _PROGRESS[pid]["stage"]   # "pushing" or "polling"
+                raise
             finally:
                 _advance(pid, "logging_out")
                 try:
@@ -202,20 +244,21 @@ def _run_gateway(pid, payload, dry_run, *, host, port, user, password, cert_pem)
                 except Exception:
                     pass
     except httpx.ConnectError as exc:
+        if failed_stage is None:
+            failed_stage = "connecting"
         trace.append(_trace_entry("connect", "POST", f"{base}/login", err=exc))
-        result["validation_errors"] = [{"layer": "", "rule": "", "object": "",
-            "message": "Could not reach the gateway, or TLS verification failed — use "
-                       f"'Fetch & trust certificate' to pin a self-signed gateway: {exc}"}]
+        msg = (f"Could not reach the gateway, or it presented a certificate that does not match the "
+               f"pinned one — re-fetch & review the fingerprint: {exc}") if pinned else (
+              f"Could not reach the gateway, or TLS verification failed — use 'Fetch & trust "
+              f"certificate' to pin a self-signed gateway: {exc}")
+        result["validation_errors"] = [{"layer": "", "rule": "", "object": "", "message": msg}]
     except Exception as exc:
+        if failed_stage is None:
+            failed_stage = _PROGRESS[pid].get("stage") or "connecting"
         trace.append(_trace_entry("error", "POST", base, err=exc))
         result["validation_errors"] = [{"layer": "", "rule": "", "object": "", "message": f"Gateway request failed: {exc}"}]
-    finally:
-        if cert_file:
-            try:
-                os.unlink(cert_file.name)
-            except OSError:
-                pass
     result["trace"] = trace
+    result["failed_stage"] = failed_stage
     return result, status, status_code, task_id
 
 
@@ -247,6 +290,8 @@ def _run(pid, *, layer_id, target, dry_run, gateway_host, gateway_port, user, pa
                        detail={"trace": result.get("trace", [])})
         _finish(pid, status=status, result=result, task_id=task.task_id)
     except Exception as exc:
-        _PROGRESS[pid].update(stage="done", status="failed", error=str(exc))
+        p = _PROGRESS[pid]
+        fstage = p.get("stage") if p.get("stage") not in (None, "queued", "done") else "connecting"
+        p.update(status="failed", failed_stage=fstage, error=str(exc))
     finally:
         db.close()

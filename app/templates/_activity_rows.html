@@ -1,6 +1,13 @@
 {% if not rows %}
 <p class="muted" style="padding:12px 0;">No activity yet. Poll a feed, curl the mock Gaia API, or apply a Dynamic Layer — it shows up here.</p>
 {% else %}
+{% if pages > 1 %}
+<div class="pager">
+  <button type="button" class="secondary" onclick="gotoPage({{ page - 1 }})"{% if page <= 1 %} disabled{% endif %}>← Newer</button>
+  <span class="muted">Page {{ page }} of {{ pages }} · {{ total }} events</span>
+  <button type="button" class="secondary" onclick="gotoPage({{ page + 1 }})"{% if page >= pages %} disabled{% endif %}>Older →</button>
+</div>
+{% endif %}
 {% for r in rows %}
 <details class="itemrow" style="display:block;">
   <summary style="color:var(--text);">
