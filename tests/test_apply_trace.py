@@ -105,6 +105,27 @@ def test_summary_from_payload_counts_rules_and_objects():
     assert s["objects"] == 3 and s["rules"] == 2
 
 
+class _Resp:
+    def __init__(self, code, body=None, raises=False):
+        self.status_code = code
+        self._body, self._raises = body, raises
+    def json(self):
+        if self._raises:
+            raise ValueError("not json")
+        return self._body
+
+
+def test_login_error_clean_for_401():
+    msg = apply_runner._login_error(_Resp(401, {"message": "Authentication required"}))
+    assert "401" in msg and "rejected the username/password" in msg
+    assert "does not store the password" in msg and "Authentication required" in msg
+
+
+def test_login_error_generic_for_500_without_json():
+    msg = apply_runner._login_error(_Resp(500, raises=True))
+    assert "500" in msg and "Client error" not in msg  # not httpx's raw string
+
+
 def _progress(stage, done):
     return {"stage": stage, "status": "running", "done_stages": list(done), "failed_stage": None,
             "task_id": None, "summary": None, "error": None, "trace": []}
