@@ -4,6 +4,7 @@ bodies, redacting secrets. Excludes only the log viewer itself and high-frequenc
 redacted; HTML response bodies are summarized (not stored) to keep entries readable.
 """
 import json
+import re
 from urllib.parse import parse_qs
 import time
 
@@ -25,11 +26,17 @@ def _kind(path: str) -> str:
         return "gaia_mock"
     if path.startswith(("/gdc/", "/netfeed/", "/ioc/")):
         return "feed_poll"
-    if path.startswith("/openstack/"):
+    if path.startswith(("/openstack/", "/vcenter/")):
         return "datacenter"
     if path.startswith("/api"):
         return "api"
     return "ui"
+
+
+def _redact_xml(text: str) -> str:
+    """Mask <password>…</password> in SOAP/XML bodies (e.g. the vSphere Login call)."""
+    return re.sub(r"(<(?:\w+:)?password[^>]*>).*?(</(?:\w+:)?password>)", r"\1***\2", text,
+                  flags=re.S | re.I)
 
 
 def _parse_request(raw: bytes, content_type: str):
@@ -41,6 +48,8 @@ def _parse_request(raw: bytes, content_type: str):
             return redact_body(json.loads(text))
         except Exception:
             pass
+    if "xml" in content_type or text.lstrip().startswith("<"):  # SOAP / vCenter — keep raw, mask password
+        return _redact_xml(text)[:_MAX_BODY]
     if "x-www-form-urlencoded" in content_type or ("=" in text and not text.lstrip().startswith("{")):
         try:
             flat = {k: (v[0] if len(v) == 1 else v) for k, v in parse_qs(text).items()}
