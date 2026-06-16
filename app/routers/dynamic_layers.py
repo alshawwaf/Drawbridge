@@ -36,17 +36,16 @@ DEFAULT_LAYER_CONTENT = {
         "hosts": [{"name": "client", "ip-address": "10.0.0.5"}],
         "networks": [{"name": "lab_net", "subnet4": "10.0.0.0", "mask-length4": 24}],
     },
-    # Names that already exist on the gateway (predefined TCP services + an application site).
-    # The rules below reference these by name — that's what "referenced-objects" is for.
+    # Predefined services that already exist on the gateway, referenced by name. The rules below
+    # use them — that's what "referenced-objects" is for. Services work on a plain Firewall layer;
+    # we deliberately avoid applications/categories here, as those would require the layer to have
+    # the "Application & URL Filtering" blade enabled (Layer Editor → General).
     "referenced_objects": {
         "services-tcp": ["ssh", "https"],
-        "application-sites": ["Facebook"],
     },
     "rulebase": [
         {"name": "allow_web", "action": "Accept", "track": {"type": "Log"},
          "source": ["client"], "destination": ["lab_net"], "service": ["https", "ssh"]},
-        {"name": "block_facebook", "action": "Drop", "track": {"type": "Log"},
-         "source": ["lab_net"], "destination": "any", "service": ["Facebook"]},
         {"name": "cleanup_rule", "action": "Drop", "track": {"type": "Log"},
          "source": "any", "destination": "any", "service": "any"},
     ],

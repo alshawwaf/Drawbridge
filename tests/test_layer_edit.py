@@ -72,11 +72,13 @@ class _DefaultLayer:
 def test_default_policy_ships_referenced_objects_used_by_rules():
     payload = build_set_dynamic_content(_DefaultLayer())
     refs = payload["referenced-objects"]
-    assert refs.get("application-sites") == ["Facebook"]
     assert "ssh" in refs.get("services-tcp", []) and "https" in refs.get("services-tcp", [])
-    # at least one rule actually uses a referenced name
+    # at least one rule actually uses a referenced service name
     services = [r.get("service") for r in DEFAULT_LAYER_CONTENT["rulebase"]]
-    assert ["Facebook"] in services
+    assert any(isinstance(s, list) and "https" in s for s in services)
+    # the default must apply on a plain Firewall layer — no applications/categories, which would
+    # require the "Application & URL Filtering" blade to be enabled on the layer.
+    assert "application-sites" not in refs and "application-site-categories" not in refs
 
 
 def test_default_policy_validates_and_all_references_resolve():
