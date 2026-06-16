@@ -16,7 +16,7 @@ from sqlalchemy import select
 
 from ..config import get_settings
 from ..db import SessionLocal
-from ..models import DynamicLayer, LayerTask
+from ..models import DynamicLayer, GatewayLayerSnapshot, LayerTask
 from ..schemas.dynamic_layer import build_set_dynamic_content, evaluate_dynamic_content
 from .activity import write_activity
 
@@ -451,8 +451,20 @@ def _fetch_gateway_content(*, host, port, user, password, cert_pem) -> dict:
     return {"ok": error is None, "layers": layers, "trace": trace, "error": error}
 
 
+def _save_snapshot(db, gateway_id: int, data: dict) -> None:
+    """Persist the fetched layers so a gateway's 'layers' view survives the fetch modal closing."""
+    snap = db.scalar(select(GatewayLayerSnapshot).where(GatewayLayerSnapshot.gateway_id == gateway_id))
+    if snap is None:
+        snap = GatewayLayerSnapshot(gateway_id=gateway_id)
+        db.add(snap)
+    snap.layers = data.get("layers", []) or []
+    snap.ok = bool(data.get("ok"))
+    snap.error = data.get("error") or ""
+    db.commit()
+
+
 def fetch_dynamic_content(*, target, db, owner_id, host=None, port=443,
-                          user=None, password=None, cert_pem=None) -> dict:
+                          user=None, password=None, cert_pem=None, gateway_id=None) -> dict:
     """Read the dynamic layers / content currently on a gateway (real or the built-in mock)."""
     if target == "mock":
         data = _fetch_mock(db, owner_id)
@@ -461,6 +473,8 @@ def fetch_dynamic_content(*, target, db, owner_id, host=None, port=443,
         data = _fetch_gateway_content(host=host, port=port, user=user,
                                       password=password, cert_pem=cert_pem)
         src = host or "gateway"
+        if gateway_id:
+            _save_snapshot(db, gateway_id, data)
     total_ms = sum((s.get("ms") or 0) for s in data.get("trace", []))
     n = len(data.get("layers") or [])
     write_activity(kind="gateway_read", direction="outbound", method="POST",

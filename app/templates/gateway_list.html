@@ -19,7 +19,7 @@
   <tbody>
   {% for r in rows %}
     <tr>
-      <td><b>{{ r.gw.name }}</b></td>
+      <td><a class="feedname" href="/gateways/{{ r.gw.id }}">{{ r.gw.name }}</a></td>
       <td class="nowrap"><code>{{ r.gw.host }}:{{ r.gw.port }}</code></td>
       <td class="nowrap">{{ r.gw.username or '—' }}</td>
       <td class="nowrap">{% if r.gw.cert_pem %}<span class="pill ok">pinned cert</span>{% else %}<span class="pill faint">system trust</span>{% endif %}</td>

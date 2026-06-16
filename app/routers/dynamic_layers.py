@@ -298,7 +298,7 @@ def fetch_content(
             return JSONResponse({"error": err}, status_code=400)
         data = fetch_dynamic_content(target="gateway", db=db, owner_id=user.id, host=gw.host,
                                      port=gw.port, user=gw.username, password=gw_pass,
-                                     cert_pem=gw.cert_pem or None)
+                                     cert_pem=gw.cert_pem or None, gateway_id=gw.id)
     return JSONResponse(data)
 
 
