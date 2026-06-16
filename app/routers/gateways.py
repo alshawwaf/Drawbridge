@@ -6,8 +6,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..db import get_db
-from ..models import DynamicLayer, Gateway, User
+from ..models import DynamicLayer, Gateway, GatewayLayerSnapshot, User
 from ..security import get_user_or_none, new_feed_token
+from ..services.apply_runner import fetch_dynamic_content
 from ..services.gaia_client import fetch_gateway_cert
 from .ui import _flash, _pop_flash, templates
 
@@ -95,6 +96,40 @@ def gateways_set_cert(gid: int, request: Request, cert_pem: str = Form(""),
     gw.cert_pem = cert_pem
     db.commit()
     return JSONResponse({"ok": True, "name": gw.name})
+
+
+@router.get("/gateways/{gid}", response_class=HTMLResponse)
+def gateways_detail(gid: int, request: Request, db: Session = Depends(get_db)):
+    """Persistent 'what's on this gateway' view — the last-fetched dynamic layers + a refresh."""
+    user = get_user_or_none(request, db)
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+    gw = _owned(db, gid, user)
+    snap = db.scalar(select(GatewayLayerSnapshot).where(GatewayLayerSnapshot.gateway_id == gw.id))
+    return templates.TemplateResponse(request, "gateway_detail.html",
+                                      {"gw": gw, "snapshot": snap, "flash": _pop_flash(request)})
+
+
+@router.post("/gateways/{gid}/fetch")
+def gateways_fetch(gid: int, request: Request, password: str = Form(""),
+                   db: Session = Depends(get_db)):
+    user = get_user_or_none(request, db)
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+    gw = _owned(db, gid, user)
+    if not gw.username:
+        _flash(request, f"Gateway “{gw.name}” has no username — set it on this gateway first.", "error")
+    elif not password:
+        _flash(request, "Enter the gateway password to fetch (it is never stored).", "error")
+    else:
+        data = fetch_dynamic_content(target="gateway", db=db, owner_id=user.id, host=gw.host,
+                                     port=gw.port, user=gw.username, password=password,
+                                     cert_pem=gw.cert_pem or None, gateway_id=gw.id)
+        if data.get("ok"):
+            _flash(request, f"Fetched {len(data.get('layers') or [])} dynamic layer(s) from “{gw.name}”.")
+        else:
+            _flash(request, data.get("error") or "Fetch failed.", "error")
+    return RedirectResponse(f"/gateways/{gid}", status_code=303)
 
 
 @router.get("/gateways/{gid}/edit", response_class=HTMLResponse)

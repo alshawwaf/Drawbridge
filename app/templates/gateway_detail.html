@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% import "_layers_view.html" as lv %}
+{% block title %}{{ gw.name }}{% endblock %}
+{% block content %}
+<div class="row">
+  <div class="grow"><h1>{{ gw.name }} <span class="pill">gateway</span></h1>
+    <p class="muted">Saved gateway connection profile.</p></div>
+  <div class="row" style="gap:8px;">
+    <a class="btn secondary" href="/gateways/{{ gw.id }}/edit">Edit</a>
+    <form method="post" action="/gateways/{{ gw.id }}/delete">
+      <button class="danger" type="submit" data-confirm="Delete gateway “{{ gw.name }}”?">Delete</button>
+    </form>
+  </div>
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0;">Connection</h2>
+  <p class="muted">Address <code>{{ gw.host }}:{{ gw.port }}</code> · Username <code>{{ gw.username or '—' }}</code> ·
+    TLS {% if gw.cert_pem %}<span class="pill ok">pinned certificate</span>{% else %}<span class="pill faint">system trust</span>{% endif %}</p>
+  <p class="muted">Edit these on the <a href="/gateways/{{ gw.id }}/edit">gateway profile</a>. The password is entered per fetch/apply and never stored.</p>
+</div>
+
+<div class="card">
+  <div class="row"><h2 style="margin:0;" class="grow">Dynamic layers on this gateway</h2>
+    {% if snapshot %}<span class="muted">last fetched {{ snapshot.fetched_at.strftime('%Y-%m-%d %H:%M:%S') }} UTC</span>{% endif %}</div>
+  {% if snapshot and not snapshot.ok and snapshot.error %}<div class="err" style="margin:10px 0;">{{ snapshot.error }}</div>{% endif %}
+
+  <form method="post" action="/gateways/{{ gw.id }}/fetch" class="row endalign" style="gap:8px; margin:12px 0;">
+    <div class="grow" style="max-width:340px;"><label>Gateway password</label>
+      <input name="password" type="password" placeholder="Password (used for this call, never stored)" required></div>
+    <button type="submit">⤓ Fetch now</button>
+  </form>
+
+  {% if snapshot %}
+    {{ lv.render_layers(snapshot.layers) }}
+  {% else %}
+    <p class="muted">Not fetched yet. Enter the password and click <b>Fetch now</b> to pull this gateway's dynamic layers — the result is saved here so you can review it any time without re-fetching.</p>
+  {% endif %}
+</div>
+{% endblock %}

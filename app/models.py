@@ -169,6 +169,26 @@ class Gateway(Base):
     owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
     created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
+    snapshot: Mapped["GatewayLayerSnapshot"] = relationship(
+        back_populates="gateway", cascade="all, delete-orphan", uselist=False)
+
+
+class GatewayLayerSnapshot(Base):
+    """Persisted snapshot of the dynamic layers last fetched from a gateway (show-dynamic-layers /
+    show-dynamic-layer), so the 'what's on this gateway' view survives the fetch modal closing."""
+
+    __tablename__ = "gateway_layer_snapshots"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    gateway_id: Mapped[int] = mapped_column(ForeignKey("gateways.id"), unique=True, index=True)
+    layers: Mapped[list] = mapped_column(JSON, default=list)
+    ok: Mapped[bool] = mapped_column(default=True)
+    error: Mapped[str] = mapped_column(Text, default="")
+    fetched_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    gateway: Mapped["Gateway"] = relationship(back_populates="snapshot")
+
 
 class Datacenter(Base):
     """A mock cloud/datacenter that Check Point connects to (e.g. OpenStack). `content` holds
