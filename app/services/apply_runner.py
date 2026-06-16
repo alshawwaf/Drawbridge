@@ -17,7 +17,11 @@ from sqlalchemy import select
 from ..config import get_settings
 from ..db import SessionLocal
 from ..models import DynamicLayer, GatewayLayerSnapshot, LayerTask
-from ..schemas.dynamic_layer import build_set_dynamic_content, evaluate_dynamic_content
+from ..schemas.dynamic_layer import (
+    build_set_dynamic_content,
+    evaluate_dynamic_content,
+    referenced_object_names,
+)
 from .activity import write_activity
 
 GAIA_VERSION = "v1.9"
@@ -350,11 +354,15 @@ def _run_gateway(pid, payload, dry_run, *, host, port, user, password, cert_pem)
 def _layer_view(d: dict, queried_name: str = "") -> dict:
     """Normalize a show-dynamic-layer response into the shape the UI renders."""
     inner = d.get("name") or ""
+    objects = d.get("objects") or {}
+    rulebase = d.get("rulebase") or []
     return {
         "name": queried_name or inner or "(unnamed)",
         "display_name": inner if (inner and queried_name and inner != queried_name) else "",
-        "objects": d.get("objects") or {},
-        "rulebase": d.get("rulebase") or [],
+        "objects": objects,
+        "rulebase": rulebase,
+        # Objects the rules reference but don't define here — resolved on the gateway.
+        "referenced": referenced_object_names(objects, rulebase, d.get("referenced-objects")),
         "last_change": d.get("last-dynamic-content-change") or {},
     }
 
@@ -365,10 +373,13 @@ def _fetch_mock(db, owner_id: int) -> dict:
     rows = db.scalars(
         select(DynamicLayer).where(DynamicLayer.owner_id == owner_id).order_by(DynamicLayer.name)
     ).all()
-    layers = [{"name": r.layer_name, "display_name": r.name,
-               "objects": (r.content or {}).get("objects", {}) or {},
-               "rulebase": (r.content or {}).get("rulebase", []) or [],
-               "last_change": {}} for r in rows]
+    layers = []
+    for r in rows:
+        c = r.content or {}
+        objs, rb = c.get("objects", {}) or {}, c.get("rulebase", []) or []
+        layers.append({"name": r.layer_name, "display_name": r.name, "objects": objs, "rulebase": rb,
+                       "referenced": referenced_object_names(objs, rb, c.get("referenced_objects")),
+                       "last_change": {}})
     trace = [
         {"step": "login", "method": "POST", "url": f"{base}/login",
          "request": {"headers": {"Content-Type": "application/json"},

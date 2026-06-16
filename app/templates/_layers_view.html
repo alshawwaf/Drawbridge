@@ -40,13 +40,21 @@
 {% endif %}
 {% endmacro %}
 
+{% macro render_referenced(names) %}
+{% if names %}
+<div class="trace-lbl" style="margin-top:10px;">Referenced objects <span class="muted" style="font-weight:400; text-transform:none; letter-spacing:0;">— used by rules, resolved on the gateway</span></div>
+<div style="margin:3px 0;">{% for n in names %}<span class="pill faint" style="margin:2px;">{{ n }}</span>{% endfor %}</div>
+{% endif %}
+{% endmacro %}
+
 {% macro render_layers(layers) %}
 {% for l in layers %}
 <div class="card" style="margin:10px 0; box-shadow:none;">
   <b>{{ l.name or '(unnamed)' }}</b>{% if l.display_name %} <span class="muted">— {{ l.display_name }}</span>{% endif %}
-  <div class="muted" style="margin:6px 0;">{{ (l.rulebase or [])|length }} rule(s) · {{ (l.objects or {}).values() | map('length') | sum }} object(s)</div>
+  <div class="muted" style="margin:6px 0;">{{ (l.rulebase or [])|length }} rule(s) · {{ (l.objects or {}).values() | map('length') | sum }} object(s){% if l.referenced %} · {{ l.referenced|length }} referenced{% endif %}</div>
   {{ render_rulebase(l.rulebase or []) }}
   {{ render_objects(l.objects or {}) }}
+  {{ render_referenced(l.referenced or []) }}
   {% if l.last_change and l.last_change.administrator %}<div class="muted" style="font-size:11px; margin-top:6px;">last change by {{ l.last_change.administrator }}{% if l.last_change.time and l.last_change.time['iso-8601'] %} · {{ l.last_change.time['iso-8601'] }}{% endif %}</div>{% endif %}
 </div>
 {% else %}
