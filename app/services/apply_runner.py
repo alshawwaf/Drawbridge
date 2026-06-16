@@ -188,6 +188,21 @@ def _pinned_ssl_context(cert_pem: str) -> ssl.SSLContext:
     return ctx
 
 
+def _login_error(resp) -> str:
+    """A clean message for a failed gateway login (instead of httpx's raw 'Client error 401 …')."""
+    msg = ""
+    try:
+        body = resp.json() or {}
+        msg = body.get("message") or body.get("errors") or body.get("error") or ""
+    except Exception:
+        msg = ""
+    if resp.status_code in (401, 403):
+        return (f"Gateway login failed ({resp.status_code} Unauthorized): the gateway rejected the "
+                f"username/password" + (f" — {msg}" if msg else "") + ". Note: a saved gateway does "
+                "not store the password, so you must enter it for each apply/fetch.")
+    return f"Gateway login failed (HTTP {resp.status_code})." + (f" {msg}" if msg else "")
+
+
 def _run_gateway(pid, payload, dry_run, *, host, port, user, password, cert_pem):
     pinned = bool(cert_pem and cert_pem.strip())
     verify = _pinned_ssl_context(cert_pem) if pinned else True
@@ -202,17 +217,20 @@ def _run_gateway(pid, payload, dry_run, *, host, port, user, password, cert_pem)
             try:
                 t = time.perf_counter()
                 login = client.post(f"{base}/login", json={"user": user, "password": password})
-                trace.append(_trace_entry("login", "POST", f"{base}/login",
-                    headers={"Content-Type": "application/json"},
-                    body={"user": user, "password": "***"}, resp=login,
-                    ms=round((time.perf_counter() - t) * 1000)))
-                login.raise_for_status()
-            except httpx.HTTPStatusError:
-                failed_stage = "logging_in"   # reached the gateway, but it rejected the login
-                raise
             except Exception:
                 failed_stage = "connecting"   # couldn't establish the session (TLS / timeout / unreachable)
                 raise
+            trace.append(_trace_entry("login", "POST", f"{base}/login",
+                headers={"Content-Type": "application/json"},
+                body={"user": user, "password": "***"}, resp=login,
+                ms=round((time.perf_counter() - t) * 1000)))
+            if login.status_code >= 400:   # reached the gateway, but it rejected the login
+                failed_stage = "logging_in"
+                result["validation_errors"] = [{"layer": "", "rule": "", "object": "",
+                                                 "message": _login_error(login)}]
+                result["trace"] = trace
+                result["failed_stage"] = failed_stage
+                return result, status, status_code, task_id
             sid = login.json().get("sid")
             _advance(pid, "logging_in")
             headers = {"X-chkp-sid": sid, "Content-Type": "application/json"}
@@ -378,7 +396,8 @@ def _fetch_gateway_content(*, host, port, user, password, cert_pem) -> dict:
                 headers={"Content-Type": "application/json"},
                 body={"user": user, "password": "***"}, resp=login,
                 ms=round((time.perf_counter() - t) * 1000)))
-            login.raise_for_status()
+            if login.status_code >= 400:
+                return {"ok": False, "layers": layers, "trace": trace, "error": _login_error(login)}
             sid = login.json().get("sid")
             headers = {"X-chkp-sid": sid, "Content-Type": "application/json"}
             shown = {"X-chkp-sid": _MASK, "Content-Type": "application/json"}

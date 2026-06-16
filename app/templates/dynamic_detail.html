@@ -311,7 +311,9 @@
     }
     function renderLayers(layers) {
       if (!layers || !layers.length) return '<p class="muted">No dynamic layers reported by the gateway.</p>';
-      return layers.map(function (l) {
+      var header = '<p class="muted" style="margin:0 0 8px;"><b>' + layers.length + '</b> dynamic layer' +
+        (layers.length === 1 ? '' : 's') + ' on the gateway — each with its own rulebase:</p>';
+      return header + layers.map(function (l) {
         var objCount = 0;
         try { Object.keys(l.objects || {}).forEach(function (k) { var a = l.objects[k]; objCount += (a && a.length) || 0; }); } catch (e) {}
         var lc = l.last_change || {}, meta = '';
