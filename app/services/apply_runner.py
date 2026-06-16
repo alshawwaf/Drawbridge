@@ -209,7 +209,11 @@ def _run_gateway(pid, payload, dry_run, *, host, port, user, password, cert_pem)
                 trace.append(_trace_entry("set-dynamic-content", "POST", f"{base}/set-dynamic-content",
                     headers=shown_headers, body=payload, resp=resp, ms=round((time.perf_counter() - t) * 1000)))
                 status_code = resp.status_code
-                task_id = (resp.json() or {}).get("task-id", "")
+                try:
+                    body = resp.json() or {}
+                except Exception:
+                    body = {}
+                task_id = body.get("task-id") or body.get("task_id") or ""
                 _advance(pid, "polling")
                 details = {}
                 if task_id:
@@ -228,9 +232,20 @@ def _run_gateway(pid, payload, dry_run, *, host, port, user, password, cert_pem)
                             status_code = t0.get("status-code", status_code)
                             break
                         time.sleep(0.4)
-                result = {"change_summary": details.get("change-summary", {}),
-                          "validation_warnings": details.get("validation-warnings", []),
-                          "validation_errors": details.get("validation-errors", []), "dry_run": dry_run}
+                    result = {"change_summary": details.get("change-summary", {}),
+                              "validation_warnings": details.get("validation-warnings", []),
+                              "validation_errors": details.get("validation-errors", []), "dry_run": dry_run}
+                else:
+                    # Per Check Point's docs a valid push returns a task-id; its absence means the
+                    # gateway rejected the request — surface its actual message, don't fail blankly.
+                    if failed_stage is None:
+                        failed_stage = "pushing"
+                    gw_msg = (body.get("message") or body.get("errors") or body.get("error")
+                              or f"HTTP {status_code} with no task-id in the response")
+                    result = {"change_summary": {}, "validation_warnings": [],
+                              "validation_errors": [{"layer": "", "rule": "", "object": "",
+                                  "message": f"Gateway did not accept set-dynamic-content: {gw_msg}"}],
+                              "dry_run": dry_run}
             except Exception:
                 if failed_stage is None:
                     failed_stage = _PROGRESS[pid]["stage"]   # "pushing" or "polling"
