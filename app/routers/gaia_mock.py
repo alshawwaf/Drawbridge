@@ -31,6 +31,7 @@ def client_ip(request: Request) -> str:
 _SID_TTL = 600  # seconds — matches a gateway's 10-minute session
 _SESSIONS: dict[str, float] = {}  # sid -> expiry epoch
 _TASKS: dict[str, dict] = {}      # task-id -> evaluate() result
+_LAYERS: dict[str, dict] = {}     # layer name -> stored content (for show-dynamic-layer[s])
 
 
 def _new_sid() -> str:
@@ -65,6 +66,22 @@ def _login(body: dict) -> dict:
 def _set_dynamic_content(request: Request, body: dict, db: Session, sid: str | None) -> dict:
     _require_sid(sid)
     result = evaluate_dynamic_content(body or {})
+    # Remember the applied content per layer so show-dynamic-layer(s) can return it (skip dry-runs).
+    if not (body or {}).get("dry-run"):
+        for lyr in (body or {}).get("access-layers-content", []) or []:
+            nm = lyr.get("name")
+            if not nm:
+                continue
+            _LAYERS[nm] = {
+                "name": nm,
+                "objects": (body or {}).get("objects", {}) or {},
+                "rulebase": lyr.get("rulebase", []) or [],
+                "last-dynamic-content-change": {
+                    "administrator": "mock",
+                    "change-comments": (body or {}).get("comments", ""),
+                    "change-tags": (body or {}).get("tags", []),
+                },
+            }
     task_id = str(uuid.uuid4())
     _TASKS[task_id] = result
     db.add(LayerTask(
@@ -92,6 +109,22 @@ def _show_task(body: dict, sid: str | None) -> dict:
     }]}
 
 
+def _show_dynamic_layers(sid: str | None) -> dict:
+    _require_sid(sid)
+    return {"layers": [{"name": v["name"],
+                        "last-dynamic-content-change": v.get("last-dynamic-content-change", {})}
+                       for v in _LAYERS.values()]}
+
+
+def _show_dynamic_layer(body: dict, sid: str | None) -> dict:
+    _require_sid(sid)
+    name = (body or {}).get("name")
+    v = _LAYERS.get(name)
+    if v is None:
+        raise HTTPException(status_code=404, detail=f"Dynamic layer '{name}' not found.")
+    return v
+
+
 def _logout(sid: str | None) -> dict:
     _SESSIONS.pop(sid or "", None)
     return {"message": "Session ended."}
@@ -117,6 +150,18 @@ def gaia_set_dynamic_content(
 @router.post("/gaia_api/show-task")
 def gaia_show_task(body: dict, x_chkp_sid: str | None = Header(default=None), version: str = "v1.9"):
     return _show_task(body, x_chkp_sid)
+
+
+@router.post("/gaia_api/{version}/show-dynamic-layers")
+@router.post("/gaia_api/show-dynamic-layers")
+def gaia_show_dynamic_layers(x_chkp_sid: str | None = Header(default=None), version: str = "v1.9"):
+    return _show_dynamic_layers(x_chkp_sid)
+
+
+@router.post("/gaia_api/{version}/show-dynamic-layer")
+@router.post("/gaia_api/show-dynamic-layer")
+def gaia_show_dynamic_layer(body: dict, x_chkp_sid: str | None = Header(default=None), version: str = "v1.9"):
+    return _show_dynamic_layer(body, x_chkp_sid)
 
 
 @router.post("/gaia_api/{version}/logout")
