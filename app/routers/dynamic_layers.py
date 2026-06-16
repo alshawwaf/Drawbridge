@@ -36,13 +36,20 @@ DEFAULT_LAYER_CONTENT = {
         "hosts": [{"name": "client", "ip-address": "10.0.0.5"}],
         "networks": [{"name": "lab_net", "subnet4": "10.0.0.0", "mask-length4": 24}],
     },
+    # Names that already exist on the gateway (predefined TCP services + an application site).
+    # The rules below reference these by name — that's what "referenced-objects" is for.
+    "referenced_objects": {
+        "services-tcp": ["ssh", "https"],
+        "application-sites": ["Facebook"],
+    },
     "rulebase": [
-        {"name": "allow_client", "action": "Accept", "track": {"type": "Log"},
-         "source": ["client"], "destination": ["lab_net"], "service": "any"},
+        {"name": "allow_web", "action": "Accept", "track": {"type": "Log"},
+         "source": ["client"], "destination": ["lab_net"], "service": ["https", "ssh"]},
+        {"name": "block_facebook", "action": "Drop", "track": {"type": "Log"},
+         "source": ["lab_net"], "destination": "any", "service": ["Facebook"]},
         {"name": "cleanup_rule", "action": "Drop", "track": {"type": "Log"},
          "source": "any", "destination": "any", "service": "any"},
     ],
-    "referenced_objects": {},
 }
 
 _BUILDER_CTX = {
