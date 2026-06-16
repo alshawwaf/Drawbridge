@@ -7,7 +7,12 @@
     <p class="muted">Every gateway feed poll, mock Gaia API call, and layer apply — with the actual request &amp; response. Live; secrets redacted.</p>
   </div>
   <form method="post" action="/activity/clear">
-    <button class="danger" type="submit" data-confirm="Clear the entire activity log?">Clear log</button>
+    <input type="hidden" name="kind" value="{{ kind }}">
+    {% if kind == 'all' %}
+    <button class="danger" type="submit" data-confirm="Clear the entire activity log ({{ counts.get('all', 0) }} entries)?">Clear log</button>
+    {% else %}
+    <button class="danger" type="submit" data-confirm="Clear all {{ kind_labels.get(kind, kind) }} entries ({{ counts.get(kind, 0) }})? Other categories are kept.">Clear {{ kind_labels.get(kind, kind) }} ({{ counts.get(kind, 0) }})</button>
+    {% endif %}
   </form>
 </div>
 
@@ -40,6 +45,11 @@
       load(true);
       window.scrollTo({ top: 0, behavior: 'smooth' });
     };
+    // Pager buttons are re-injected on each load, so delegate the click on the stable container.
+    rowsEl.addEventListener('click', function (e) {
+      var b = e.target.closest ? e.target.closest('[data-page]') : null;
+      if (b) { e.preventDefault(); window.gotoPage(parseInt(b.getAttribute('data-page'), 10) || 1); }
+    });
     load(false);
     // Live tail: only auto-refresh the newest page, so browsing older pages stays put.
     setInterval(function () { if (page === 1) load(false); }, 4000);

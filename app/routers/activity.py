@@ -1,5 +1,5 @@
 """App-wide Activity log: live, filterable view of integration traffic with request/response."""
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
@@ -53,10 +53,15 @@ def activity_rows(request: Request, kind: str = "all", page: int = 1, db: Sessio
 
 
 @router.post("/activity/clear")
-def activity_clear(request: Request, db: Session = Depends(get_db)):
+def activity_clear(request: Request, kind: str = Form("all"), db: Session = Depends(get_db)):
+    """Clear the whole log, or just one category (kind != 'all') — leaving the others intact."""
     if get_user_or_none(request, db) is None:
         return RedirectResponse("/login", status_code=303)
-    db.execute(delete(ActivityLog))
+    q = delete(ActivityLog)
+    if kind != "all":
+        q = q.where(ActivityLog.kind == kind)
+    n = db.execute(q).rowcount or 0
     db.commit()
-    _flash(request, "Activity log cleared.")
+    scope = "" if kind == "all" else f" {KIND_LABELS.get(kind, kind)}"
+    _flash(request, f"Cleared {n}{scope} log entr{'y' if n == 1 else 'ies'}.")
     return RedirectResponse("/activity", status_code=303)
