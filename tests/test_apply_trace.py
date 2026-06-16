@@ -56,14 +56,17 @@ def test_pinned_context_is_pinning_not_skip_verify(monkeypatch):
     assert ctx.verify_flags & ssl.VERIFY_X509_PARTIAL_CHAIN  # pinned leaf honored as trust anchor
 
 
-def test_parse_layers_handles_known_and_unknown_shapes():
-    out = apply_runner._parse_layers({"dynamic-layers": [
-        {"name": "dl", "rulebase": [{"name": "r1"}], "objects": {"hosts": [{"name": "h"}]}}]})
-    assert out[0]["name"] == "dl" and out[0]["rulebase"][0]["name"] == "r1"
-    # alternate keys + non-dict items are tolerated
-    out2 = apply_runner._parse_layers({"layers": [{"layer": "x", "rules": [{"name": "a"}]}, "junk"]})
-    assert len(out2) == 1 and out2[0]["name"] == "x" and out2[0]["rulebase"][0]["name"] == "a"
-    assert apply_runner._parse_layers({}) == []
+def test_layer_view_normalizes_show_dynamic_layer():
+    d = {"name": "dc_Network_layer", "objects": {"hosts": [{"name": "client"}]},
+         "rulebase": [{"name": "test1", "action": "accept"}],
+         "last-dynamic-content-change": {"administrator": "admin"}}
+    v = apply_runner._layer_view(d, queried_name="Network")
+    assert v["name"] == "Network" and v["display_name"] == "dc_Network_layer"
+    assert v["rulebase"][0]["name"] == "test1"
+    assert v["last_change"]["administrator"] == "admin"
+    # when the queried name equals the response name, no separate display_name
+    v2 = apply_runner._layer_view({"name": "L", "objects": {}, "rulebase": []}, queried_name="L")
+    assert v2["name"] == "L" and v2["display_name"] == ""
 
 
 def test_fetch_mock_reflects_authored_layers(monkeypatch):
@@ -85,7 +88,9 @@ def test_fetch_mock_reflects_authored_layers(monkeypatch):
     data = apply_runner.fetch_dynamic_content(target="mock", db=_DB(), owner_id=1)
     assert data["ok"] and data["error"] is None
     assert data["layers"][0]["name"] == "dynamic_layer" and data["layers"][0]["display_name"] == "Demo"
-    assert [s["step"] for s in data["trace"]] == ["login", "show-dynamic-content", "logout"]
+    steps = [s["step"] for s in data["trace"]]
+    assert steps[0] == "login" and steps[-1] == "logout"
+    assert "show-dynamic-layers" in steps and "show-dynamic-layer" in steps
 
 
 def _progress(stage, done):
