@@ -93,6 +93,18 @@ def test_fetch_mock_reflects_authored_layers(monkeypatch):
     assert "show-dynamic-layers" in steps and "show-dynamic-layer" in steps
 
 
+def test_summary_from_payload_counts_rules_and_objects():
+    payload = {
+        "objects": {"hosts": [{"name": "h1"}, {"name": "h2"}], "networks": [{"name": "n1"}]},
+        "access-layers-content": [{"name": "dl", "rulebase": [{"name": "r1"}, {"name": "r2"}]}],
+    }
+    cs = apply_runner._summary_from_payload(payload)
+    assert sorted(cs["objects"]["create"]) == ["h1", "h2", "n1"]
+    assert cs["layers"][0]["rules"]["create"] == ["r1", "r2"]
+    s = apply_runner._summary({"change_summary": cs})  # the modal's "Created N rule(s), M object(s)"
+    assert s["objects"] == 3 and s["rules"] == 2
+
+
 def _progress(stage, done):
     return {"stage": stage, "status": "running", "done_stages": list(done), "failed_stage": None,
             "task_id": None, "summary": None, "error": None, "trace": []}
