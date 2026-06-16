@@ -30,6 +30,7 @@
 
     /* Layout & type */
     main { max-width:1040px; margin:32px auto; padding:0 24px; }
+    main.wide { max-width:1340px; }   /* data-dense pages (Activity log) get more room */
     h1 { font-size:23px; font-weight:700; margin:0 0 4px; letter-spacing:-.2px; }
     h2 { font-size:15px; font-weight:650; margin:22px 0 10px; }
     .muted { color:var(--muted); font-size:13px; }
@@ -68,6 +69,7 @@
     /* Forms */
     label { display:block; font-size:13px; font-weight:600; color:var(--text); margin:14px 0 6px; }
     input, textarea, select { width:100%; padding:9px 12px; border:1px solid var(--line); border-radius:var(--r); font-size:13.5px; font-family:inherit; color:var(--text); background:#fff; transition:border-color .12s, box-shadow .12s; }
+    input[type="checkbox"], input[type="radio"] { width:auto; padding:0; }   /* never full-width */
     input:focus, textarea:focus, select:focus { outline:none; border-color:var(--accent); box-shadow:0 0 0 3px rgba(230,0,126,.12); }
     textarea { min-height:120px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12.5px; line-height:1.55; resize:vertical; }
 
@@ -197,7 +199,7 @@
       <a href="/logout">Sign out</a>
     </nav>{% endblock %}
   </header>
-  <main>{% block content %}{% endblock %}</main>
+  <main class="{% block main_class %}{% endblock %}">{% block content %}{% endblock %}</main>
 
   {% if flash %}
   <div id="toast" class="toast {{ flash.type }}">{{ flash.text }}</div>

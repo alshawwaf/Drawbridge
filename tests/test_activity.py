@@ -58,6 +58,9 @@ def test_shell_renders_checkbox_filters_page_size_and_modal():
     assert '<select id="page-size"' in html and 'value="10" selected' in html
     # delete + clear controls and the viewer modal
     assert 'id="del-btn"' in html and 'id="clear-btn"' in html and 'id="rec-modal"' in html
+    # the page opts into the wide container, and checkboxes are never full-width (left-aligned)
+    assert '<main class="wide">' in html
+    assert 'input[type="checkbox"], input[type="radio"]' in html
 
 
 def test_pager_and_rows_render_selectable_clickable():
