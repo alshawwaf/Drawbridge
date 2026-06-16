@@ -78,7 +78,8 @@ def _gateway_error(gw: Gateway | None, password: str) -> str | None:
     if not gw.username:
         return f"Gateway “{gw.name}” has no username — set it on the gateway profile (Gateways → edit)."
     if not password:
-        return "Enter the gateway password, or save one on the gateway profile (Gateways → edit)."
+        return (f"Gateway “{gw.name}” has no saved password — set one on the gateway profile "
+                "(Gateways → edit) before applying.")
     return None
 
 
