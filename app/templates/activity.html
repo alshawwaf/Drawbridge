@@ -4,55 +4,123 @@
 <div class="row">
   <div class="grow">
     <h1>Activity log</h1>
-    <p class="muted">Every gateway feed poll, mock Gaia API call, and layer apply — with the actual request &amp; response. Live; secrets redacted.</p>
+    <p class="muted">Every gateway feed poll, mock Gaia API call, and layer apply — with the actual request &amp; response. Live; secrets redacted. Click a row to inspect it.</p>
   </div>
-  <form method="post" action="/activity/clear">
-    <input type="hidden" name="kind" value="{{ kind }}">
-    {% if kind == 'all' %}
-    <button class="danger" type="submit" data-confirm="Clear the entire activity log ({{ counts.get('all', 0) }} entries)?">Clear log</button>
-    {% else %}
-    <button class="danger" type="submit" data-confirm="Clear all {{ kind_labels.get(kind, kind) }} entries ({{ counts.get(kind, 0) }})? Other categories are kept.">Clear {{ kind_labels.get(kind, kind) }} ({{ counts.get(kind, 0) }})</button>
-    {% endif %}
-  </form>
 </div>
 
-<div class="filterbar">
-  <a class="chip {{ 'active' if kind == 'all' else '' }}" href="/activity?kind=all">All <span class="chipcount">{{ counts.get('all', 0) }}</span></a>
-  {% for k, label in kind_labels.items() %}
-    <a class="chip {{ 'active' if kind == k else '' }}" href="/activity?kind={{ k }}">{{ label }} <span class="chipcount">{{ counts.get(k, 0) }}</span></a>
-  {% endfor %}
-</div>
+<form method="post" action="/activity/delete" id="act-form">
+  <input type="hidden" name="page_size" id="ps-hidden" value="{{ page_size }}">
+  <div style="display:flex; gap:18px; align-items:flex-start; flex-wrap:wrap;">
+    <aside class="card" style="width:240px; flex:0 0 240px;">
+      <div class="trace-lbl">Filter by type</div>
+      <div style="margin:8px 0 12px;">
+        {% for k, label in kind_labels.items() %}
+        <label class="check" style="display:flex; align-items:center; gap:8px; margin:6px 0;">
+          <input type="checkbox" name="kinds" value="{{ k }}" class="kind-cb" {{ 'checked' if k in selected else '' }}>
+          <span class="grow">{{ label }}</span><span class="chipcount">{{ counts.get(k, 0) }}</span>
+        </label>
+        {% endfor %}
+      </div>
+      <p class="muted" style="font-size:11.5px; margin:0 0 16px;">No type checked = show all ({{ counts.get('all', 0) }}).</p>
 
-<div class="card" style="padding:4px 18px;">
-  <div id="rows"><p class="muted">Loading…</p></div>
+      <div class="trace-lbl">Rows per page</div>
+      <select id="page-size" style="margin:8px 0 16px; width:100%;">
+        {% for n in page_sizes %}<option value="{{ n }}" {{ 'selected' if n == page_size else '' }}>{{ n }}</option>{% endfor %}
+      </select>
+
+      <button class="danger" type="submit" formaction="/activity/clear" id="clear-btn" style="width:100%;"
+              data-confirm="Clear all log entries matching the current filter? This cannot be undone.">Clear all</button>
+    </aside>
+
+    <div style="flex:1; min-width:0;">
+      <div class="row" style="align-items:center; margin-bottom:10px;">
+        <label class="check" style="margin:0;"><input type="checkbox" id="sel-all"> <span class="muted">Select all on page</span></label>
+        <div class="grow"></div>
+        <button class="danger" type="submit" id="del-btn" disabled
+                data-confirm="Delete the selected log record(s)? This cannot be undone.">Delete selected</button>
+      </div>
+      <div class="card" style="padding:4px 18px;"><div id="rows"><p class="muted">Loading…</p></div></div>
+    </div>
+  </div>
+</form>
+
+<div class="modal-overlay" id="rec-modal" hidden>
+  <div class="modal xwide">
+    <div class="row" style="align-items:center;"><h3 class="grow" style="margin:0;">Log record</h3>
+      <button type="button" class="copybtn" id="rec-close">Close</button></div>
+    <div id="rec-body" style="margin-top:14px;">Loading…</div>
+  </div>
 </div>
 
 <script>
   (function () {
-    var kind = {{ kind | tojson }};
-    var rowsEl = document.getElementById('rows');
+    var $ = function (id) { return document.getElementById(id); };
+    var form = $('act-form'), rowsEl = $('rows'), psSel = $('page-size'), psHidden = $('ps-hidden');
+    var selAll = $('sel-all'), delBtn = $('del-btn'), clearBtn = $('clear-btn');
+    var modal = $('rec-modal'), recBody = $('rec-body');
     var page = 1;
-    function load(force) {
-      // Don't clobber a row the user has expanded to read (unless they clicked a pager).
-      if (!force && rowsEl.querySelector('details[open]')) return;
-      fetch('/activity/rows?kind=' + encodeURIComponent(kind) + '&page=' + page)
+
+    // Inject server-rendered (Jinja-escaped) fragments without using innerHTML.
+    function setHTML(el, html) {
+      el.replaceChildren(document.createRange().createContextualFragment(html));
+    }
+    function selectedKinds() {
+      return Array.prototype.slice.call(form.querySelectorAll('.kind-cb'))
+        .filter(function (c) { return c.checked; }).map(function (c) { return c.value; });
+    }
+    function rowCbs() { return Array.prototype.slice.call(rowsEl.querySelectorAll('.row-cb')); }
+    function syncDel() { delBtn.disabled = !rowCbs().some(function (c) { return c.checked; }); }
+    function query(extra) {
+      var p = new URLSearchParams();
+      selectedKinds().forEach(function (k) { p.append('kinds', k); });
+      p.set('page_size', psSel.value);
+      if (extra) Object.keys(extra).forEach(function (k) { p.set(k, extra[k]); });
+      return p;
+    }
+    function syncState() {
+      var p = query();
+      history.replaceState(null, '', '/activity' + (p.toString() ? '?' + p.toString() : ''));
+      psHidden.value = psSel.value;  // keep the delete/clear form in sync with the picker
+      clearBtn.textContent = selectedKinds().length ? 'Clear filtered' : 'Clear all';
+    }
+    function load() {
+      fetch('/activity/rows?' + query({ page: page }).toString())
         .then(function (r) { return r.text(); })
-        .then(function (html) { rowsEl.innerHTML = html; })
+        .then(function (html) { setHTML(rowsEl, html); selAll.checked = false; syncDel(); })
         .catch(function () {});
     }
-    window.gotoPage = function (n) {
-      page = Math.max(1, n);
-      load(true);
-      window.scrollTo({ top: 0, behavior: 'smooth' });
-    };
-    // Pager buttons are re-injected on each load, so delegate the click on the stable container.
+    window.gotoPage = function (n) { page = Math.max(1, n); load(); window.scrollTo({ top: 0, behavior: 'smooth' }); };
+
     rowsEl.addEventListener('click', function (e) {
-      var b = e.target.closest ? e.target.closest('[data-page]') : null;
-      if (b) { e.preventDefault(); window.gotoPage(parseInt(b.getAttribute('data-page'), 10) || 1); }
+      var pg = e.target.closest ? e.target.closest('[data-page]') : null;
+      if (pg) { e.preventDefault(); window.gotoPage(parseInt(pg.getAttribute('data-page'), 10) || 1); return; }
+      if (e.target.classList.contains('row-cb')) { syncDel(); return; }  // selecting, not opening
+      var row = e.target.closest('.act-row');
+      if (row) openRecord(row.getAttribute('data-id'));
     });
-    load(false);
-    // Live tail: only auto-refresh the newest page, so browsing older pages stays put.
-    setInterval(function () { if (page === 1) load(false); }, 4000);
+    rowsEl.addEventListener('change', function (e) { if (e.target.classList.contains('row-cb')) syncDel(); });
+    selAll.addEventListener('change', function () { rowCbs().forEach(function (c) { c.checked = selAll.checked; }); syncDel(); });
+
+    form.addEventListener('change', function (e) {
+      if (e.target.classList.contains('kind-cb')) { page = 1; syncState(); load(); }
+    });
+    psSel.addEventListener('change', function () { page = 1; syncState(); load(); });
+
+    function openRecord(id) {
+      setHTML(recBody, '<p class="muted">Loading…</p>');
+      modal.hidden = false;
+      fetch('/activity/' + id).then(function (r) { return r.text(); })
+        .then(function (html) { setHTML(recBody, html); })
+        .catch(function () { setHTML(recBody, '<p class="err">Failed to load this record.</p>'); });
+    }
+    $('rec-close').addEventListener('click', function () { modal.hidden = true; });
+    modal.addEventListener('click', function (e) { if (e.target === modal) modal.hidden = true; });
+    document.addEventListener('keydown', function (e) { if (e.key === 'Escape') modal.hidden = true; });
+
+    syncState();
+    load();
+    // Live tail: refresh the newest page only, and not while reading a record.
+    setInterval(function () { if (page === 1 && modal.hidden) load(); }, 4000);
   })();
 </script>
 {% endblock %}
