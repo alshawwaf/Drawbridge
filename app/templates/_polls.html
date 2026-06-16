@@ -1,17 +1,21 @@
-{% if not polls %}
+{% if not total %}
 <p class="muted">No polls yet. Point a gateway at the URL above (or run the curl command) and watch this fill in.</p>
 {% else %}
+<p class="pollstat">
+  <b>{{ total }}</b> {{ "poll" if total == 1 else "polls" }} recorded{% if last %} ·
+  last {{ last.at.strftime('%Y-%m-%d %H:%M:%S') }} UTC from <code>{{ last.source_ip }}</code>{% endif %}
+</p>
 <table>
-  <thead><tr><th>When (UTC)</th><th>Source IP</th><th>Status</th><th>User-Agent</th></tr></thead>
+  <thead><tr><th>Time (UTC)</th><th>Source IP</th><th>Status</th></tr></thead>
   <tbody>
   {% for p in polls %}
     <tr>
-      <td>{{ p.at.strftime('%Y-%m-%d %H:%M:%S') }}</td>
-      <td>{{ p.source_ip }}</td>
-      <td>{% if p.status == 200 %}<span class="pill ok">{{ p.status }}</span>{% else %}<span class="pill">{{ p.status }}</span>{% endif %}</td>
-      <td class="muted">{{ (p.user_agent or "")[:60] }}</td>
+      <td class="nowrap">{{ p.at.strftime('%H:%M:%S') }}</td>
+      <td class="nowrap">{{ p.source_ip }}</td>
+      <td>{% if p.status == 200 %}<span class="pill ok">{{ p.status }}</span>{% else %}<span class="pill bad">{{ p.status }}</span>{% endif %}</td>
     </tr>
   {% endfor %}
   </tbody>
 </table>
+<p class="muted" style="margin-top:12px;">Showing the latest {{ polls|length }} of {{ total }}. <a href="/activity?kind=feed_poll">View full poll history with request/response →</a></p>
 {% endif %}

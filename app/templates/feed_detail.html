@@ -38,8 +38,8 @@
 </div>
 
 <div class="card">
-  <h2>Live polls <span class="muted">— auto-refreshes every 3s</span></h2>
-  <p class="muted">Each row is a real fetch of this feed. When your gateway or management starts polling, it appears here — live proof the integration is syncing.</p>
+  <h2>Live polls <span class="muted">— latest activity, refreshes every 3s</span></h2>
+  <p class="muted">Each row is a real fetch of this feed — live proof the integration is syncing. The full request/response history (headers and body) is in the <a href="/activity?kind=feed_poll">Activity log</a>.</p>
   <div hx-get="/feeds/{{ feed.id }}/polls-fragment" hx-trigger="load, every 3s" hx-swap="innerHTML">
     <p class="muted">Loading…</p>
   </div>
