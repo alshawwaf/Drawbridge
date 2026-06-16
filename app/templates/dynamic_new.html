@@ -1,11 +1,11 @@
 {% extends "base.html" %}
-{% block title %}New Dynamic Layer{% endblock %}
+{% block title %}{{ 'Edit Dynamic Layer' if is_edit else 'New Dynamic Layer' }}{% endblock %}
 {% block content %}
-<h1>New Dynamic Layer</h1>
-<p class="muted">Author objects and a rulebase; the portal builds the exact <code>set-dynamic-content</code> payload. Apply it to the built-in mock or a real R82 gateway.</p>
+<h1>{{ 'Edit Dynamic Layer' if is_edit else 'New Dynamic Layer' }}</h1>
+<p class="muted">Author objects and a rulebase; the portal builds the exact <code>set-dynamic-content</code> payload.{% if is_edit %} Save your changes, then <b>Apply</b> on the layer page to re-push.{% else %} Apply it to the built-in mock or a real R82 gateway.{% endif %}</p>
 {% if error %}<div class="err" style="margin:12px 0;">{{ error }}</div>{% endif %}
 
-<form method="post" action="/layers/new" id="layer-form">
+<form method="post" action="{{ action }}" id="layer-form">
   <input type="hidden" name="objects_json" id="objects_json">
   <input type="hidden" name="rules_json" id="rules_json">
   <input type="hidden" name="referenced_json" id="referenced_json">
@@ -60,8 +60,8 @@
   </div>
 
   <div class="row" style="margin:4px 0 48px;">
-    <button type="submit">Save layer</button>
-    <a class="btn secondary" href="/layers">Cancel</a>
+    <button type="submit">{{ 'Save changes' if is_edit else 'Save layer' }}</button>
+    <a class="btn secondary" href="{{ cancel_url }}">Cancel</a>
   </div>
 </form>
 

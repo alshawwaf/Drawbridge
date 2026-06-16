@@ -46,9 +46,12 @@
     <h1>{{ layer.name }} <span class="pill">dynamic layer</span></h1>
     <p class="muted">Gateway layer <code>{{ layer.layer_name }}</code>{% if layer.description %} · {{ layer.description }}{% endif %}</p>
   </div>
-  <form method="post" action="/layers/{{ layer.id }}/delete">
-    <button class="danger" type="submit" data-confirm="Delete “{{ layer.name }}”? This removes the layer and its apply history.">Delete</button>
-  </form>
+  <div class="row" style="gap:8px;">
+    <a class="btn secondary" href="/layers/{{ layer.id }}/edit">Edit</a>
+    <form method="post" action="/layers/{{ layer.id }}/delete">
+      <button class="danger" type="submit" data-confirm="Delete “{{ layer.name }}”? This removes the layer and its apply history.">Delete</button>
+    </form>
+  </div>
 </div>
 
 <div class="card">
@@ -78,7 +81,8 @@
 
 {% if layer.content.rulebase %}
 <div class="card">
-  <h2 style="margin-top:0;">Rulebase <span class="muted" style="font-weight:400;">— {{ layer.content.rulebase|length }} rule(s) in “{{ layer.layer_name }}”</span></h2>
+  <div class="row"><h2 style="margin:0;" class="grow">Rulebase <span class="muted" style="font-weight:400;">— {{ layer.content.rulebase|length }} rule(s) in “{{ layer.layer_name }}”</span></h2>
+    <a class="copybtn" href="/layers/{{ layer.id }}/edit">✎ Edit rules</a></div>
   {{ render_rulebase(layer.content.rulebase) }}
 </div>
 {% endif %}

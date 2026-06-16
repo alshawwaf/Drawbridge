@@ -83,6 +83,35 @@ def _gateway_error(gw: Gateway | None, password: str) -> str | None:
     return None
 
 
+def _builder_ctx(*, action, is_edit, cancel_url, default_content, form, gateways,
+                 selected_gateway_id, error=None):
+    """Context for the shared layer builder template (used by both 'new' and 'edit')."""
+    ctx = dict(_BUILDER_CTX)
+    ctx.update({"action": action, "is_edit": is_edit, "cancel_url": cancel_url,
+                "error": error, "default_content": default_content, "form": form,
+                "gateways": gateways, "selected_gateway_id": selected_gateway_id})
+    return ctx
+
+
+def _parse_layer_content(*, objects_json, rules_json, referenced_json, comments, tags, gateway_id):
+    """Parse + validate the builder's submitted JSON into a DynamicLayer.content dict.
+    Raises on bad JSON / validation error so the caller can re-render with the message."""
+    content = {
+        "operation": "replace", "comments": comments,
+        "tags": [t.strip() for t in tags.split(",") if t.strip()],
+        "objects": json.loads(objects_json or "{}"),
+        "rulebase": json.loads(rules_json or "[]"),
+        "referenced_objects": json.loads(referenced_json or "{}"),
+    }
+    if gateway_id:
+        try:
+            content["gateway_id"] = int(gateway_id)
+        except ValueError:
+            pass
+    validate_layer_content(content)
+    return content
+
+
 @router.get("/layers", response_class=HTMLResponse)
 def layers_list(request: Request, db: Session = Depends(get_db)):
     user = _user(request, db)
@@ -113,19 +142,20 @@ def layers_list(request: Request, db: Session = Depends(get_db)):
         {"rows": rows, "gw_filters": gw_filters, "flash": _pop_flash(request)})
 
 
+def _gateways_of(db: Session, user: User):
+    return db.scalars(select(Gateway).where(Gateway.owner_id == user.id).order_by(Gateway.name)).all()
+
+
 @router.get("/layers/new", response_class=HTMLResponse)
 def layers_new(request: Request, db: Session = Depends(get_db)):
     user = _user(request, db)
     if user is None:
         return RedirectResponse("/login", status_code=303)
-    gateways = db.scalars(select(Gateway).where(Gateway.owner_id == user.id).order_by(Gateway.name)).all()
-    ctx = dict(_BUILDER_CTX)
-    ctx.update({
-        "error": None, "default_content": DEFAULT_LAYER_CONTENT,
-        "gateways": gateways, "selected_gateway_id": "",
-        "form": {"name": "Self-managed-demo", "layer_name": "dynamic_layer",
-                 "description": "", "comments": "", "tags": ""},
-    })
+    ctx = _builder_ctx(
+        action="/layers/new", is_edit=False, cancel_url="/layers",
+        default_content=DEFAULT_LAYER_CONTENT, gateways=_gateways_of(db, user), selected_gateway_id="",
+        form={"name": "Self-managed-demo", "layer_name": "dynamic_layer",
+              "description": "", "comments": "", "tags": ""})
     return templates.TemplateResponse(request, "dynamic_new.html", ctx)
 
 
@@ -147,31 +177,18 @@ def layers_create(
     if user is None:
         return RedirectResponse("/login", status_code=303)
     try:
-        objects = json.loads(objects_json or "{}")
-        rulebase = json.loads(rules_json or "[]")
-        referenced = json.loads(referenced_json or "{}")
-        content = {
-            "operation": "replace", "comments": comments,
-            "tags": [t.strip() for t in tags.split(",") if t.strip()],
-            "objects": objects, "rulebase": rulebase, "referenced_objects": referenced,
-        }
-        if gateway_id:
-            try:
-                content["gateway_id"] = int(gateway_id)
-            except ValueError:
-                pass
-        validate_layer_content(content)
+        content = _parse_layer_content(objects_json=objects_json, rules_json=rules_json,
+                                       referenced_json=referenced_json, comments=comments,
+                                       tags=tags, gateway_id=gateway_id)
     except Exception as exc:
-        gateways = db.scalars(select(Gateway).where(Gateway.owner_id == user.id).order_by(Gateway.name)).all()
-        ctx = dict(_BUILDER_CTX)
-        ctx.update({
-            "error": str(exc), "gateways": gateways, "selected_gateway_id": gateway_id,
-            "default_content": {"objects": _safe_json(objects_json, {}),
-                                "rulebase": _safe_json(rules_json, []),
-                                "referenced_objects": _safe_json(referenced_json, {})},
-            "form": {"name": name, "layer_name": layer_name, "description": description,
-                     "comments": comments, "tags": tags},
-        })
+        ctx = _builder_ctx(
+            action="/layers/new", is_edit=False, cancel_url="/layers", error=str(exc),
+            gateways=_gateways_of(db, user), selected_gateway_id=gateway_id,
+            default_content={"objects": _safe_json(objects_json, {}),
+                             "rulebase": _safe_json(rules_json, []),
+                             "referenced_objects": _safe_json(referenced_json, {})},
+            form={"name": name, "layer_name": layer_name, "description": description,
+                  "comments": comments, "tags": tags})
         return templates.TemplateResponse(request, "dynamic_new.html", ctx, status_code=400)
     layer = DynamicLayer(token=new_feed_token(), name=name, layer_name=layer_name or "dynamic_layer",
                          description=description, content=content, owner_id=user.id)
@@ -180,6 +197,65 @@ def layers_create(
     db.refresh(layer)
     _flash(request, f"Dynamic Layer “{name}” saved.")
     return RedirectResponse(f"/layers/{layer.id}", status_code=303)
+
+
+@router.get("/layers/{layer_id}/edit", response_class=HTMLResponse)
+def layers_edit(layer_id: int, request: Request, db: Session = Depends(get_db)):
+    user = _user(request, db)
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+    layer = _owned(db, layer_id, user)
+    c = layer.content or {}
+    ctx = _builder_ctx(
+        action=f"/layers/{layer_id}/edit", is_edit=True, cancel_url=f"/layers/{layer_id}",
+        gateways=_gateways_of(db, user), selected_gateway_id=str(c.get("gateway_id") or ""),
+        default_content={"objects": c.get("objects") or {}, "rulebase": c.get("rulebase") or [],
+                         "referenced_objects": c.get("referenced_objects") or {}},
+        form={"name": layer.name, "layer_name": layer.layer_name, "description": layer.description or "",
+              "comments": c.get("comments") or "", "tags": ", ".join(c.get("tags") or [])})
+    return templates.TemplateResponse(request, "dynamic_new.html", ctx)
+
+
+@router.post("/layers/{layer_id}/edit")
+def layers_update(
+    layer_id: int,
+    request: Request,
+    name: str = Form(...),
+    layer_name: str = Form("dynamic_layer"),
+    description: str = Form(""),
+    comments: str = Form(""),
+    tags: str = Form(""),
+    gateway_id: str = Form(""),
+    objects_json: str = Form("{}"),
+    rules_json: str = Form("[]"),
+    referenced_json: str = Form("{}"),
+    db: Session = Depends(get_db),
+):
+    user = _user(request, db)
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+    layer = _owned(db, layer_id, user)
+    try:
+        content = _parse_layer_content(objects_json=objects_json, rules_json=rules_json,
+                                       referenced_json=referenced_json, comments=comments,
+                                       tags=tags, gateway_id=gateway_id)
+    except Exception as exc:
+        ctx = _builder_ctx(
+            action=f"/layers/{layer_id}/edit", is_edit=True, cancel_url=f"/layers/{layer_id}",
+            error=str(exc), gateways=_gateways_of(db, user), selected_gateway_id=gateway_id,
+            default_content={"objects": _safe_json(objects_json, {}),
+                             "rulebase": _safe_json(rules_json, []),
+                             "referenced_objects": _safe_json(referenced_json, {})},
+            form={"name": name, "layer_name": layer_name, "description": description,
+                  "comments": comments, "tags": tags})
+        return templates.TemplateResponse(request, "dynamic_new.html", ctx, status_code=400)
+    layer.name = name
+    layer.layer_name = layer_name or "dynamic_layer"
+    layer.description = description
+    layer.content = content  # fresh dict → SQLAlchemy persists the JSON change
+    db.commit()
+    _flash(request, f"Dynamic Layer “{name}” updated — review and Apply to re-push.")
+    return RedirectResponse(f"/layers/{layer_id}", status_code=303)
 
 
 def _safe_json(text: str, default):
