@@ -48,6 +48,7 @@ def test_layer_apply_form_drops_the_password_field():
     )
     assert "gw_pass" not in html  # the password input and its JS are gone
     assert "all come from the selected" in html  # consolidated onto the gateway profile
+    assert "/layers/1/edit" in html  # Edit affordance to change rules and re-push
 
 
 def test_detail_shows_password_status():
