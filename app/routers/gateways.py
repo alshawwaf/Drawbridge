@@ -84,6 +84,19 @@ def gateways_fetch_cert(request: Request, host: str = Form(""), port: str = Form
                             status_code=400)
 
 
+@router.post("/gateways/{gid}/cert")
+def gateways_set_cert(gid: int, request: Request, cert_pem: str = Form(""),
+                      db: Session = Depends(get_db)):
+    """Persist a (re)fetched certificate onto a saved gateway so apply/fetch reuse it."""
+    user = get_user_or_none(request, db)
+    if user is None:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    gw = _owned(db, gid, user)
+    gw.cert_pem = cert_pem
+    db.commit()
+    return JSONResponse({"ok": True, "name": gw.name})
+
+
 @router.get("/gateways/{gid}/edit", response_class=HTMLResponse)
 def gateways_edit(gid: int, request: Request, db: Session = Depends(get_db)):
     user = get_user_or_none(request, db)
