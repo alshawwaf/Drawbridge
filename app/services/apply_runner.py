@@ -322,10 +322,11 @@ def _run_gateway(pid, payload, dry_run, *, host, port, user, password, cert_pem)
         if failed_stage is None:
             failed_stage = "connecting"
         trace.append(_trace_entry("connect", "POST", f"{base}/login", err=exc))
-        msg = (f"Could not reach the gateway, or it presented a certificate that does not match the "
-               f"pinned one — re-fetch & review the fingerprint: {exc}") if pinned else (
-              f"Could not reach the gateway, or TLS verification failed — use 'Fetch & trust "
-              f"certificate' to pin a self-signed gateway: {exc}")
+        msg = (f"Could not reach the gateway, or it presented a certificate that doesn't match the "
+               f"pinned one — re-pin it on the gateway's profile (Gateways → edit → Fetch & trust): {exc}"
+               ) if pinned else (
+              f"Could not reach the gateway, or TLS verification failed (self-signed?) — pin the "
+              f"gateway's certificate on its profile (Gateways → edit → Fetch & trust certificate): {exc}")
         result["validation_errors"] = [{"layer": "", "rule": "", "object": "", "message": msg}]
     except Exception as exc:
         if failed_stage is None:
@@ -439,10 +440,11 @@ def _fetch_gateway_content(*, host, port, user, password, cert_pem) -> dict:
                     pass
     except httpx.ConnectError as exc:
         trace.append(_trace_entry("connect", "POST", f"{base}/login", err=exc))
-        error = (f"Could not reach the gateway, or it presented a certificate that does not match "
-                 f"the pinned one — re-fetch & review the fingerprint: {exc}") if pinned else (
-                 f"Could not reach the gateway, or TLS verification failed — use 'Fetch & trust "
-                 f"certificate' to pin a self-signed gateway: {exc}")
+        error = (f"Could not reach the gateway, or it presented a certificate that doesn't match the "
+                 f"pinned one — re-pin it on the gateway's profile (Gateways → edit → Fetch & trust): {exc}"
+                 ) if pinned else (
+                 f"Could not reach the gateway, or TLS verification failed (self-signed?) — pin the "
+                 f"gateway's certificate on its profile (Gateways → edit → Fetch & trust certificate): {exc}")
     except Exception as exc:
         trace.append(_trace_entry("error", "POST", base, err=exc))
         error = f"Gateway request failed: {exc}"
