@@ -7,7 +7,7 @@ from sqlalchemy.orm import sessionmaker
 from app import models  # noqa: F401  (register tables on the metadata)
 from app.db import Base
 from app.models import ActivityLog
-from app.routers.activity import KIND_LABELS
+from app.routers.activity import KIND_LABELS, PAGE_SIZES
 from app.routers.ui import templates
 from app.services.activity import redact_body, redact_headers
 
@@ -17,10 +17,10 @@ def _render(name, **ctx):
     return templates.env.get_template(name).render(**ctx)
 
 
-def _row(kind="feed_poll"):
-    return type("R", (), {"at": dt.datetime(2026, 6, 16, 23, 24, 45), "kind": kind, "method": "GET",
-                          "path": "/gdc/x.json", "source_ip": "1.2.3.4", "status": 200,
-                          "duration_ms": 9, "detail": {}})()
+def _row(rid=1, kind="feed_poll"):
+    return type("R", (), {"id": rid, "at": dt.datetime(2026, 6, 16, 23, 24, 45), "kind": kind,
+                          "method": "GET", "path": "/gdc/x.json", "source_ip": "1.2.3.4",
+                          "status": 200, "duration_ms": 9, "detail": {}})()
 
 
 def test_redact_headers_masks_secrets():
@@ -47,32 +47,54 @@ def test_redact_body_handles_lists():
     assert out[1]["name"] == "ok"
 
 
-def test_clear_button_is_scoped_to_the_selected_kind():
-    counts = {"all": 4397, "feed_poll": 4029, "layer_apply": 19}
-    all_html = _render("activity.html", kind="all", counts=counts, kind_labels=KIND_LABELS, flash=None)
-    assert ">Clear log<" in all_html and 'name="kind" value="all"' in all_html
-    fp_html = _render("activity.html", kind="feed_poll", counts=counts, kind_labels=KIND_LABELS, flash=None)
-    assert "Clear Feed poll (4029)" in fp_html and 'name="kind" value="feed_poll"' in fp_html
+def test_shell_renders_checkbox_filters_page_size_and_modal():
+    counts = {"all": 4445, "feed_poll": 4077, "layer_apply": 19}
+    html = _render("activity.html", counts=counts, kind_labels=KIND_LABELS, selected=["feed_poll"],
+                   page_size=10, page_sizes=PAGE_SIZES, flash=None)
+    # filters are checkboxes on the left; the selected one is checked
+    assert 'name="kinds" value="feed_poll" class="kind-cb" checked' in html
+    assert 'name="kinds" value="layer_apply" class="kind-cb" ' in html
+    # rows-per-page picker, default 10 selected
+    assert '<select id="page-size"' in html and 'value="10" selected' in html
+    # delete + clear controls and the viewer modal
+    assert 'id="del-btn"' in html and 'id="clear-btn"' in html and 'id="rec-modal"' in html
 
 
-def test_pager_renders_numbered_windowed_pages():
-    html = _render("_activity_rows.html", rows=[_row()], kind="all", page=6, pages=88,
+def test_pager_and_rows_render_selectable_clickable():
+    html = _render("_activity_rows.html", rows=[_row(rid=42)], page=6, pages=88,
                    total=4399, kind_labels=KIND_LABELS)
     assert "Page 6 of 88" in html
     assert "« First" in html and "Last »" in html
     assert 'data-page="1"' in html and 'data-page="88"' in html      # First + Last
     assert 'data-page="5"' in html and 'data-page="7"' in html       # window around page 6
-    assert 'aria-current="page"' in html                             # the current page is marked
+    assert 'aria-current="page"' in html                             # current page marked
+    # each row is a clickable record with a selection checkbox
+    assert 'class="act-row itemrow" data-id="42"' in html
+    assert 'name="ids" value="42" class="row-cb"' in html
 
 
-def test_clear_by_kind_deletes_only_that_category():
+def _seed_db():
     eng = create_engine("sqlite://", connect_args={"check_same_thread": False})
     Base.metadata.create_all(eng)
     db = sessionmaker(bind=eng)()
-    db.add_all([ActivityLog(kind="feed_poll", path="/a"), ActivityLog(kind="feed_poll", path="/b"),
-                ActivityLog(kind="layer_apply", path="/c")])
+    a = ActivityLog(kind="feed_poll", path="/a")
+    b = ActivityLog(kind="feed_poll", path="/b")
+    c = ActivityLog(kind="layer_apply", path="/c")
+    db.add_all([a, b, c])
     db.commit()
-    db.execute(delete(ActivityLog).where(ActivityLog.kind == "feed_poll"))
+    return db, a, b, c
+
+
+def test_delete_by_ids_removes_only_selected_rows():
+    db, a, b, c = _seed_db()
+    db.execute(delete(ActivityLog).where(ActivityLog.id.in_([a.id, c.id])))
+    db.commit()
+    assert {r.path for r in db.scalars(select(ActivityLog)).all()} == {"/b"}
+
+
+def test_clear_by_kinds_deletes_only_those_categories():
+    db, a, b, c = _seed_db()
+    db.execute(delete(ActivityLog).where(ActivityLog.kind.in_(["feed_poll"])))
     db.commit()
     remaining = db.scalars(select(ActivityLog)).all()
     assert len(remaining) == 1 and remaining[0].kind == "layer_apply"

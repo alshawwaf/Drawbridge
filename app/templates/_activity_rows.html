@@ -18,29 +18,15 @@
 </div>
 {% endif %}
 {% for r in rows %}
-<details class="itemrow" style="display:block;">
-  <summary style="color:var(--text);">
-    <span class="muted" style="font-family:ui-monospace,monospace; font-size:12px;">{{ r.at.strftime('%Y-%m-%d %H:%M:%S') }}</span>
-    <span class="pill">{{ kind_labels.get(r.kind, r.kind) }}</span>
-    <code style="font-size:12px;">{{ r.method }} {{ r.path }}</code>
-    {% if r.source_ip %}<span class="muted" style="font-size:11px;">from {{ r.source_ip }}</span>{% endif %}
-    {% if r.status %}<span class="pill {{ 'ok' if r.status == 200 else ('bad' if r.status >= 400 else '') }}">{{ r.status }}</span>{% endif %}
-    <span class="muted" style="font-size:11px;">{{ r.duration_ms }} ms</span>
-  </summary>
-  {% set d = r.detail or {} %}
-  {% if r.kind in ['layer_apply', 'gateway_read'] %}
-    {% for s in d.get('trace', []) %}
-      <div class="trace-step">
-        <div class="trace-head"><span class="pill">{{ s.step }}</span> <code>{{ s.method }} {{ s.url }}</code>
-          {% if s.status %}<span class="pill {{ 'ok' if s.status == 200 else 'bad' }}">{{ s.status }}</span>{% endif %}</div>
-        <div class="trace-lbl">Request</div><pre>{{ s.request | tojson(indent=2) }}</pre>
-        <div class="trace-lbl">Response</div><pre>{{ s.response | tojson(indent=2) }}</pre>
-      </div>
-    {% endfor %}
-  {% else %}
-    <div class="trace-lbl">Request</div><pre>{{ d.get('request') | tojson(indent=2) }}</pre>
-    <div class="trace-lbl">Response</div><pre>{{ d.get('response') | tojson(indent=2) }}</pre>
-  {% endif %}
-</details>
+<div class="act-row itemrow" data-id="{{ r.id }}" style="display:flex; align-items:center; gap:10px; cursor:pointer;">
+  <input type="checkbox" name="ids" value="{{ r.id }}" class="row-cb" title="Select this record">
+  <span class="muted" style="font-family:ui-monospace,monospace; font-size:12px;">{{ r.at.strftime('%Y-%m-%d %H:%M:%S') }}</span>
+  <span class="pill">{{ kind_labels.get(r.kind, r.kind) }}</span>
+  <code style="font-size:12px;">{{ r.method }} {{ r.path }}</code>
+  {% if r.source_ip %}<span class="muted" style="font-size:11px;">from {{ r.source_ip }}</span>{% endif %}
+  <span class="grow"></span>
+  {% if r.status %}<span class="pill {{ 'ok' if r.status == 200 else ('bad' if r.status >= 400 else '') }}">{{ r.status }}</span>{% endif %}
+  <span class="muted" style="font-size:11px;">{{ r.duration_ms }} ms</span>
+</div>
 {% endfor %}
 {% endif %}
