@@ -6,24 +6,25 @@
     <h1>Data Centers</h1>
     <p class="muted">Mock cloud/datacenter providers Check Point connects to. Point a SmartConsole Data Center object at the portal — it serves the inventory in the provider's own API.</p>
   </div>
-  <a class="btn" href="/datacenters/new">+ New OpenStack datacenter</a>
+  <div class="row" style="gap:8px;">
+    <a class="btn" href="/datacenters/new">+ OpenStack</a>
+    <a class="btn" href="/datacenters/new/vcenter">+ vCenter</a>
+  </div>
 </div>
 
 {% if not rows %}
-<div class="card"><p class="muted">No datacenters yet. Create an OpenStack mock to connect a SmartConsole Data Center object without a real cloud.</p></div>
+<div class="card"><p class="muted">No datacenters yet. Create an OpenStack or vCenter mock to connect a SmartConsole Data Center object without a real cloud.</p></div>
 {% else %}
 <div class="card" style="padding:6px 6px 2px;">
 <div class="tablewrap">
 <table>
-  <thead><tr><th>Name</th><th>Provider</th><th class="nowrap">Instances</th><th class="nowrap">Subnets</th><th class="nowrap">Sec groups</th><th></th></tr></thead>
+  <thead><tr><th>Name</th><th>Provider</th><th>Inventory</th><th></th></tr></thead>
   <tbody>
   {% for r in rows %}
     <tr>
       <td><a class="feedname" href="/datacenters/{{ r.dc.id }}">{{ r.dc.name }}</a>{% if r.dc.description %}<div class="subsel">{{ r.dc.description }}</div>{% endif %}</td>
       <td><span class="pill">{{ r.dc.provider }}</span></td>
-      <td class="nowrap">{{ r.instances }}</td>
-      <td class="nowrap">{{ r.subnets }}</td>
-      <td class="nowrap">{{ r.secgroups }}</td>
+      <td class="muted">{{ r.summary }}</td>
       <td class="nowrap"><a class="copybtn" href="/datacenters/{{ r.dc.id }}">Open</a></td>
     </tr>
   {% endfor %}

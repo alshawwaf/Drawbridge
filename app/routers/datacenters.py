@@ -64,6 +64,15 @@ def parse_secgroups(text: str) -> list[dict]:
     return [{"name": ln.strip()} for ln in text.splitlines() if ln.strip() and not ln.strip().startswith("#")]
 
 
+DEFAULT_VMS = "web-1 = 10.0.0.11 | web, prod\nweb-2 = 10.0.0.12 | web, prod\ndb-1 = 10.0.0.21 | db, prod"
+
+
+def parse_vms(text: str) -> list[dict]:
+    """vCenter VM quick-entry: 'name = ip | tag1, tag2' per line (power defaults to poweredOn)."""
+    return [{"name": vm["name"], "ip": vm["ip"], "tags": vm["tags"],
+             "power": "poweredOn", "guest_os": ""} for vm in parse_instances(text)]
+
+
 @router.get("/datacenters", response_class=HTMLResponse)
 def dc_list(request: Request, db: Session = Depends(get_db)):
     user = get_user_or_none(request, db)
@@ -72,10 +81,16 @@ def dc_list(request: Request, db: Session = Depends(get_db)):
     dcs = db.scalars(
         select(Datacenter).where(Datacenter.owner_id == user.id).order_by(Datacenter.created_at.desc())
     ).all()
-    rows = [{"dc": d,
-             "instances": len(d.content.get("instances", []) or []),
-             "subnets": len(d.content.get("subnets", []) or []),
-             "secgroups": len(d.content.get("security_groups", []) or [])} for d in dcs]
+    rows = []
+    for d in dcs:
+        c = d.content or {}
+        if d.provider == "vcenter":
+            summary = f"{len(c.get('vms', []) or [])} VM(s)"
+        else:
+            summary = (f"{len(c.get('instances', []) or [])} instance(s) · "
+                       f"{len(c.get('subnets', []) or [])} subnet(s) · "
+                       f"{len(c.get('security_groups', []) or [])} sec group(s)")
+        rows.append({"dc": d, "summary": summary})
     return templates.TemplateResponse(request, "dc_list.html", {"rows": rows, "flash": _pop_flash(request)})
 
 
@@ -118,6 +133,38 @@ def dc_create(request: Request, name: str = Form(...), description: str = Form("
     return RedirectResponse(f"/datacenters/{dc.id}", status_code=303)
 
 
+@router.get("/datacenters/new/vcenter", response_class=HTMLResponse)
+def dc_new_vcenter(request: Request, db: Session = Depends(get_db)):
+    if get_user_or_none(request, db) is None:
+        return RedirectResponse("/login", status_code=303)
+    return templates.TemplateResponse(request, "dc_new_vcenter.html", {"error": None, "form": {
+        "name": "vCenter-lab", "description": "", "vms_text": DEFAULT_VMS,
+    }})
+
+
+@router.post("/datacenters/new/vcenter")
+def dc_create_vcenter(request: Request, name: str = Form(...), description: str = Form(""),
+                      vms_text: str = Form(""), db: Session = Depends(get_db)):
+    user = get_user_or_none(request, db)
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+    try:
+        vms = parse_vms(vms_text)
+        if not vms:
+            raise ValueError("Add at least one VM.")
+    except Exception as exc:
+        return templates.TemplateResponse(request, "dc_new_vcenter.html", {"error": str(exc), "form": {
+            "name": name, "description": description, "vms_text": vms_text,
+        }}, status_code=400)
+    dc = Datacenter(token=new_feed_token(), provider="vcenter", name=name,
+                    description=description, content={"vms": vms}, owner_id=user.id)
+    db.add(dc)
+    db.commit()
+    db.refresh(dc)
+    _flash(request, f"vCenter datacenter “{name}” saved.")
+    return RedirectResponse(f"/datacenters/{dc.id}", status_code=303)
+
+
 @router.get("/datacenters/{dc_id}", response_class=HTMLResponse)
 def dc_detail(dc_id: int, request: Request, db: Session = Depends(get_db)):
     user = get_user_or_none(request, db)
@@ -125,6 +172,11 @@ def dc_detail(dc_id: int, request: Request, db: Session = Depends(get_db)):
         return RedirectResponse("/login", status_code=303)
     dc = _owned(db, dc_id, user)
     base = get_settings().base_url.rstrip("/")
+    if dc.provider == "vcenter":
+        return templates.TemplateResponse(request, "dc_detail.html", {
+            "dc": dc, "sdk_url": f"{base}/vcenter/{dc.token}/sdk",
+            "vms": dc.content.get("vms", []) or [], "flash": _pop_flash(request),
+        })
     keystone_url = f"{base}/openstack/{dc.token}/v3"
     preview = {
         "nova /servers/detail": os_mock.nova_servers(dc),

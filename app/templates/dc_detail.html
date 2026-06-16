@@ -1,6 +1,37 @@
 {% extends "base.html" %}
 {% block title %}{{ dc.name }}{% endblock %}
 {% block content %}
+{% if dc.provider == 'vcenter' %}
+<div class="row">
+  <div class="grow"><h1>{{ dc.name }} <span class="pill">{{ dc.provider }}</span></h1>
+    <p class="muted">{{ dc.description or "Mock VMware vCenter (vSphere SOAP API)" }}</p></div>
+  <form method="post" action="/datacenters/{{ dc.id }}/delete">
+    <button class="danger" type="submit" data-confirm="Delete “{{ dc.name }}”? This removes the mock datacenter.">Delete</button>
+  </form>
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0;">Connect from SmartConsole</h2>
+  <p class="muted">Objects → New → More → Cloud → Data Center → <i>VMware vCenter…</i>, then enter:</p>
+  <label>Hostname / IP (vCenter SDK endpoint)</label>
+  <div class="row" style="gap:8px; align-items:center; flex-wrap:nowrap;">
+    <span class="copy grow">{{ sdk_url }}</span>
+    <button class="copybtn" type="button" data-copy="{{ sdk_url }}">Copy</button>
+  </div>
+  <p class="muted" style="margin-top:10px;">Username <code>any</code> · Password <code>any</code> — the mock accepts any read-only credentials. Click <i>Test Connection</i>, then import the VMs.</p>
+  <p class="muted"><b>Heads-up:</b> vCenter speaks SOAP and this mock is being built iteratively. If Test Connection or import isn't fully working yet, every call CloudGuard makes is captured in the Activity log (below) so the responses can be tuned to match.</p>
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0;">VMs Check Point will import ({{ vms|length }})</h2>
+  {% for v in vms %}<div class="itemrow"><span class="pill">VM</span> <b>{{ v.name }}</b> <code>{{ v.ip }}</code> <span class="pill {{ 'ok' if v.power == 'poweredOn' else '' }}">{{ v.power }}</span> {% for t in v.tags %}<span class="pill ok">{{ t }}</span>{% endfor %}</div>{% else %}<p class="muted">none</p>{% endfor %}
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0;">Live calls</h2>
+  <p class="muted">Every vSphere SOAP request from CloudGuard is captured in the <a href="/activity?kind=datacenter">Activity log</a> — full request &amp; response, password masked. The mock currently answers version negotiation, <code>RetrieveServiceContent</code>, <code>Login</code>, <code>RetrieveProperties[Ex]</code> (VM enumeration), and <code>Logout</code>.</p>
+</div>
+{% else %}
 <div class="row">
   <div class="grow"><h1>{{ dc.name }} <span class="pill">{{ dc.provider }}</span></h1>
     <p class="muted">{{ dc.description or "Mock OpenStack datacenter (Keystone + Nova + Neutron)" }}</p></div>
@@ -40,4 +71,5 @@ curl -s {{ keystone_url[:-3] }}/nova/v2.1/servers/detail -H "X-Auth-Token: $TOKE
   <h2 style="margin-top:0;">Live calls</h2>
   <p class="muted">Every Keystone / Nova / Neutron request from Check Point is captured in the <a href="/activity?kind=datacenter">Activity log</a> — with the full request &amp; response.</p>
 </div>
+{% endif %}
 {% endblock %}
