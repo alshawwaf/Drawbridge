@@ -84,6 +84,10 @@
   <div class="row"><h2 style="margin:0;" class="grow">Rulebase <span class="muted" style="font-weight:400;">— {{ layer.content.rulebase|length }} rule(s) in “{{ layer.layer_name }}”</span></h2>
     <a class="copybtn" href="/layers/{{ layer.id }}/edit">✎ Edit rules</a></div>
   {{ render_rulebase(layer.content.rulebase) }}
+  {% if referenced %}
+  <div class="trace-lbl" style="margin-top:14px;">Referenced objects <span class="muted" style="font-weight:400; text-transform:none; letter-spacing:0;">— used by these rules, resolved on the gateway (defined elsewhere)</span></div>
+  <div style="margin:4px 0;">{% for n in referenced %}<span class="pill faint" style="margin:2px;">{{ n }}</span>{% endfor %}</div>
+  {% endif %}
 </div>
 {% endif %}
 
@@ -297,6 +301,15 @@
       });
       return html;
     }
+    function renderReferenced(names) {
+      if (!names || !names.length) return '';
+      var pills = names.map(function (n) {
+        return '<span class="pill faint" style="margin:2px;">' + esc(n) + '</span>';
+      }).join('');
+      return '<div class="trace-lbl" style="margin-top:10px;">Referenced objects ' +
+        '<span class="muted" style="font-weight:400; text-transform:none; letter-spacing:0;">— used by rules, resolved on the gateway</span></div>' +
+        '<div style="margin:3px 0;">' + pills + '</div>';
+    }
     function renderLayers(layers) {
       if (!layers || !layers.length) return '<p class="muted">No dynamic layers reported by the gateway.</p>';
       var header = '<p class="muted" style="margin:0 0 8px;"><b>' + layers.length + '</b> dynamic layer' +
@@ -312,8 +325,9 @@
         return '<div class="card" style="margin:10px 0; box-shadow:none;">' +
           '<b>' + esc(l.name || '(unnamed)') + '</b>' +
           (l.display_name ? ' <span class="muted">— ' + esc(l.display_name) + '</span>' : '') +
-          '<div class="muted" style="margin:6px 0;">' + (l.rulebase || []).length + ' rule(s) · ' + objCount + ' object(s)</div>' +
-          renderRulebaseTable(l.rulebase) + renderObjects(l.objects) + meta + '</div>';
+          '<div class="muted" style="margin:6px 0;">' + (l.rulebase || []).length + ' rule(s) · ' + objCount + ' object(s)' +
+            ((l.referenced && l.referenced.length) ? ' · ' + l.referenced.length + ' referenced' : '') + '</div>' +
+          renderRulebaseTable(l.rulebase) + renderObjects(l.objects) + renderReferenced(l.referenced) + meta + '</div>';
       }).join('');
     }
     $('fetch-btn').addEventListener('click', function () {

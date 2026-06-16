@@ -64,6 +64,7 @@ def test_layer_view_normalizes_show_dynamic_layer():
     assert v["name"] == "Network" and v["display_name"] == "dc_Network_layer"
     assert v["rulebase"][0]["name"] == "test1"
     assert v["last_change"]["administrator"] == "admin"
+    assert v["referenced"] == []  # rule references nothing external here
     # when the queried name equals the response name, no separate display_name
     v2 = apply_runner._layer_view({"name": "L", "objects": {}, "rulebase": []}, queried_name="L")
     assert v2["name"] == "L" and v2["display_name"] == ""

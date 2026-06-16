@@ -120,6 +120,36 @@ def _names_in(value) -> list[str]:
     return [value] if isinstance(value, str) else list(value)
 
 
+def referenced_object_names(objects: dict, rulebase: list, referenced_map: dict | None = None) -> list[str]:
+    """Names a layer's rules use that are NOT defined in the layer and not built-in — i.e. objects
+    resolved elsewhere on the gateway (predefined services, applications, …). Unions an explicit
+    referenced-objects map (minus access-layers, which is the layer itself). Drives the
+    'Referenced objects' views."""
+    defined = {o["name"] for items in (objects or {}).values() for o in (items or [])
+               if isinstance(o, dict) and o.get("name")}
+    seen: set[str] = set()
+    out: list[str] = []
+
+    def add(name) -> None:
+        if not isinstance(name, str):
+            return
+        n = name.strip()
+        if n and n not in defined and n.lower() not in BUILTIN_REFS and n not in seen:
+            seen.add(n)
+            out.append(n)
+
+    for r in (rulebase or []):
+        if isinstance(r, dict):
+            for field in ("source", "destination", "service"):
+                for n in _names_in(r.get(field)):
+                    add(n)
+    for category, names in (referenced_map or {}).items():
+        if category != "access-layers":
+            for n in (names or []):
+                add(n)
+    return sorted(out)
+
+
 def build_set_dynamic_content(layer, *, dry_run: bool = False) -> dict:
     """Assemble the exact Gaia API 'set-dynamic-content' request body from a stored layer."""
     c = layer.content or {}

@@ -10,7 +10,11 @@ from app.routers.dynamic_layers import (
     _parse_layer_content,
 )
 from app.routers.ui import templates
-from app.schemas.dynamic_layer import build_set_dynamic_content, evaluate_dynamic_content
+from app.schemas.dynamic_layer import (
+    build_set_dynamic_content,
+    evaluate_dynamic_content,
+    referenced_object_names,
+)
 
 
 def _render(name, **ctx):
@@ -86,3 +90,45 @@ def test_default_policy_validates_and_all_references_resolve():
     result = evaluate_dynamic_content(payload)
     assert result["status"] == "succeeded"
     assert result["validation_warnings"] == []  # every name used in a rule resolves
+
+
+def test_referenced_object_names_excludes_defined_and_builtins():
+    objects = {"hosts": [{"name": "client", "ip-address": "10.0.0.5"}],
+               "networks": [{"name": "lab_net", "subnet4": "10.0.0.0", "mask-length4": 24}]}
+    rulebase = [
+        {"name": "allow_web", "source": ["client"], "destination": ["lab_net"], "service": ["https", "ssh"]},
+        {"name": "allow_fb", "source": "any", "destination": "any", "service": ["Facebook"]},
+        {"name": "cleanup", "source": "any", "destination": "any", "service": "any"},
+    ]
+    names = referenced_object_names(
+        objects, rulebase, {"services-tcp": ["ssh", "https"], "access-layers": ["dynamic_layer"]})
+    # defined (client/lab_net), built-ins (any) and access-layers (the layer itself) are excluded
+    assert names == ["Facebook", "https", "ssh"]
+
+
+def test_referenced_object_names_empty_when_all_local_or_builtin():
+    objects = {"hosts": [{"name": "h", "ip-address": "1.1.1.1"}]}
+    rulebase = [{"name": "r", "source": ["h"], "destination": "any", "service": "any"}]
+    assert referenced_object_names(objects, rulebase) == []
+
+
+def test_layer_detail_renders_referenced_objects_under_rulebase():
+    class _L:
+        id, name, layer_name, description = 1, "L", "dynamic_layer", ""
+        content = {"rulebase": [{"name": "allow_web", "source": ["client"],
+                                 "destination": ["lab_net"], "service": ["https", "ssh"]}]}
+    html = _render("dynamic_detail.html", layer=_L(), payload_json="{}", tasks=[], task_total=0,
+                   latest=None, referenced=["Facebook", "https", "ssh"], gateways=[],
+                   layer_gateway_id=None, mock_url="http://x/gaia_api/v1.9")
+    assert "Referenced objects" in html
+    assert "Facebook" in html and "https" in html and "ssh" in html
+
+
+def test_gateway_view_macro_renders_referenced_objects():
+    tmpl = templates.env.from_string(
+        '{% import "_layers_view.html" as lv %}{{ lv.render_layers(layers) }}')
+    html = tmpl.render(layers=[{"name": "dynamic_layer", "objects": {},
+                                "rulebase": [{"name": "r", "action": "Accept"}],
+                                "referenced": ["Facebook", "ssh"]}])
+    assert "Referenced objects" in html and "Facebook" in html and "ssh" in html
+    assert "2 referenced" in html  # the count badge on the layer card

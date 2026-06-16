@@ -17,6 +17,7 @@ from ..schemas.dynamic_layer import (
     RULE_ACTIONS,
     TRACK_TYPES,
     build_set_dynamic_content,
+    referenced_object_names,
     validate_layer_content,
 )
 from ..security import get_user_or_none, new_feed_token
@@ -310,9 +311,11 @@ def layer_detail(layer_id: int, request: Request, db: Session = Depends(get_db))
     gateways = [{"id": g.id, "name": g.name, "host": g.host, "port": g.port,
                  "username": g.username, "cert_pem": g.cert_pem,
                  "has_password": gateway_creds.has_password(db, g)} for g in gws]
+    c = layer.content or {}
+    referenced = referenced_object_names(c.get("objects"), c.get("rulebase"), c.get("referenced_objects"))
     return templates.TemplateResponse(request, "dynamic_detail.html", {
         "layer": layer, "payload_json": payload_json, "tasks": tasks, "task_total": task_total,
-        "latest": tasks[0] if tasks else None,
+        "latest": tasks[0] if tasks else None, "referenced": referenced,
         "gateways": gateways, "layer_gateway_id": (layer.content or {}).get("gateway_id"),
         "mock_url": f"{base}/gaia_api/v1.9", "flash": _pop_flash(request),
     })
