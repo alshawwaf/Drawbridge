@@ -153,6 +153,7 @@
     {% if v.trace %}{{ render_trace(v.trace) }}{% else %}<p class="muted">No trace captured.</p>{% endif %}
   </details>
   {% endfor %}
+  <p class="muted" style="margin-top:12px;">Showing the latest {{ tasks|length }} of {{ task_total }}. <a href="/activity?kind=layer_apply">View full apply history →</a></p>
 </div>
 {% endif %}
 
