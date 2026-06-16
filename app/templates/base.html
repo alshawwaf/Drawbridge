@@ -159,6 +159,13 @@
     button.secondary:disabled, button.secondary:disabled:hover { opacity:.45; cursor:default; background:var(--surface); color:var(--faint); border-color:var(--line); }
     /* Poll summary (feed page) */
     .pollstat { font-size:13px; margin:0 0 12px; color:var(--text); }
+    /* Gaia API call flow + rulebase visual */
+    .apiflow { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
+    .apicall { background:#0f1626; color:#d6e2ff; border-radius:7px; padding:7px 11px; font-family:ui-monospace,monospace; font-size:12px; white-space:nowrap; display:inline-flex; align-items:center; }
+    .apicall .pill { background:var(--accent); color:#fff; margin-right:7px; padding:2px 7px; }
+    .apiarrow { color:var(--faint); font-weight:700; }
+    table.rulebase th, table.rulebase td { padding:9px 12px; font-size:12.5px; vertical-align:top; }
+    table.rulebase tbody td { border-bottom:1px solid var(--line-soft); }
   </style>
 </head>
 <body>
