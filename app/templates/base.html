@@ -175,8 +175,13 @@
     {% block nav %}<nav>
       <a href="/">Feeds</a>
       <a href="/datacenters">Data Centers</a>
-      <a href="/layers">Dynamic Layers</a>
-      <a href="/gateways">Gateways</a>
+      <div class="menu">
+        <a href="#" class="menu-trigger">Layers &amp; Gateways ▾</a>
+        <div class="menu-items">
+          <a href="/layers">Dynamic Layers</a>
+          <a href="/gateways">Gateways</a>
+        </div>
+      </div>
       <a href="/activity">Activity</a>
       <div class="menu">
         <a href="#" class="menu-trigger">New ▾</a>
