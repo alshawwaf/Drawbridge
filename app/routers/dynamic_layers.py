@@ -4,12 +4,12 @@ import json
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from ..config import get_settings
 from ..db import get_db
-from ..models import DynamicLayer, Gateway, User
+from ..models import DynamicLayer, Gateway, LayerTask, User
 from ..schemas.dynamic_layer import (
     OBJECT_SPECS,
     OBJECT_TYPES,
@@ -25,6 +25,8 @@ from ..services.gaia_client import fetch_gateway_cert
 from .ui import _flash, _pop_flash, templates
 
 router = APIRouter(include_in_schema=False)
+
+APPLY_HISTORY_LIMIT = 8  # latest applies shown inline; full paginated history is in the Activity log
 
 # Pre-filled sample so the builder opens with a working example (the docs' "Simple Objects" shape).
 DEFAULT_LAYER_CONTENT = {
@@ -190,12 +192,21 @@ def layer_detail(layer_id: int, request: Request, db: Session = Depends(get_db))
     layer = _owned(db, layer_id, user)
     payload_json = json.dumps(build_set_dynamic_content(layer), indent=2)
     base = get_settings().base_url.rstrip("/")
-    tasks = [_task_view(t) for t in layer.tasks[:25]]
+    # Latest few applies inline (COUNT + LIMIT keeps the page bounded as history grows);
+    # the full, paginated apply history lives in the Activity log.
+    task_total = db.scalar(
+        select(func.count()).select_from(LayerTask).where(LayerTask.layer_id == layer.id)
+    ) or 0
+    recent = db.scalars(
+        select(LayerTask).where(LayerTask.layer_id == layer.id)
+        .order_by(LayerTask.at.desc()).limit(APPLY_HISTORY_LIMIT)
+    ).all()
+    tasks = [_task_view(t) for t in recent]
     gws = db.scalars(select(Gateway).where(Gateway.owner_id == user.id).order_by(Gateway.name)).all()
     gateways = [{"id": g.id, "name": g.name, "host": g.host, "port": g.port,
                  "username": g.username, "cert_pem": g.cert_pem} for g in gws]
     return templates.TemplateResponse(request, "dynamic_detail.html", {
-        "layer": layer, "payload_json": payload_json, "tasks": tasks,
+        "layer": layer, "payload_json": payload_json, "tasks": tasks, "task_total": task_total,
         "latest": tasks[0] if tasks else None,
         "gateways": gateways, "layer_gateway_id": (layer.content or {}).get("gateway_id"),
         "mock_url": f"{base}/gaia_api/v1.9", "flash": _pop_flash(request),
