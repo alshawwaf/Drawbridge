@@ -12,6 +12,7 @@ import time
 import uuid
 
 import httpx
+from sqlalchemy import select
 
 from ..config import get_settings
 from ..db import SessionLocal
@@ -260,6 +261,123 @@ def _run_gateway(pid, payload, dry_run, *, host, port, user, password, cert_pem)
     result["trace"] = trace
     result["failed_stage"] = failed_stage
     return result, status, status_code, task_id
+
+
+# --- Read side: fetch what dynamic layers / content a gateway currently has ----------------
+def _parse_layers(data: dict) -> list[dict]:
+    """Best-effort parse of a show-dynamic-content response into [{name, objects, rulebase}].
+    The raw response is always shown in the trace, so an unknown shape still surfaces fully."""
+    raw = (data.get("dynamic-layers") or data.get("layers")
+           or data.get("access-layers-content") or [])
+    out = []
+    if isinstance(raw, list):
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            out.append({
+                "name": item.get("name") or item.get("layer") or "(unnamed)",
+                "display_name": item.get("display_name") or item.get("display-name") or "",
+                "objects": item.get("objects") or {},
+                "rulebase": item.get("rulebase") or item.get("rules") or [],
+            })
+    return out
+
+
+def _fetch_mock(db, owner_id: int) -> dict:
+    """The built-in mock gateway reflects the dynamic layers authored in the portal."""
+    base = get_settings().base_url.rstrip("/") + f"/gaia_api/{GAIA_VERSION}"
+    rows = db.scalars(
+        select(DynamicLayer).where(DynamicLayer.owner_id == owner_id).order_by(DynamicLayer.name)
+    ).all()
+    layers = [{"name": r.layer_name, "display_name": r.name,
+               "objects": (r.content or {}).get("objects", {}) or {},
+               "rulebase": (r.content or {}).get("rulebase", []) or []} for r in rows]
+    trace = [
+        {"step": "login", "method": "POST", "url": f"{base}/login",
+         "request": {"headers": {"Content-Type": "application/json"},
+                     "body": {"user": "<mock>", "password": "***"}},
+         "status": 200, "ms": 3, "response": {"sid": _MASK, "session-timeout": 600}},
+        {"step": "show-dynamic-content", "method": "POST", "url": f"{base}/show-dynamic-content",
+         "request": {"headers": {"X-chkp-sid": _MASK, "Content-Type": "application/json"}, "body": {}},
+         "status": 200, "ms": 4, "response": {"dynamic-layers": layers}},
+        {"step": "logout", "method": "POST", "url": f"{base}/logout",
+         "request": {"headers": {"X-chkp-sid": _MASK}, "body": None},
+         "status": 200, "ms": 2, "response": {"message": "Session ended."}},
+    ]
+    return {"ok": True, "layers": layers, "trace": trace, "error": None}
+
+
+def _fetch_gateway_content(*, host, port, user, password, cert_pem) -> dict:
+    pinned = bool(cert_pem and cert_pem.strip())
+    verify = _pinned_ssl_context(cert_pem) if pinned else True
+    base = f"https://{host}:{port}/gaia_api/{GAIA_VERSION}"
+    trace, layers, error = [], [], None
+    try:
+        with httpx.Client(verify=verify, timeout=30.0) as client:
+            t = time.perf_counter()
+            login = client.post(f"{base}/login", json={"user": user, "password": password})
+            trace.append(_trace_entry("login", "POST", f"{base}/login",
+                headers={"Content-Type": "application/json"},
+                body={"user": user, "password": "***"}, resp=login,
+                ms=round((time.perf_counter() - t) * 1000)))
+            login.raise_for_status()
+            sid = login.json().get("sid")
+            headers = {"X-chkp-sid": sid, "Content-Type": "application/json"}
+            shown = {"X-chkp-sid": _MASK, "Content-Type": "application/json"}
+            try:
+                t = time.perf_counter()
+                resp = client.post(f"{base}/show-dynamic-content", json={}, headers=headers)
+                trace.append(_trace_entry("show-dynamic-content", "POST",
+                    f"{base}/show-dynamic-content", headers=shown, body={}, resp=resp,
+                    ms=round((time.perf_counter() - t) * 1000)))
+                try:
+                    data = resp.json() or {}
+                except Exception:
+                    data = {}
+                layers = _parse_layers(data)
+                if resp.status_code >= 400 and not layers:
+                    error = (f"Gateway returned {resp.status_code} for show-dynamic-content — "
+                             "this gateway may not expose that command on its Gaia API.")
+            finally:
+                try:
+                    t = time.perf_counter()
+                    lo = client.post(f"{base}/logout", headers=headers)
+                    trace.append(_trace_entry("logout", "POST", f"{base}/logout",
+                        headers=shown, body=None, resp=lo,
+                        ms=round((time.perf_counter() - t) * 1000)))
+                except Exception:
+                    pass
+    except httpx.ConnectError as exc:
+        trace.append(_trace_entry("connect", "POST", f"{base}/login", err=exc))
+        error = (f"Could not reach the gateway, or it presented a certificate that does not match "
+                 f"the pinned one — re-fetch & review the fingerprint: {exc}") if pinned else (
+                 f"Could not reach the gateway, or TLS verification failed — use 'Fetch & trust "
+                 f"certificate' to pin a self-signed gateway: {exc}")
+    except Exception as exc:
+        trace.append(_trace_entry("error", "POST", base, err=exc))
+        error = f"Gateway request failed: {exc}"
+    return {"ok": error is None, "layers": layers, "trace": trace, "error": error}
+
+
+def fetch_dynamic_content(*, target, db, owner_id, host=None, port=443,
+                          user=None, password=None, cert_pem=None) -> dict:
+    """Read the dynamic layers / content currently on a gateway (real or the built-in mock)."""
+    if target == "mock":
+        data = _fetch_mock(db, owner_id)
+        src = "mock"
+    else:
+        data = _fetch_gateway_content(host=host, port=port, user=user,
+                                      password=password, cert_pem=cert_pem)
+        src = host or "gateway"
+    total_ms = sum((s.get("ms") or 0) for s in data.get("trace", []))
+    n = len(data.get("layers") or [])
+    write_activity(kind="gateway_read", direction="outbound", method="POST",
+                   path=f"show-dynamic-content [{target}]", source_ip=src,
+                   status=(200 if data.get("ok") else 0), duration_ms=total_ms,
+                   summary=f"Fetch dynamic layers from {src}: {n} layer(s)"
+                           + ("" if data.get("ok") else " (failed)"),
+                   detail={"trace": data.get("trace", [])})
+    return data
 
 
 def _run(pid, *, layer_id, target, dry_run, gateway_host, gateway_port, user, password, cert_pem):
