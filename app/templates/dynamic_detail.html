@@ -67,7 +67,7 @@
       <div id="gw-summary" class="muted" style="margin:6px 0 0; font-size:12.5px;"></div>
       <label>Password</label>
       <input name="gw_pass" id="gw_pass" type="password" placeholder="Gateway password — entered per apply, never stored">
-      <p class="muted">Address, port, username and the pinned certificate come from the selected <a href="/gateways">gateway profile</a>. Only the password is entered here — used for this call and never stored.</p>
+      <p class="muted">Address, port, username and the pinned certificate come from the selected <a href="/gateways">gateway profile</a>. If the gateway has a saved password, leave this blank to use it (or type to override for this call).</p>
       {% else %}
       <p class="muted">No saved gateways yet. <a href="/gateways/new">Add a gateway</a> first (address, port, username, certificate), then select it here.</p>
       {% endif %}
@@ -186,7 +186,12 @@
       var el = $('gw-summary'); if (!el) return;
       el.textContent = !g ? '' :
         (g.username || '⚠ no username set') + ' @ ' + g.host + ':' + g.port +
-        (g.cert_pem ? ' · 🔒 pinned certificate' : ' · no pinned cert');
+        (g.cert_pem ? ' · 🔒 pinned certificate' : ' · no pinned cert') +
+        (g.has_password ? ' · 🔑 saved password' : '');
+      var pass = $('gw_pass');
+      if (pass) pass.placeholder = (g && g.has_password)
+        ? 'Using the saved password — leave blank, or type to override'
+        : 'Gateway password — entered per apply, never stored';
     }
     var gwSel = $('gw-select');
     if (gwSel) {

@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from ..db import get_db
 from ..models import DynamicLayer, Gateway, GatewayLayerSnapshot, User
 from ..security import get_user_or_none, new_feed_token
+from ..services import gateway_creds
 from ..services.apply_runner import fetch_dynamic_content
 from ..services.gaia_client import fetch_gateway_cert
 from .ui import _flash, _pop_flash, templates
@@ -52,13 +53,14 @@ def gateways_new(request: Request, db: Session = Depends(get_db)):
     if get_user_or_none(request, db) is None:
         return RedirectResponse("/login", status_code=303)
     return templates.TemplateResponse(request, "gateway_form.html",
-                                      {"gw": None, "error": None, "action": "/gateways/new"})
+                                      {"gw": None, "error": None, "action": "/gateways/new",
+                                       "has_password": False, "crypto_ok": gateway_creds.available()})
 
 
 @router.post("/gateways/new")
 def gateways_create(request: Request, name: str = Form(...), host: str = Form(...),
                     port: str = Form("443"), username: str = Form(""), cert_pem: str = Form(""),
-                    db: Session = Depends(get_db)):
+                    password: str = Form(""), db: Session = Depends(get_db)):
     user = get_user_or_none(request, db)
     if user is None:
         return RedirectResponse("/login", status_code=303)
@@ -66,7 +68,16 @@ def gateways_create(request: Request, name: str = Form(...), host: str = Form(..
                  username=username, cert_pem=cert_pem, owner_id=user.id)
     db.add(gw)
     db.commit()
-    _flash(request, f"Gateway “{name}” saved.")
+    stored = False
+    if password and gateway_creds.available():
+        gateway_creds.store_password(db, gw, password)
+        db.commit()
+        stored = True
+    if password and not stored:
+        _flash(request, f"Gateway “{name}” saved, but the password was not stored — "
+                        "encryption is unavailable in this environment.", "error")
+    else:
+        _flash(request, f"Gateway “{name}” saved.")
     return RedirectResponse("/gateways", status_code=303)
 
 
@@ -107,7 +118,9 @@ def gateways_detail(gid: int, request: Request, db: Session = Depends(get_db)):
     gw = _owned(db, gid, user)
     snap = db.scalar(select(GatewayLayerSnapshot).where(GatewayLayerSnapshot.gateway_id == gw.id))
     return templates.TemplateResponse(request, "gateway_detail.html",
-                                      {"gw": gw, "snapshot": snap, "flash": _pop_flash(request)})
+                                      {"gw": gw, "snapshot": snap,
+                                       "has_password": gateway_creds.has_password(db, gw),
+                                       "flash": _pop_flash(request)})
 
 
 @router.post("/gateways/{gid}/fetch")
@@ -117,13 +130,14 @@ def gateways_fetch(gid: int, request: Request, password: str = Form(""),
     if user is None:
         return RedirectResponse("/login", status_code=303)
     gw = _owned(db, gid, user)
+    pw = password or gateway_creds.get_password(db, gw)
     if not gw.username:
         _flash(request, f"Gateway “{gw.name}” has no username — set it on this gateway first.", "error")
-    elif not password:
-        _flash(request, "Enter the gateway password to fetch (it is never stored).", "error")
+    elif not pw:
+        _flash(request, "Enter the gateway password to fetch (no saved password on this gateway).", "error")
     else:
         data = fetch_dynamic_content(target="gateway", db=db, owner_id=user.id, host=gw.host,
-                                     port=gw.port, user=gw.username, password=password,
+                                     port=gw.port, user=gw.username, password=pw,
                                      cert_pem=gw.cert_pem or None, gateway_id=gw.id)
         if data.get("ok"):
             _flash(request, f"Fetched {len(data.get('layers') or [])} dynamic layer(s) from “{gw.name}”.")
@@ -139,20 +153,31 @@ def gateways_edit(gid: int, request: Request, db: Session = Depends(get_db)):
         return RedirectResponse("/login", status_code=303)
     gw = _owned(db, gid, user)
     return templates.TemplateResponse(request, "gateway_form.html",
-                                      {"gw": gw, "error": None, "action": f"/gateways/{gid}/edit"})
+                                      {"gw": gw, "error": None, "action": f"/gateways/{gid}/edit",
+                                       "has_password": gateway_creds.has_password(db, gw),
+                                       "crypto_ok": gateway_creds.available()})
 
 
 @router.post("/gateways/{gid}/edit")
 def gateways_update(gid: int, request: Request, name: str = Form(...), host: str = Form(...),
                     port: str = Form("443"), username: str = Form(""), cert_pem: str = Form(""),
+                    password: str = Form(""), clear_password: str = Form(""),
                     db: Session = Depends(get_db)):
     user = get_user_or_none(request, db)
     if user is None:
         return RedirectResponse("/login", status_code=303)
     gw = _owned(db, gid, user)
     gw.name, gw.host, gw.port, gw.username, gw.cert_pem = name, host, _port(port), username, cert_pem
+    note = ""
+    if clear_password:
+        gateway_creds.clear_password(db, gw)
+    elif password:  # blank = keep whatever is already stored
+        if gateway_creds.available():
+            gateway_creds.store_password(db, gw, password)
+        else:
+            note = " (the new password was not stored — encryption is unavailable in this environment)"
     db.commit()
-    _flash(request, f"Gateway “{name}” updated.")
+    _flash(request, f"Gateway “{name}” updated.{note}", "error" if note else "success")
     return RedirectResponse("/gateways", status_code=303)
 
 

@@ -20,6 +20,7 @@ from ..schemas.dynamic_layer import (
     validate_layer_content,
 )
 from ..security import get_user_or_none, new_feed_token
+from ..services import gateway_creds
 from ..services.apply_runner import STAGES, fetch_dynamic_content, get_progress, start_apply
 from ..services.gaia_client import fetch_gateway_cert
 from .ui import _flash, _pop_flash, templates
@@ -77,7 +78,7 @@ def _gateway_error(gw: Gateway | None, password: str) -> str | None:
     if not gw.username:
         return f"Gateway “{gw.name}” has no username — set it on the gateway profile (Gateways → edit)."
     if not password:
-        return "Enter the gateway password (it is never stored)."
+        return "Enter the gateway password, or save one on the gateway profile (Gateways → edit)."
     return None
 
 
@@ -224,7 +225,8 @@ def layer_detail(layer_id: int, request: Request, db: Session = Depends(get_db))
     tasks = [_task_view(t) for t in recent]
     gws = db.scalars(select(Gateway).where(Gateway.owner_id == user.id).order_by(Gateway.name)).all()
     gateways = [{"id": g.id, "name": g.name, "host": g.host, "port": g.port,
-                 "username": g.username, "cert_pem": g.cert_pem} for g in gws]
+                 "username": g.username, "cert_pem": g.cert_pem,
+                 "has_password": gateway_creds.has_password(db, g)} for g in gws]
     return templates.TemplateResponse(request, "dynamic_detail.html", {
         "layer": layer, "payload_json": payload_json, "tasks": tasks, "task_total": task_total,
         "latest": tasks[0] if tasks else None,
@@ -252,11 +254,13 @@ def apply_start(
         pid = start_apply(layer_id=layer.id, target="mock", dry_run=dry)
     else:
         gw = _gateway(db, gateway_id, user)
-        err = _gateway_error(gw, gw_pass)
+        # Typed password wins; otherwise fall back to the one saved (encrypted) on the gateway.
+        pw = gw_pass or (gateway_creds.get_password(db, gw) if gw else None)
+        err = _gateway_error(gw, pw)
         if err:
             return JSONResponse({"error": err}, status_code=400)
         pid = start_apply(layer_id=layer.id, target="gateway", dry_run=dry, gateway_host=gw.host,
-                          gateway_port=gw.port, user=gw.username, password=gw_pass,
+                          gateway_port=gw.port, user=gw.username, password=pw,
                           cert_pem=gw.cert_pem or None)
     return JSONResponse({"progress_id": pid})
 
@@ -293,11 +297,12 @@ def fetch_content(
         data = fetch_dynamic_content(target="mock", db=db, owner_id=user.id)
     else:
         gw = _gateway(db, gateway_id, user)
-        err = _gateway_error(gw, gw_pass)
+        pw = gw_pass or (gateway_creds.get_password(db, gw) if gw else None)
+        err = _gateway_error(gw, pw)
         if err:
             return JSONResponse({"error": err}, status_code=400)
         data = fetch_dynamic_content(target="gateway", db=db, owner_id=user.id, host=gw.host,
-                                     port=gw.port, user=gw.username, password=gw_pass,
+                                     port=gw.port, user=gw.username, password=pw,
                                      cert_pem=gw.cert_pem or None, gateway_id=gw.id)
     return JSONResponse(data)
 

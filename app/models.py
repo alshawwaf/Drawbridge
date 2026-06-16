@@ -154,8 +154,9 @@ class ActivityLog(Base):
 
 
 class Gateway(Base):
-    """A saved gateway connection profile. The password is NEVER stored — it is entered per
-    apply (org policy). Optionally pins a self-signed cert (PEM) for TLS verification."""
+    """A saved gateway connection profile. The login password is optional: if set it is stored
+    AES-256-GCM-encrypted in a separate table (GatewaySecret); otherwise it is entered per apply.
+    Optionally pins a self-signed cert (PEM) for TLS verification."""
 
     __tablename__ = "gateways"
 
@@ -171,6 +172,26 @@ class Gateway(Base):
 
     snapshot: Mapped["GatewayLayerSnapshot"] = relationship(
         back_populates="gateway", cascade="all, delete-orphan", uselist=False)
+    secret: Mapped["GatewaySecret"] = relationship(
+        back_populates="gateway", cascade="all, delete-orphan", uselist=False)
+
+
+class GatewaySecret(Base):
+    """The optional gateway login password, encrypted at rest with AES-256-GCM (org policy:
+    credentials at rest must use AES-256 or stronger). Kept in its own table so the secret is
+    never loaded or serialized alongside the gateway profile unless an apply/fetch needs it."""
+
+    __tablename__ = "gateway_secrets"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    gateway_id: Mapped[int] = mapped_column(ForeignKey("gateways.id"), unique=True, index=True)
+    # Versioned, base64-encoded AES-256-GCM token (nonce + ciphertext + tag). Never the plaintext.
+    ciphertext: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    gateway: Mapped["Gateway"] = relationship(back_populates="secret")
 
 
 class GatewayLayerSnapshot(Base):
