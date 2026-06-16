@@ -57,6 +57,7 @@
       <p class="muted">TLS stays verified — the fetched certificate is pinned by its fingerprint, so a self-signed cert (or a hostname that doesn't match the cert) won't block the apply. The password is used only for this call and never stored.</p>
     </fieldset>
     <div style="margin-top:14px;"><button type="button" id="apply-btn">Apply</button>
+      <button type="button" class="secondary" id="fetch-btn" title="Read the dynamic layers and content this gateway currently has">⤓ Fetch from gateway</button>
       <span class="err-inline" id="apply-err" style="display:none;"></span></div>
   </form>
 </div>
@@ -113,6 +114,17 @@
     <div id="progress-result" style="display:none;"></div>
     <div class="modal-actions">
       <button type="button" class="secondary" id="progress-close" style="display:none;">Close</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="fetch-modal" hidden>
+  <div class="modal wide">
+    <h3 id="fetch-title">Dynamic layers on the gateway</h3>
+    <p class="muted" id="fetch-sub">Reading current content…</p>
+    <div id="fetch-result"></div>
+    <div class="modal-actions">
+      <button type="button" class="secondary" id="fetch-close" style="display:none;">Close</button>
     </div>
   </div>
 </div>
@@ -212,6 +224,42 @@
           poll(res.j.progress_id);
         });
     });
+    function renderLayers(layers) {
+      if (!layers || !layers.length) return '<p class="muted">No dynamic layers reported by the gateway.</p>';
+      return layers.map(function (l) {
+        var objCount = 0;
+        try { Object.keys(l.objects || {}).forEach(function (k) { var a = l.objects[k]; objCount += (a && a.length) || 0; }); } catch (e) {}
+        var rules = (l.rulebase || []).map(function (r) {
+          return '<span class="pill" style="margin:2px;">' + esc(r.name || r['rule-number'] || 'rule') + '</span>';
+        }).join('') || '<span class="muted">no rules</span>';
+        return '<div class="card" style="margin:10px 0; box-shadow:none;">' +
+          '<b>' + esc(l.name || '(unnamed)') + '</b>' +
+          (l.display_name ? ' <span class="muted">— ' + esc(l.display_name) + '</span>' : '') +
+          '<div class="muted" style="margin:6px 0;">' + (l.rulebase || []).length + ' rule(s) · ' + objCount + ' object(s)</div>' +
+          rules + '</div>';
+      }).join('');
+    }
+    $('fetch-btn').addEventListener('click', function () {
+      $('fetch-title').textContent = $('use-mock').checked ? 'Dynamic layers on the mock gateway' : 'Dynamic layers on the gateway';
+      $('fetch-sub').style.display = ''; $('fetch-sub').textContent = 'Reading current content…';
+      $('fetch-result').innerHTML = ''; $('fetch-close').style.display = 'none'; $('fetch-modal').hidden = false;
+      fetch('/layers/' + LAYER_ID + '/fetch-content', { method: 'POST', body: formData() })
+        .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+        .then(function (res) {
+          $('fetch-sub').style.display = 'none';
+          var p = res.j, html = '';
+          if (!res.ok || p.error) { html += '<div class="err" style="margin-bottom:10px;">' + esc(p.error || 'Failed to read from gateway.') + '</div>'; }
+          html += renderLayers(p.layers);
+          html += renderTrace(p.trace);
+          $('fetch-result').innerHTML = html; $('fetch-close').style.display = '';
+        })
+        .catch(function () {
+          $('fetch-sub').style.display = 'none';
+          $('fetch-result').innerHTML = '<div class="err">Request failed.</div>'; $('fetch-close').style.display = '';
+        });
+    });
+    $('fetch-close').addEventListener('click', function () { $('fetch-modal').hidden = true; });
+    $('fetch-modal').addEventListener('click', function (e) { if (e.target === $('fetch-modal')) $('fetch-modal').hidden = true; });
     $('progress-close').addEventListener('click', function () { window.location.reload(); });
     $('progress-modal').addEventListener('click', function (e) {
       if (e.target === $('progress-modal') && $('progress-close').style.display !== 'none') window.location.reload();
