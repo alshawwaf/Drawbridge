@@ -38,20 +38,20 @@
   </div>
 
   <div class="card">
-    <div class="row"><h2 style="margin:0;" class="grow">Rules</h2><button type="button" class="secondary" id="open-rule">+ Add rule</button></div>
-    <p class="muted">Applied top-to-bottom. Source / Destination / Service accept <code>any</code> or comma-separated object names.</p>
-    <div id="rule-list"></div>
-  </div>
-
-  <div class="card">
-    <div class="row"><h2 style="margin:0;" class="grow">Referenced objects <span class="muted" style="font-weight:400;">(optional)</span></h2></div>
-    <p class="muted">Names defined elsewhere on the gateway (e.g. <code>Facebook</code>, <code>ssh</code>). <code>any</code>, <code>internet</code>, <code>_GW_</code> are always available.</p>
+    <div class="row"><h2 style="margin:0;" class="grow">Referenced objects</h2></div>
+    <p class="muted">Names defined elsewhere on the gateway (e.g. <code>Facebook</code>, <code>ssh</code>) that your rules use. <code>any</code>, <code>internet</code>, <code>_GW_</code> are always available.</p>
     <div class="row endalign">
       <div><label>Category</label><select id="ref-type">{% for t in ref_types %}<option>{{ t }}</option>{% endfor %}</select></div>
       <div class="grow"><label>Names (comma-separated)</label><input id="ref-names" placeholder="Facebook, Social Networking"></div>
       <div><button type="button" class="secondary" id="add-ref">Add</button></div>
     </div>
     <div id="ref-list" style="margin-top:12px;"></div>
+  </div>
+
+  <div class="card">
+    <div class="row"><h2 style="margin:0;" class="grow">Rules</h2><button type="button" class="secondary" id="open-rule">+ Add rule</button></div>
+    <p class="muted">Applied top-to-bottom. Source / Destination / Service accept <code>any</code>, defined object names, or referenced names.</p>
+    <div id="rule-list"></div>
   </div>
 
   <div class="card">
@@ -118,6 +118,21 @@
     function openModal(id) { $(id).hidden = false; }
     function closeModal(id) { $(id).hidden = true; }
 
+    // Long-list ergonomics: show a count and (past a threshold) a filter box; the list body
+    // scrolls within a capped height so a customer with 300+ objects never blows up the page.
+    var LIST_FILTER_AT = 8, LIST_MAX_H = '340px';
+    function listHeader(box, count, noun, onFilter) {
+      var head = el('div'); head.style.cssText = 'display:flex; align-items:center; gap:10px; margin-bottom:8px;';
+      head.appendChild(el('span', 'muted', count + ' ' + noun + (count === 1 ? '' : 's')));
+      if (count > LIST_FILTER_AT) {
+        var f = el('input'); f.type = 'search'; f.placeholder = 'Filter ' + noun + 's…';
+        f.style.cssText = 'flex:1; max-width:280px;';
+        f.addEventListener('input', function () { onFilter(this.value.trim().toLowerCase()); });
+        head.appendChild(f);
+      }
+      box.appendChild(head);
+    }
+
     // ----- Add object modal -----
     function renderObjFields() {
       var spec = SPECS[$('obj-type').value];
@@ -181,33 +196,50 @@
 
     // ----- Renderers -----
     function renderObjects() {
-      var box = $('obj-list'); box.innerHTML = ''; var any = false;
+      var box = $('obj-list'); box.textContent = '';
+      var flat = [];
       Object.keys(objects).forEach(function (type) {
-        (objects[type] || []).forEach(function (o, i) {
-          any = true;
-          var summary = Object.keys(o).filter(function (k) { return k !== 'name'; }).map(function (k) { return k + '=' + fieldVal(o[k]); }).join(', ');
-          var row = el('div', 'itemrow', '<span class="pill">' + esc(SPECS[type].label) + '</span> <b>' + esc(o.name) + '</b> <span class="muted">' + esc(summary) + '</span>');
-          var rm = el('button', 'minibtn', 'Remove'); rm.type = 'button';
-          rm.addEventListener('click', function () { objects[type].splice(i, 1); if (!objects[type].length) delete objects[type]; sync(); });
-          row.appendChild(rm); box.appendChild(row);
+        (objects[type] || []).forEach(function (o, i) { flat.push({ type: type, o: o, i: i }); });
+      });
+      if (!flat.length) { box.appendChild(el('p', 'muted', 'No objects yet.')); return; }
+      var wrap = el('div'); wrap.style.cssText = 'max-height:' + LIST_MAX_H + '; overflow:auto;';
+      listHeader(box, flat.length, 'object', function (q) {
+        wrap.querySelectorAll('.itemrow').forEach(function (r) {
+          r.style.display = (!q || r.getAttribute('data-q').indexOf(q) !== -1) ? '' : 'none';
         });
       });
-      if (!any) box.innerHTML = '<p class="muted">No objects yet.</p>';
+      flat.forEach(function (it) {
+        var o = it.o, type = it.type;
+        var summary = Object.keys(o).filter(function (k) { return k !== 'name'; }).map(function (k) { return k + '=' + fieldVal(o[k]); }).join(', ');
+        var row = el('div', 'itemrow', '<span class="pill">' + esc(SPECS[type].label) + '</span> <b>' + esc(o.name) + '</b> <span class="muted">' + esc(summary) + '</span>');
+        row.setAttribute('data-q', (o.name + ' ' + summary + ' ' + SPECS[type].label).toLowerCase());
+        var rm = el('button', 'minibtn', 'Remove'); rm.type = 'button';
+        rm.addEventListener('click', function () { objects[type].splice(it.i, 1); if (!objects[type].length) delete objects[type]; sync(); });
+        row.appendChild(rm); wrap.appendChild(row);
+      });
+      box.appendChild(wrap);
     }
     function renderRules() {
-      var box = $('rule-list'); box.innerHTML = '';
-      if (!rules.length) { box.innerHTML = '<p class="muted">No rules yet.</p>'; return; }
-      var wrap = el('div', 'tablewrap');
-      var t = el('table'); t.innerHTML = '<thead><tr><th>#</th><th>Name</th><th>Action</th><th>Source</th><th>Destination</th><th>Service</th><th></th></tr></thead>';
+      var box = $('rule-list'); box.textContent = '';
+      if (!rules.length) { box.appendChild(el('p', 'muted', 'No rules yet.')); return; }
+      var wrap = el('div', 'tablewrap'); wrap.style.cssText = 'max-height:' + LIST_MAX_H + '; overflow:auto;';
+      var t = el('table');
+      t.appendChild(el('thead', null, '<tr><th>#</th><th>Name</th><th>Action</th><th>Source</th><th>Destination</th><th>Service</th><th></th></tr>'));
       var tb = el('tbody');
       rules.forEach(function (r, i) {
-        var tr = el('tr');
-        tr.innerHTML = '<td>' + (i + 1) + '</td><td><b>' + esc(r.name) + '</b></td><td>' + esc(r.action) + '</td><td>' + esc(fieldVal(r.source)) + '</td><td>' + esc(fieldVal(r.destination)) + '</td><td>' + esc(fieldVal(r.service)) + (r['service-negate'] ? ' <span class="pill">negate</span>' : '') + '</td>';
+        var tr = el('tr', null, '<td>' + (i + 1) + '</td><td><b>' + esc(r.name) + '</b></td><td>' + esc(r.action) + '</td><td>' + esc(fieldVal(r.source)) + '</td><td>' + esc(fieldVal(r.destination)) + '</td><td>' + esc(fieldVal(r.service)) + (r['service-negate'] ? ' <span class="pill">negate</span>' : '') + '</td>');
+        tr.setAttribute('data-q', (r.name + ' ' + r.action + ' ' + fieldVal(r.source) + ' ' + fieldVal(r.destination) + ' ' + fieldVal(r.service)).toLowerCase());
         var td = el('td'); var rm = el('button', 'minibtn', 'Remove'); rm.type = 'button';
         rm.addEventListener('click', function () { rules.splice(i, 1); sync(); });
         td.appendChild(rm); tr.appendChild(td); tb.appendChild(tr);
       });
-      t.appendChild(tb); wrap.appendChild(t); box.appendChild(wrap);
+      t.appendChild(tb);
+      listHeader(box, rules.length, 'rule', function (q) {
+        tb.querySelectorAll('tr').forEach(function (row) {
+          row.style.display = (!q || row.getAttribute('data-q').indexOf(q) !== -1) ? '' : 'none';
+        });
+      });
+      wrap.appendChild(t); box.appendChild(wrap);
     }
     function renderRefs() {
       var box = $('ref-list'); box.innerHTML = '';
