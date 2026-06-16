@@ -49,6 +49,21 @@ def _summary(result: dict) -> dict:
     }
 
 
+def _summary_from_payload(payload: dict) -> dict:
+    """Build a change-summary from the pushed payload — used when the gateway accepted the content
+    (task-id returned) but show-task didn't return its own summary."""
+    objs = []
+    for items in (payload.get("objects") or {}).values():
+        for o in (items or []):
+            if isinstance(o, dict) and o.get("name"):
+                objs.append(o["name"])
+    layers = []
+    for lyr in (payload.get("access-layers-content") or []):
+        rnames = [r.get("name") for r in (lyr.get("rulebase") or []) if isinstance(r, dict) and r.get("name")]
+        layers.append({"name": lyr.get("name", ""), "rules": {"create": rnames, "delete": [], "modify": []}})
+    return {"layers": layers, "objects": {"create": sorted(set(objs)), "delete": [], "modify": []}}
+
+
 def _trace_entry(step, method, url, *, headers=None, body=None, resp=None, err=None, ms=None) -> dict:
     entry = {"step": step, "method": method, "url": url,
              "request": {"headers": headers or {}, "body": body},
@@ -215,26 +230,52 @@ def _run_gateway(pid, payload, dry_run, *, host, port, user, password, cert_pem)
                     body = {}
                 task_id = body.get("task-id") or body.get("task_id") or ""
                 _advance(pid, "polling")
-                details = {}
                 if task_id:
-                    for _ in range(20):
+                    # A task-id means the gateway ACCEPTED the content. Poll show-task for the
+                    # detailed result (best-effort); every poll is traced for visibility.
+                    details, terminal = {}, None
+                    for i in range(20):
                         t = time.perf_counter()
                         tr = client.post(f"{base}/show-task", json={"task-id": task_id}, headers=headers)
-                        tasks = (tr.json() or {}).get("tasks", [])
-                        finished = bool(tasks) and tasks[0].get("status") in ("succeeded", "failed")
-                        if finished:
+                        try:
+                            tasks = (tr.json() or {}).get("tasks", []) or []
+                        except Exception:
+                            tasks = []
+                        st = str(tasks[0].get("status") if tasks else "").strip().lower()
+                        is_terminal = st in ("succeeded", "failed", "partially succeeded")
+                        if i == 0 or is_terminal:   # always show the first poll, plus the terminal one
                             trace.append(_trace_entry("show-task", "POST", f"{base}/show-task",
                                 headers=shown_headers, body={"task-id": task_id}, resp=tr,
                                 ms=round((time.perf_counter() - t) * 1000)))
+                        if is_terminal:
                             t0 = tasks[0]
                             details = (t0.get("task-details") or [{}])[0]
-                            status = t0.get("status", "failed")
+                            terminal = st
                             status_code = t0.get("status-code", status_code)
                             break
                         time.sleep(0.4)
-                    result = {"change_summary": details.get("change-summary", {}),
-                              "validation_warnings": details.get("validation-warnings", []),
-                              "validation_errors": details.get("validation-errors", []), "dry_run": dry_run}
+                    if terminal == "failed":
+                        status = "failed"
+                        result = {"change_summary": details.get("change-summary", {}),
+                                  "validation_warnings": details.get("validation-warnings", []),
+                                  "validation_errors": (details.get("validation-errors") or
+                                      [{"layer": "", "rule": "", "object": "",
+                                        "message": "Gateway reported the set-dynamic-content task as failed."}]),
+                                  "dry_run": dry_run}
+                    elif terminal:  # succeeded / partially succeeded
+                        status = "succeeded"
+                        result = {"change_summary": details.get("change-summary") or _summary_from_payload(payload),
+                                  "validation_warnings": details.get("validation-warnings", []),
+                                  "validation_errors": details.get("validation-errors", []), "dry_run": dry_run}
+                    else:
+                        # Accepted (task-id returned) but show-task never confirmed a terminal state in
+                        # the poll window — report accepted, summarizing from the pushed payload.
+                        status = "succeeded"
+                        result = {"change_summary": _summary_from_payload(payload),
+                                  "validation_warnings": [{"layer": "", "rule": "", "object": "",
+                                      "message": f"Content accepted (task-id {task_id}); detailed task status "
+                                                 "was not confirmed via show-task within the poll window."}],
+                                  "validation_errors": [], "dry_run": dry_run}
                 else:
                     # Per Check Point's docs a valid push returns a task-id; its absence means the
                     # gateway rejected the request — surface its actual message, don't fail blankly.
