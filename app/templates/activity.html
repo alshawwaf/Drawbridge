@@ -25,17 +25,24 @@
 <script>
   (function () {
     var kind = {{ kind | tojson }};
-    var rows = document.getElementById('rows');
-    function load() {
-      // Don't clobber a row the user has expanded to read.
-      if (rows.querySelector('details[open]')) return;
-      fetch('/activity/rows?kind=' + encodeURIComponent(kind))
+    var rowsEl = document.getElementById('rows');
+    var page = 1;
+    function load(force) {
+      // Don't clobber a row the user has expanded to read (unless they clicked a pager).
+      if (!force && rowsEl.querySelector('details[open]')) return;
+      fetch('/activity/rows?kind=' + encodeURIComponent(kind) + '&page=' + page)
         .then(function (r) { return r.text(); })
-        .then(function (html) { rows.innerHTML = html; })
+        .then(function (html) { rowsEl.innerHTML = html; })
         .catch(function () {});
     }
-    load();
-    setInterval(load, 4000);
+    window.gotoPage = function (n) {
+      page = Math.max(1, n);
+      load(true);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    };
+    load(false);
+    // Live tail: only auto-refresh the newest page, so browsing older pages stays put.
+    setInterval(function () { if (page === 1) load(false); }, 4000);
   })();
 </script>
 {% endblock %}

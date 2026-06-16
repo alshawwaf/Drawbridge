@@ -137,6 +137,7 @@
     .step.active .dot { border-color:var(--accent); }
     .step.done { color:var(--text); }
     .step.done .dot { background:var(--ok); border-color:var(--ok); color:#fff; }
+    .step.fail { color:var(--danger); font-weight:600; }
     .step.fail .dot { background:var(--danger); border-color:var(--danger); color:#fff; }
     .spin { width:14px; height:14px; border:2px solid var(--line); border-top-color:var(--accent); border-radius:50%; animation:spin .7s linear infinite; display:inline-block; }
     @keyframes spin { to { transform:rotate(360deg); } }
@@ -152,6 +153,12 @@
     .trace-step pre { margin:0; max-height:230px; font-size:11.5px; }
     fieldset { border:none; padding:0; margin:0; transition:opacity .15s; }
     fieldset:disabled { opacity:.5; }
+    /* Pager (Activity log full history) */
+    .pager { display:flex; align-items:center; gap:14px; padding:2px 0 14px; flex-wrap:wrap; }
+    .pager .muted { font-size:12.5px; }
+    button.secondary:disabled, button.secondary:disabled:hover { opacity:.45; cursor:default; background:var(--surface); color:var(--faint); border-color:var(--line); }
+    /* Poll summary (feed page) */
+    .pollstat { font-size:13px; margin:0 0 12px; color:var(--text); }
   </style>
 </head>
 <body>
