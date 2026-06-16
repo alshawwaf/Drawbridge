@@ -1,4 +1,6 @@
 """The apply trace captures each Gaia step's request/response and redacts secrets."""
+import ssl
+
 from app.services import apply_runner
 
 PAYLOAD = {
@@ -42,3 +44,49 @@ def test_mock_trace_present_for_failed_validation(monkeypatch):
     result, status, code, _ = apply_runner._run_mock("t2", bad, False)
     assert status == "failed"
     assert len(result["trace"]) == 4  # still captures the full session
+
+
+def test_pinned_context_is_pinning_not_skip_verify(monkeypatch):
+    # Don't require a real PEM on disk — assert the security posture of the pinned context.
+    monkeypatch.setattr(ssl.SSLContext, "load_verify_locations", lambda self, **kw: None)
+    ctx = apply_runner._pinned_ssl_context("-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----")
+    assert ctx.verify_mode == ssl.CERT_REQUIRED            # verification stays ON (never CERT_NONE)
+    assert ctx.check_hostname is False                     # hostname match superseded by the pin
+    assert ctx.minimum_version >= ssl.TLSVersion.TLSv1_2   # TLS 1.2+ enforced (org policy)
+    assert ctx.verify_flags & ssl.VERIFY_X509_PARTIAL_CHAIN  # pinned leaf honored as trust anchor
+
+
+def _progress(stage, done):
+    return {"stage": stage, "status": "running", "done_stages": list(done), "failed_stage": None,
+            "task_id": None, "summary": None, "error": None, "trace": []}
+
+
+def test_finish_transport_failure_marks_only_the_failing_step():
+    # A step failed (e.g. TLS/connect): that step is the failure; only steps BEFORE it are done.
+    apply_runner._PROGRESS["g1"] = _progress("logging_out", ["connecting", "logging_in", "pushing"])
+    result = {"failed_stage": "pushing", "validation_errors": [{"message": "boom"}], "trace": []}
+    apply_runner._finish("g1", status="failed", result=result, task_id="t")
+    p = apply_runner._PROGRESS["g1"]
+    assert p["failed_stage"] == "pushing"
+    assert p["done_stages"] == ["connecting", "logging_in"]   # not pushing/polling/logging_out/done
+    assert p["error"] == "boom"
+
+
+def test_finish_session_complete_marks_every_step_done():
+    done = ["connecting", "logging_in", "pushing", "polling", "logging_out"]
+    apply_runner._PROGRESS["g2"] = _progress("logging_out", done)
+    apply_runner._finish("g2", status="succeeded", result={"trace": []}, task_id="t")
+    p = apply_runner._PROGRESS["g2"]
+    assert p["stage"] == "done" and p["failed_stage"] is None
+    assert all(k in p["done_stages"] for k in done)
+
+
+def test_finish_validation_failure_keeps_steps_green():
+    # Session completed but the task reported validation errors -> steps stay done, error surfaced.
+    done = ["connecting", "logging_in", "pushing", "polling", "logging_out"]
+    apply_runner._PROGRESS["g3"] = _progress("logging_out", done)
+    result = {"trace": [], "validation_errors": [{"message": "rule invalid"}]}  # no failed_stage
+    apply_runner._finish("g3", status="failed", result=result, task_id="t")
+    p = apply_runner._PROGRESS["g3"]
+    assert p["failed_stage"] is None and "pushing" in p["done_stages"]
+    assert p["error"] == "rule invalid"

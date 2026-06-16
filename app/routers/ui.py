@@ -4,13 +4,13 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from ..config import get_settings
 from ..db import get_db
 from ..links import public_url
-from ..models import Feed, FeedType, User
+from ..models import Feed, FeedPoll, FeedType, User
 from ..security import get_user_or_none, new_feed_token, verify_password
 from ..services.render import (
     normalize_generic_dc_content,
@@ -22,6 +22,9 @@ from ..services.render import (
 router = APIRouter(include_in_schema=False)
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+
+# How many recent polls the feed page shows inline; the full history lives in the Activity log.
+POLL_PREVIEW = 6
 
 # --- Generic Data Center default (the canonical sk167210 sample) -----------------------
 DEFAULT_FEED_NAME = "Generic-DC-Example"
@@ -352,7 +355,21 @@ def polls_fragment(feed_id: int, request: Request, db: Session = Depends(get_db)
     if user is None:
         return HTMLResponse("", status_code=401)
     feed = _owned(db, feed_id, user)
-    return templates.TemplateResponse(request, "_polls.html", {"polls": feed.polls[:25]})
+    # Count + latest few via SQL (don't load the whole — possibly huge — poll history).
+    total = db.scalar(
+        select(func.count()).select_from(FeedPoll).where(FeedPoll.feed_id == feed.id)
+    ) or 0
+    recent = db.scalars(
+        select(FeedPoll)
+        .where(FeedPoll.feed_id == feed.id)
+        .order_by(FeedPoll.at.desc())
+        .limit(POLL_PREVIEW)
+    ).all()
+    return templates.TemplateResponse(
+        request,
+        "_polls.html",
+        {"polls": recent, "total": total, "last": recent[0] if recent else None},
+    )
 
 
 @router.post("/feeds/{feed_id}/delete")

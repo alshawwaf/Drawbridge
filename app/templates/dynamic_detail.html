@@ -54,7 +54,7 @@
         <button type="button" class="secondary" id="fetch-cert">Fetch &amp; trust certificate</button></div>
       <textarea name="gw_cert" id="gw_cert" style="min-height:84px;" placeholder="Paste the gateway's PEM, or use Fetch &amp; trust to pin it"></textarea>
       <div id="cert-fp" class="fp" style="display:none; margin-top:8px;"></div>
-      <p class="muted">TLS verification is always on. For a self-signed gateway, fetch its certificate, review the fingerprint, and it gets pinned for this apply. The password is used only for this call and never stored.</p>
+      <p class="muted">TLS stays verified — the fetched certificate is pinned by its fingerprint, so a self-signed cert (or a hostname that doesn't match the cert) won't block the apply. The password is used only for this call and never stored.</p>
     </fieldset>
     <div style="margin-top:14px;"><button type="button" id="apply-btn">Apply</button>
       <span class="err-inline" id="apply-err" style="display:none;"></span></div>
@@ -156,13 +156,14 @@
         .catch(function () { $('fetch-cert').textContent = 'Fetch & trust certificate'; $('fetch-cert').disabled = false; });
     });
 
-    function renderStepper(stages, doneStages, current, status) {
+    function renderStepper(stages, doneStages, current, status, failedStage) {
       var ul = $('stepper'); ul.innerHTML = '';
       stages.forEach(function (s) {
         var li = document.createElement('li'); li.className = 'step'; var dot = '';
-        if (doneStages.indexOf(s.key) !== -1 || (s.key === 'done' && status !== 'running')) { li.className += ' done'; dot = '✓'; }
+        if (s.key === failedStage) { li.className += ' fail'; dot = '✕'; }
+        else if (doneStages.indexOf(s.key) !== -1) { li.className += ' done'; dot = '✓'; }
+        else if (s.key === 'done' && status === 'succeeded') { li.className += ' done'; dot = '✓'; }
         else if (s.key === current && status === 'running') { li.className += ' active'; }
-        else if (s.key === current && status === 'failed') { li.className += ' fail'; dot = '!'; }
         var dotHtml = (li.className.indexOf('active') !== -1) ? '<span class="spin"></span>' : '<span class="dot">' + dot + '</span>';
         li.innerHTML = dotHtml + '<span>' + s.label + '</span>';
         ul.appendChild(li);
@@ -182,7 +183,7 @@
     }
     function poll(pid) {
       fetch('/layers/' + LAYER_ID + '/apply-status/' + pid).then(function (r) { return r.json(); }).then(function (p) {
-        renderStepper(p.stages || [], p.done_stages || [], p.stage, p.status);
+        renderStepper(p.stages || [], p.done_stages || [], p.stage, p.status, p.failed_stage);
         if (p.status === 'running') { setTimeout(function () { poll(pid); }, 500); return; }
         var ok = p.status === 'succeeded';
         $('progress-title').textContent = ok ? 'Applied' : 'Apply failed';
