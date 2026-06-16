@@ -1,13 +1,14 @@
 """Saved gateway connection profiles (name, host, port, username, pinned cert). No password
 is ever stored — it's entered per apply. Each Dynamic Layer can be associated with a gateway."""
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..models import DynamicLayer, Gateway, User
 from ..security import get_user_or_none, new_feed_token
+from ..services.gaia_client import fetch_gateway_cert
 from .ui import _flash, _pop_flash, templates
 
 router = APIRouter(include_in_schema=False)
@@ -66,6 +67,21 @@ def gateways_create(request: Request, name: str = Form(...), host: str = Form(..
     db.commit()
     _flash(request, f"Gateway “{name}” saved.")
     return RedirectResponse("/gateways", status_code=303)
+
+
+@router.post("/gateways/fetch-cert")
+def gateways_fetch_cert(request: Request, host: str = Form(""), port: str = Form("443"),
+                        db: Session = Depends(get_db)):
+    """Fetch the gateway's certificate so it can be reviewed and pinned with the saved profile."""
+    if get_user_or_none(request, db) is None:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    if not host:
+        return JSONResponse({"error": "Enter the gateway address first."}, status_code=400)
+    try:
+        return JSONResponse(fetch_gateway_cert(host, _port(port)))
+    except Exception as exc:
+        return JSONResponse({"error": f"Could not fetch certificate from {host}:{_port(port)} — {exc}"},
+                            status_code=400)
 
 
 @router.get("/gateways/{gid}/edit", response_class=HTMLResponse)

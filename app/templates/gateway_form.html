@@ -10,20 +10,50 @@
   <input name="name" value="{{ gw.name if gw else '' }}" placeholder="Boston-GW-01" required>
 
   <div class="row">
-    <div class="grow"><label>Gateway address</label><input name="host" value="{{ gw.host if gw else '' }}" placeholder="10.1.1.1" required></div>
-    <div style="width:120px;"><label>Port</label><input name="port" value="{{ gw.port if gw else 443 }}"></div>
+    <div class="grow"><label>Gateway address</label><input name="host" id="gw_host" value="{{ gw.host if gw else '' }}" placeholder="10.1.1.1" required></div>
+    <div style="width:120px;"><label>Port</label><input name="port" id="gw_port" value="{{ gw.port if gw else 443 }}"></div>
   </div>
 
   <label>Username (optional)</label>
   <input name="username" value="{{ gw.username if gw else '' }}" placeholder="admin">
 
-  <label>Pinned certificate (PEM, optional — to trust a self-signed gateway)</label>
-  <textarea name="cert_pem" style="min-height:90px;" placeholder="-----BEGIN CERTIFICATE-----">{{ gw.cert_pem if gw else '' }}</textarea>
-  <p class="muted">TLS verification stays on; a pinned certificate lets the apply trust a self-signed gateway without disabling verification.</p>
+  <div class="row" style="align-items:flex-end;">
+    <div class="grow"><label>Pinned certificate (PEM, optional — to trust a self-signed gateway)</label></div>
+    <button type="button" class="secondary" id="fetch-cert">Fetch &amp; trust certificate</button>
+  </div>
+  <textarea name="cert_pem" id="gw_cert" style="min-height:90px;" placeholder="-----BEGIN CERTIFICATE-----">{{ gw.cert_pem if gw else '' }}</textarea>
+  <div id="cert-fp" class="fp" style="margin-top:8px;{{ '' if (gw and gw.cert_pem) else ' display:none;' }}">{% if gw and gw.cert_pem %}<b>Pinned</b> certificate saved with this gateway.{% endif %}</div>
+  <p class="muted">Fetch the certificate once here — review the fingerprint and it's pinned &amp; saved with this gateway, so every apply and fetch reuses it (no re-fetching). TLS verification stays on.</p>
 
   <div class="row" style="margin-top:18px;">
     <button type="submit">{{ 'Save changes' if gw else 'Add gateway' }}</button>
     <a class="btn secondary" href="/gateways">Cancel</a>
   </div>
 </form>
+
+<script>
+  (function () {
+    var btn = document.getElementById('fetch-cert');
+    if (!btn) return;
+    btn.addEventListener('click', function () {
+      var host = document.getElementById('gw_host').value;
+      var fp = document.getElementById('cert-fp');
+      if (!host) { fp.style.display = ''; fp.textContent = 'Enter the gateway address first.'; return; }
+      var body = new URLSearchParams();
+      body.set('host', host); body.set('port', document.getElementById('gw_port').value || '443');
+      btn.textContent = 'Fetching…'; btn.disabled = true;
+      fetch('/gateways/fetch-cert', { method: 'POST', body: body })
+        .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+        .then(function (res) {
+          btn.textContent = 'Fetch & trust certificate'; btn.disabled = false;
+          fp.style.display = '';
+          if (!res.ok) { fp.textContent = res.j.error || 'Failed to fetch certificate.'; return; }
+          document.getElementById('gw_cert').value = res.j.pem;
+          fp.innerHTML = '<b>Pinned</b> · SHA-256 ' + res.j.fingerprint + ' — saved when you ' +
+            ({{ 'true' if gw else 'false' }} ? 'save changes.' : 'add the gateway.');
+        })
+        .catch(function () { btn.textContent = 'Fetch & trust certificate'; btn.disabled = false; });
+    });
+  })();
+</script>
 {% endblock %}
