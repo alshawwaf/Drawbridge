@@ -279,23 +279,18 @@ def _run_gateway(pid, payload, dry_run, *, host, port, user, password, cert_pem)
 
 
 # --- Read side: fetch what dynamic layers / content a gateway currently has ----------------
-def _parse_layers(data: dict) -> list[dict]:
-    """Best-effort parse of a show-dynamic-content response into [{name, objects, rulebase}].
-    The raw response is always shown in the trace, so an unknown shape still surfaces fully."""
-    raw = (data.get("dynamic-layers") or data.get("layers")
-           or data.get("access-layers-content") or [])
-    out = []
-    if isinstance(raw, list):
-        for item in raw:
-            if not isinstance(item, dict):
-                continue
-            out.append({
-                "name": item.get("name") or item.get("layer") or "(unnamed)",
-                "display_name": item.get("display_name") or item.get("display-name") or "",
-                "objects": item.get("objects") or {},
-                "rulebase": item.get("rulebase") or item.get("rules") or [],
-            })
-    return out
+# Real Gaia API (R82): show-dynamic-layers -> [{name, last-dynamic-content-change}];
+#                      show-dynamic-layer {name} -> {name, objects, rulebase, last-dynamic-content-change}.
+def _layer_view(d: dict, queried_name: str = "") -> dict:
+    """Normalize a show-dynamic-layer response into the shape the UI renders."""
+    inner = d.get("name") or ""
+    return {
+        "name": queried_name or inner or "(unnamed)",
+        "display_name": inner if (inner and queried_name and inner != queried_name) else "",
+        "objects": d.get("objects") or {},
+        "rulebase": d.get("rulebase") or [],
+        "last_change": d.get("last-dynamic-content-change") or {},
+    }
 
 
 def _fetch_mock(db, owner_id: int) -> dict:
@@ -306,19 +301,26 @@ def _fetch_mock(db, owner_id: int) -> dict:
     ).all()
     layers = [{"name": r.layer_name, "display_name": r.name,
                "objects": (r.content or {}).get("objects", {}) or {},
-               "rulebase": (r.content or {}).get("rulebase", []) or []} for r in rows]
+               "rulebase": (r.content or {}).get("rulebase", []) or [],
+               "last_change": {}} for r in rows]
     trace = [
         {"step": "login", "method": "POST", "url": f"{base}/login",
          "request": {"headers": {"Content-Type": "application/json"},
                      "body": {"user": "<mock>", "password": "***"}},
          "status": 200, "ms": 3, "response": {"sid": _MASK, "session-timeout": 600}},
-        {"step": "show-dynamic-content", "method": "POST", "url": f"{base}/show-dynamic-content",
+        {"step": "show-dynamic-layers", "method": "POST", "url": f"{base}/show-dynamic-layers",
          "request": {"headers": {"X-chkp-sid": _MASK, "Content-Type": "application/json"}, "body": {}},
-         "status": 200, "ms": 4, "response": {"dynamic-layers": layers}},
-        {"step": "logout", "method": "POST", "url": f"{base}/logout",
-         "request": {"headers": {"X-chkp-sid": _MASK}, "body": None},
-         "status": 200, "ms": 2, "response": {"message": "Session ended."}},
+         "status": 200, "ms": 4, "response": {"layers": [{"name": lr["name"]} for lr in layers]}},
     ]
+    for lr in layers:
+        trace.append({"step": "show-dynamic-layer", "method": "POST", "url": f"{base}/show-dynamic-layer",
+            "request": {"headers": {"X-chkp-sid": _MASK, "Content-Type": "application/json"},
+                        "body": {"name": lr["name"]}},
+            "status": 200, "ms": 4,
+            "response": {"name": lr["name"], "objects": lr["objects"], "rulebase": lr["rulebase"]}})
+    trace.append({"step": "logout", "method": "POST", "url": f"{base}/logout",
+        "request": {"headers": {"X-chkp-sid": _MASK}, "body": None},
+        "status": 200, "ms": 2, "response": {"message": "Session ended."}})
     return {"ok": True, "layers": layers, "trace": trace, "error": None}
 
 
@@ -340,19 +342,32 @@ def _fetch_gateway_content(*, host, port, user, password, cert_pem) -> dict:
             headers = {"X-chkp-sid": sid, "Content-Type": "application/json"}
             shown = {"X-chkp-sid": _MASK, "Content-Type": "application/json"}
             try:
+                # 1) list the dynamic layers the gateway has
                 t = time.perf_counter()
-                resp = client.post(f"{base}/show-dynamic-content", json={}, headers=headers)
-                trace.append(_trace_entry("show-dynamic-content", "POST",
-                    f"{base}/show-dynamic-content", headers=shown, body={}, resp=resp,
-                    ms=round((time.perf_counter() - t) * 1000)))
+                lr = client.post(f"{base}/show-dynamic-layers", json={}, headers=headers)
+                trace.append(_trace_entry("show-dynamic-layers", "POST", f"{base}/show-dynamic-layers",
+                    headers=shown, body={}, resp=lr, ms=round((time.perf_counter() - t) * 1000)))
                 try:
-                    data = resp.json() or {}
+                    ldata = lr.json() or {}
                 except Exception:
-                    data = {}
-                layers = _parse_layers(data)
-                if resp.status_code >= 400 and not layers:
-                    error = (f"Gateway returned {resp.status_code} for show-dynamic-content — "
-                             "this gateway may not expose that command on its Gaia API.")
+                    ldata = {}
+                names = [x.get("name") for x in (ldata.get("layers") or [])
+                         if isinstance(x, dict) and x.get("name")]
+                if lr.status_code >= 400 and not names:
+                    msg = ldata.get("message") or ldata.get("errors") or f"HTTP {lr.status_code}"
+                    error = f"show-dynamic-layers failed: {msg}"
+                # 2) pull each layer's objects + rulebase
+                for name in names:
+                    t = time.perf_counter()
+                    dr = client.post(f"{base}/show-dynamic-layer", json={"name": name}, headers=headers)
+                    trace.append(_trace_entry("show-dynamic-layer", "POST", f"{base}/show-dynamic-layer",
+                        headers=shown, body={"name": name}, resp=dr,
+                        ms=round((time.perf_counter() - t) * 1000)))
+                    try:
+                        d = dr.json() or {}
+                    except Exception:
+                        d = {}
+                    layers.append(_layer_view(d, queried_name=name))
             finally:
                 try:
                     t = time.perf_counter()

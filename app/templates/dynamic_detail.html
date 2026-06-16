@@ -232,11 +232,16 @@
         var rules = (l.rulebase || []).map(function (r) {
           return '<span class="pill" style="margin:2px;">' + esc(r.name || r['rule-number'] || 'rule') + '</span>';
         }).join('') || '<span class="muted">no rules</span>';
+        var lc = l.last_change || {}, meta = '';
+        if (lc.administrator) {
+          var when = (lc.time && lc.time['iso-8601']) ? ' · ' + esc(lc.time['iso-8601']) : '';
+          meta = '<div class="muted" style="font-size:11px; margin-top:6px;">last change by ' + esc(lc.administrator) + when + '</div>';
+        }
         return '<div class="card" style="margin:10px 0; box-shadow:none;">' +
           '<b>' + esc(l.name || '(unnamed)') + '</b>' +
           (l.display_name ? ' <span class="muted">— ' + esc(l.display_name) + '</span>' : '') +
           '<div class="muted" style="margin:6px 0;">' + (l.rulebase || []).length + ' rule(s) · ' + objCount + ' object(s)</div>' +
-          rules + '</div>';
+          rules + meta + '</div>';
       }).join('');
     }
     $('fetch-btn').addEventListener('click', function () {
