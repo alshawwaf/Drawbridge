@@ -208,9 +208,14 @@ def void_response(method: str) -> str:
 
 
 # Stable managed-object ids for the synthesized inventory containers (real-vCenter naming style).
-_ROOT, _DC, _VMF, _HOSTF = "group-d1", "datacenter-2", "group-v22", "group-h4"
+# _ROOT must equal ServiceContent's rootFolder — CloudGuard's CreateFilter traverses from there.
+_ROOT, _DC = "group-d1", "datacenter-2"
+_VMF, _HOSTF, _NETF = "group-v22", "group-h4", "group-n23"
 _CLUSTER, _RP = "domain-c7", "resgroup-8"
 _HOSTS = ["host-13", "host-14"]
+# Bump when the WaitForUpdates response SHAPE changes: it feeds the version token, so a bump forces
+# the controller (which caches the last version per host) to re-sync with the new shape.
+_SCHEMA_VERSION = "3"
 
 
 def _moref(motype: str, moid: str) -> str:
@@ -226,6 +231,11 @@ def _str_val(text: str) -> str:
     return f'<val xsi:type="xsd:string">{_esc(text)}</val>'
 
 
+def _string_array(values: list[str]) -> str:
+    items = "".join(f"<string>{_esc(v)}</string>" for v in values)
+    return f'<val xsi:type="ArrayOfString">{items}</val>'
+
+
 def _change(name: str, val_xml: str) -> str:
     return f"<changeSet><name>{name}</name><op>assign</op>{val_xml}</changeSet>"
 
@@ -236,66 +246,69 @@ def _object_update(motype: str, moid: str, changes: list[str]) -> str:
 
 
 def inventory_object_updates(dc) -> list[str]:
-    """The full vCenter inventory as PropertyCollector 'enter' object updates, so CloudGuard builds
-    the whole tree (Datacenter -> vm/host folders -> Cluster -> Hosts/ResourcePool -> VMs), not just
-    a flat VM list. Containers are synthesized around the portal-defined VMs; parent/child refs make
-    the tree navigable."""
+    """The full vCenter inventory as PropertyCollector 'enter' object updates. The property set per
+    type mirrors EXACTLY what CloudGuard's CreateFilter requests (all=false) — sending a property it
+    didn't ask for makes the strict CXF client unable to reconcile the object with its filter, so it
+    silently drops it. Containers are synthesized around the portal-defined VMs; parent/child refs
+    make the tree navigable from the root folder (group-d1, == ServiceContent.rootFolder)."""
     vms = _vms(dc)
     vm_moids = [f"vm-{i + 1}" for i in range(len(vms))]
     objs = [
+        # Folder -> name, parent, childEntity, childType
         _object_update("Folder", _ROOT, [
             _change("name", _str_val("Datacenters")),
             _change("childEntity", _moref_array([("Datacenter", _DC)])),
+            _change("childType", _string_array(["Folder", "Datacenter"])),
         ]),
+        # Datacenter -> name, parent, hostFolder, vmFolder, networkFolder
         _object_update("Datacenter", _DC, [
             _change("name", _str_val("Datacenter")),
             _change("parent", _moref("Folder", _ROOT)),
-            _change("vmFolder", _moref("Folder", _VMF)),
             _change("hostFolder", _moref("Folder", _HOSTF)),
+            _change("vmFolder", _moref("Folder", _VMF)),
+            _change("networkFolder", _moref("Folder", _NETF)),
         ]),
         _object_update("Folder", _VMF, [
             _change("name", _str_val("vm")),
             _change("parent", _moref("Datacenter", _DC)),
             _change("childEntity", _moref_array([("VirtualMachine", m) for m in vm_moids])),
+            _change("childType", _string_array(["Folder", "VirtualMachine", "VirtualApp"])),
         ]),
         _object_update("Folder", _HOSTF, [
             _change("name", _str_val("host")),
             _change("parent", _moref("Datacenter", _DC)),
             _change("childEntity", _moref_array([("ClusterComputeResource", _CLUSTER)])),
+            _change("childType", _string_array(["Folder", "ComputeResource"])),
         ]),
+        # ClusterComputeResource -> name, parent, resourcePool (hosts/VMs link back via their parent)
         _object_update("ClusterComputeResource", _CLUSTER, [
             _change("name", _str_val("Cluster")),
             _change("parent", _moref("Folder", _HOSTF)),
-            _change("host", _moref_array([("HostSystem", h) for h in _HOSTS])),
             _change("resourcePool", _moref("ResourcePool", _RP)),
         ]),
+        # ResourcePool -> name, parent
         _object_update("ResourcePool", _RP, [
             _change("name", _str_val("Resources")),
             _change("parent", _moref("ClusterComputeResource", _CLUSTER)),
-            _change("vm", _moref_array([("VirtualMachine", m) for m in vm_moids])),
         ]),
     ]
+    # HostSystem -> name, parent
     for i, host in enumerate(_HOSTS):
         objs.append(_object_update("HostSystem", host, [
             _change("name", _str_val(f"esxi-0{i + 1}.lab.local")),
             _change("parent", _moref("ClusterComputeResource", _CLUSTER)),
         ]))
+    # VirtualMachine -> name, parent, resourcePool, config.instanceUuid, config.annotation, guest.ipAddress
     for i, vm in enumerate(vms):
         moid = vm_moids[i]
-        power = vm.get("power") or "poweredOn"
-        ip = vm.get("ip") or ""
         name = vm.get("name") or moid
-        guest_os = vm.get("guest_os") or "otherGuest"
+        ip = vm.get("ip") or ""
         changes = [
             _change("name", _str_val(name)),
             _change("parent", _moref("Folder", _VMF)),
-            _change("runtime.powerState", f'<val xsi:type="VirtualMachinePowerState">{power}</val>'),
-            _change("runtime.host", _moref("HostSystem", _HOSTS[i % len(_HOSTS)])),
+            _change("resourcePool", _moref("ResourcePool", _RP)),
             _change("config.instanceUuid", _str_val(str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{name}-iu")))),
-            _change("config.uuid", _str_val(str(uuid.uuid5(uuid.NAMESPACE_DNS, name)))),
-            _change("config.guestFullName", _str_val(guest_os)),
-            _change("guest.hostName", _str_val(name)),
-            _change("guest.guestState", _str_val("running" if power == "poweredOn" else "notRunning")),
+            _change("config.annotation", _str_val(vm.get("notes") or "")),
         ]
         if ip:
             changes.append(_change("guest.ipAddress", _str_val(ip)))
@@ -311,8 +324,8 @@ def _inventory_version(dc) -> str:
     would freeze the inventory forever; deriving the token from the data avoids that and also makes
     edits to the datacenter re-sync automatically.)"""
     vms = _vms(dc)
-    seed = "|".join(f"{v.get('name')}={v.get('ip')}:{v.get('power')}:{','.join(v.get('tags') or [])}"
-                    for v in vms)
+    seed = _SCHEMA_VERSION + "|" + "|".join(
+        f"{v.get('name')}={v.get('ip')}:{v.get('power')}:{','.join(v.get('tags') or [])}" for v in vms)
     return "dcsim-" + uuid.uuid5(uuid.NAMESPACE_DNS, seed).hex[:12]
 
 
