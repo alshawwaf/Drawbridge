@@ -207,32 +207,104 @@ def void_response(method: str) -> str:
     return envelope(f'<{method}Response xmlns="{VIM_NS}"/>')
 
 
-def _vm_changeset(vm: dict, index: int) -> str:
-    """A VirtualMachine 'enter' object update — its properties as assign change-sets."""
-    moid = f"vm-{index}"
-    power = vm.get("power") or "poweredOn"
-    ip = vm.get("ip") or ""
-    name = vm.get("name") or moid
-    guest_os = vm.get("guest_os") or "otherGuest"
-    props = [
-        ("name", "xsd:string", name),
-        ("runtime.powerState", "VirtualMachinePowerState", power),
-        ("guest.ipAddress", "xsd:string", ip),
-        ("guest.hostName", "xsd:string", name),
-        ("guest.guestState", "xsd:string", "running" if power == "poweredOn" else "notRunning"),
-        ("config.guestFullName", "xsd:string", guest_os),
-        ("config.instanceUuid", "xsd:string", str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{name}-iu"))),
-        ("config.uuid", "xsd:string", str(uuid.uuid5(uuid.NAMESPACE_DNS, name))),
+# Stable managed-object ids for the synthesized inventory containers (real-vCenter naming style).
+_ROOT, _DC, _VMF, _HOSTF = "group-d1", "datacenter-2", "group-v22", "group-h4"
+_CLUSTER, _RP = "domain-c7", "resgroup-8"
+_HOSTS = ["host-13", "host-14"]
+
+
+def _moref(motype: str, moid: str) -> str:
+    return f'<val xsi:type="ManagedObjectReference" type="{motype}">{moid}</val>'
+
+
+def _moref_array(refs: list[tuple[str, str]]) -> str:
+    items = "".join(f'<ManagedObjectReference type="{t}">{m}</ManagedObjectReference>' for t, m in refs)
+    return f'<val xsi:type="ArrayOfManagedObjectReference">{items}</val>'
+
+
+def _str_val(text: str) -> str:
+    return f'<val xsi:type="xsd:string">{_esc(text)}</val>'
+
+
+def _change(name: str, val_xml: str) -> str:
+    return f"<changeSet><name>{name}</name><op>assign</op>{val_xml}</changeSet>"
+
+
+def _object_update(motype: str, moid: str, changes: list[str]) -> str:
+    return (f'<objectSet><kind>enter</kind><obj type="{motype}">{moid}</obj>'
+            f'{"".join(changes)}</objectSet>')
+
+
+def inventory_object_updates(dc) -> list[str]:
+    """The full vCenter inventory as PropertyCollector 'enter' object updates, so CloudGuard builds
+    the whole tree (Datacenter -> vm/host folders -> Cluster -> Hosts/ResourcePool -> VMs), not just
+    a flat VM list. Containers are synthesized around the portal-defined VMs; parent/child refs make
+    the tree navigable."""
+    vms = _vms(dc)
+    vm_moids = [f"vm-{i + 1}" for i in range(len(vms))]
+    objs = [
+        _object_update("Folder", _ROOT, [
+            _change("name", _str_val("Datacenters")),
+            _change("childEntity", _moref_array([("Datacenter", _DC)])),
+        ]),
+        _object_update("Datacenter", _DC, [
+            _change("name", _str_val("Datacenter")),
+            _change("parent", _moref("Folder", _ROOT)),
+            _change("vmFolder", _moref("Folder", _VMF)),
+            _change("hostFolder", _moref("Folder", _HOSTF)),
+        ]),
+        _object_update("Folder", _VMF, [
+            _change("name", _str_val("vm")),
+            _change("parent", _moref("Datacenter", _DC)),
+            _change("childEntity", _moref_array([("VirtualMachine", m) for m in vm_moids])),
+        ]),
+        _object_update("Folder", _HOSTF, [
+            _change("name", _str_val("host")),
+            _change("parent", _moref("Datacenter", _DC)),
+            _change("childEntity", _moref_array([("ClusterComputeResource", _CLUSTER)])),
+        ]),
+        _object_update("ClusterComputeResource", _CLUSTER, [
+            _change("name", _str_val("Cluster")),
+            _change("parent", _moref("Folder", _HOSTF)),
+            _change("host", _moref_array([("HostSystem", h) for h in _HOSTS])),
+            _change("resourcePool", _moref("ResourcePool", _RP)),
+        ]),
+        _object_update("ResourcePool", _RP, [
+            _change("name", _str_val("Resources")),
+            _change("parent", _moref("ClusterComputeResource", _CLUSTER)),
+            _change("vm", _moref_array([("VirtualMachine", m) for m in vm_moids])),
+        ]),
     ]
-    changes = "".join(
-        f'<changeSet><name>{n}</name><op>assign</op><val xsi:type="{t}">{_esc(v)}</val></changeSet>'
-        for n, t, v in props if v != ""
-    )
-    return f'<objectSet><kind>enter</kind><obj type="VirtualMachine">{moid}</obj>{changes}</objectSet>'
+    for i, host in enumerate(_HOSTS):
+        objs.append(_object_update("HostSystem", host, [
+            _change("name", _str_val(f"esxi-0{i + 1}.lab.local")),
+            _change("parent", _moref("ClusterComputeResource", _CLUSTER)),
+        ]))
+    for i, vm in enumerate(vms):
+        moid = vm_moids[i]
+        power = vm.get("power") or "poweredOn"
+        ip = vm.get("ip") or ""
+        name = vm.get("name") or moid
+        guest_os = vm.get("guest_os") or "otherGuest"
+        changes = [
+            _change("name", _str_val(name)),
+            _change("parent", _moref("Folder", _VMF)),
+            _change("runtime.powerState", f'<val xsi:type="VirtualMachinePowerState">{power}</val>'),
+            _change("runtime.host", _moref("HostSystem", _HOSTS[i % len(_HOSTS)])),
+            _change("config.instanceUuid", _str_val(str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{name}-iu")))),
+            _change("config.uuid", _str_val(str(uuid.uuid5(uuid.NAMESPACE_DNS, name)))),
+            _change("config.guestFullName", _str_val(guest_os)),
+            _change("guest.hostName", _str_val(name)),
+            _change("guest.guestState", _str_val("running" if power == "poweredOn" else "notRunning")),
+        ]
+        if ip:
+            changes.append(_change("guest.ipAddress", _str_val(ip)))
+        objs.append(_object_update("VirtualMachine", moid, changes))
+    return objs
 
 
 def wait_for_updates(dc, body, *, ex: bool) -> str:
-    """WaitForUpdates[Ex] — first call (empty version) returns the full VM set as 'enter' updates;
+    """WaitForUpdates[Ex] — first call (empty version) returns the full inventory as 'enter' updates;
     once a version is held, report no further changes so the client stops polling."""
     text = body.decode("utf-8", "replace") if isinstance(body, (bytes, bytearray)) else (body or "")
     m = re.search(r"<version>(.*?)</version>", text, re.S)
@@ -241,9 +313,8 @@ def wait_for_updates(dc, body, *, ex: bool) -> str:
     if version:  # initial state already delivered -> no further updates
         return envelope(f'<{resp} xmlns="{VIM_NS}"><returnval><version>{version}</version>'
                         f'<truncated>false</truncated></returnval></{resp}>')
-    objects = "".join(_vm_changeset(vm, i + 1) for i, vm in enumerate(_vms(dc)))
-    filter_set = (f'<filterSet><filter type="PropertyFilter">{_FILTER}</filter>{objects}</filterSet>'
-                  if objects else "")
+    objects = "".join(inventory_object_updates(dc))
+    filter_set = f'<filterSet><filter type="PropertyFilter">{_FILTER}</filter>{objects}</filterSet>'
     return envelope(f'<{resp} xmlns="{VIM_NS}"><returnval><version>1</version>{filter_set}'
                     f'<truncated>false</truncated></returnval></{resp}>')
 

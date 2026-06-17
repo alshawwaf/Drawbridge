@@ -72,15 +72,23 @@ def test_retrieve_properties_enumerates_every_vm():
     assert "poweredOn" in xml and "poweredOff" in xml
 
 
-def test_propertycollector_workflow_enumerates_vms():
+def test_propertycollector_workflow_enumerates_full_inventory():
     # CloudGuard's real path: CreateContainerView -> CreateFilter -> WaitForUpdatesEx.
     assert 'type="ContainerView"' in vsphere.handle(DC, "CreateContainerView", b"<x/>")[0]
     assert 'type="PropertyFilter"' in vsphere.handle(DC, "CreateFilter", b"<x/>")[0]
-    # first WaitForUpdatesEx (no version) -> every VM as an 'enter' object update
+    # first WaitForUpdatesEx (no version) -> the FULL inventory tree, not just VMs
     xml, status, _ = vsphere.handle(DC, "WaitForUpdatesEx", b"<WaitForUpdatesEx></WaitForUpdatesEx>")
-    assert status == 200 and xml.count("<kind>enter</kind>") == 2
+    assert status == 200
+    for motype in ("Datacenter", "Folder", "ClusterComputeResource", "HostSystem",
+                   "ResourcePool", "VirtualMachine"):
+        assert f'type="{motype}"' in xml, motype
+    # containers + 2 hosts + 2 vms all arrive as 'enter' updates
+    assert xml.count("<kind>enter</kind>") == 10
+    # VMs carry name/IP/power and are parented under the vm folder; tree refs present
     assert 'type="VirtualMachine">vm-1' in xml and "web-1" in xml and "10.0.0.11" in xml
     assert "poweredOn" in xml and "poweredOff" in xml
+    assert "<name>vmFolder</name>" in xml and "<name>childEntity</name>" in xml
+    assert "ArrayOfManagedObjectReference" in xml
     # subsequent call (version held) -> no further updates, so the client stops polling
     again = vsphere.handle(DC, "WaitForUpdatesEx", b"<WaitForUpdatesEx><version>1</version></WaitForUpdatesEx>")[0]
     assert "<kind>enter</kind>" not in again
