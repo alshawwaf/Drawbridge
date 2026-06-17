@@ -303,19 +303,34 @@ def inventory_object_updates(dc) -> list[str]:
     return objs
 
 
+def _inventory_version(dc) -> str:
+    """A token for the CURRENT inventory state. We return it as the WaitForUpdates version; the
+    client echoes it back, and only when it matches do we report no changes. Crucially, ANY other
+    version — an empty first call, OR a version the controller cached from a prior sync — triggers a
+    full re-delivery. (CloudGuard caches the last version per host and reuses it, so a fixed '1'
+    would freeze the inventory forever; deriving the token from the data avoids that and also makes
+    edits to the datacenter re-sync automatically.)"""
+    vms = _vms(dc)
+    seed = "|".join(f"{v.get('name')}={v.get('ip')}:{v.get('power')}:{','.join(v.get('tags') or [])}"
+                    for v in vms)
+    return "dcsim-" + uuid.uuid5(uuid.NAMESPACE_DNS, seed).hex[:12]
+
+
 def wait_for_updates(dc, body, *, ex: bool) -> str:
-    """WaitForUpdates[Ex] — first call (empty version) returns the full inventory as 'enter' updates;
-    once a version is held, report no further changes so the client stops polling."""
+    """WaitForUpdates[Ex] — deliver the full inventory as 'enter' updates whenever the client's
+    version doesn't match the current inventory token (so a stale/cached version still gets the
+    objects); once the client echoes our token, report no further changes."""
     text = body.decode("utf-8", "replace") if isinstance(body, (bytes, bytearray)) else (body or "")
     m = re.search(r"<version>(.*?)</version>", text, re.S)
     version = m.group(1).strip() if m else ""
+    current = _inventory_version(dc)
     resp = "WaitForUpdatesExResponse" if ex else "WaitForUpdatesResponse"
-    if version:  # initial state already delivered -> no further updates
-        return envelope(f'<{resp} xmlns="{VIM_NS}"><returnval><version>{version}</version>'
+    if version == current:  # client already holds the current inventory -> no changes
+        return envelope(f'<{resp} xmlns="{VIM_NS}"><returnval><version>{current}</version>'
                         f'<truncated>false</truncated></returnval></{resp}>')
     objects = "".join(inventory_object_updates(dc))
     filter_set = f'<filterSet><filter type="PropertyFilter">{_FILTER}</filter>{objects}</filterSet>'
-    return envelope(f'<{resp} xmlns="{VIM_NS}"><returnval><version>1</version>{filter_set}'
+    return envelope(f'<{resp} xmlns="{VIM_NS}"><returnval><version>{current}</version>{filter_set}'
                     f'<truncated>false</truncated></returnval></{resp}>')
 
 

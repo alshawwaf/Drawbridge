@@ -1,4 +1,6 @@
 """vCenter SOAP mock: method parsing, dispatch, VM enumeration, auth, and password redaction."""
+import re
+
 from app.middleware import _kind, _parse_request, _soap_op
 from app.routers.datacenters import parse_vms
 from app.security import hash_password
@@ -89,9 +91,14 @@ def test_propertycollector_workflow_enumerates_full_inventory():
     assert "poweredOn" in xml and "poweredOff" in xml
     assert "<name>vmFolder</name>" in xml and "<name>childEntity</name>" in xml
     assert "ArrayOfManagedObjectReference" in xml
-    # subsequent call (version held) -> no further updates, so the client stops polling
-    again = vsphere.handle(DC, "WaitForUpdatesEx", b"<WaitForUpdatesEx><version>1</version></WaitForUpdatesEx>")[0]
-    assert "<kind>enter</kind>" not in again
+    # the mock issues an inventory-derived version token
+    version = re.search(r"<version>(.*?)</version>", xml).group(1)
+    # polling with that exact token -> no further updates, so the client stops re-syncing
+    held = f"<WaitForUpdatesEx><version>{version}</version></WaitForUpdatesEx>".encode()
+    assert "<kind>enter</kind>" not in vsphere.handle(DC, "WaitForUpdatesEx", held)[0]
+    # but a STALE/foreign version (e.g. a cached '1') MUST re-deliver -> VMs always land
+    stale = b"<WaitForUpdatesEx><version>1</version></WaitForUpdatesEx>"
+    assert "<kind>enter</kind>" in vsphere.handle(DC, "WaitForUpdatesEx", stale)[0]
     # cleanup methods are void 200s, not faults
     assert vsphere.handle(DC, "DestroyPropertyFilter", b"<x/>")[1] == 200
 
