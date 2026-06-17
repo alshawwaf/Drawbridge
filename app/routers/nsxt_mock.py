@@ -85,3 +85,64 @@ def fabric_vifs(token: str, request: Request, db: Session = Depends(get_db)):
 def nsxt_other_collection(token: str, rest: str, request: Request, db: Session = Depends(get_db)):
     dc = _dc(db, token)
     return _guard(dc, request) or nsxt.list_result([])
+
+
+# --- Apex (root) routes ---------------------------------------------------------------------
+# The SmartConsole NSX-T "Hostname" field is a bare host; the controller calls /api/... and
+# /policy/... at the root. So we serve those at the root and resolve the single NSX-T datacenter
+# (most-recently created). Explicit paths are declared before the {rest:path} catch-alls.
+def _single_dc(db: Session) -> Datacenter:
+    dc = db.scalar(select(Datacenter).where(Datacenter.provider == "nsxt")
+                   .order_by(Datacenter.created_at.desc()))
+    if dc is None:
+        raise HTTPException(status_code=404, detail="No NSX-T datacenter configured")
+    return dc
+
+
+@router.post("/api/session/create")
+def session_create_apex(request: Request, j_username: str = Form(""), j_password: str = Form(""),
+                        db: Session = Depends(get_db)):
+    dc = _single_dc(db)
+    if not nsxt.auth_ok(dc, j_username, j_password):
+        return JSONResponse(nsxt.forbidden(), status_code=403)
+    resp = Response(status_code=200)
+    resp.set_cookie("JSESSIONID", uuid.uuid4().hex)
+    resp.headers["X-XSRF-TOKEN"] = uuid.uuid4().hex
+    return resp
+
+
+@router.post("/api/session/destroy")
+def session_destroy_apex(db: Session = Depends(get_db)):
+    _single_dc(db)
+    return Response(status_code=200)
+
+
+@router.get("/policy/api/v1/infra/domains/default/groups")
+def list_groups_apex(request: Request, db: Session = Depends(get_db)):
+    dc = _single_dc(db)
+    return _guard(dc, request) or nsxt.groups(dc)
+
+
+@router.get("/policy/api/v1/infra/domains/default/groups/{group_id}/members/virtual-machines")
+def group_members_apex(group_id: str, request: Request, db: Session = Depends(get_db)):
+    dc = _single_dc(db)
+    return _guard(dc, request) or nsxt.group_members(dc, group_id)
+
+
+@router.get("/policy/api/v1/infra/realized-state/virtual-machines")
+def realized_vms_apex(request: Request, db: Session = Depends(get_db)):
+    dc = _single_dc(db)
+    return _guard(dc, request) or nsxt.virtual_machines(dc)
+
+
+@router.get("/api/v1/fabric/vifs")
+def fabric_vifs_apex(request: Request, db: Session = Depends(get_db)):
+    dc = _single_dc(db)
+    return _guard(dc, request) or nsxt.vifs(dc)
+
+
+@router.get("/policy/api/v1/{rest:path}")
+@router.get("/api/v1/{rest:path}")
+def nsxt_other_apex(rest: str, request: Request, db: Session = Depends(get_db)):
+    dc = _single_dc(db)
+    return _guard(dc, request) or nsxt.list_result([])

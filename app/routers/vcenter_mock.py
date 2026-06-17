@@ -48,3 +48,36 @@ async def sdk_soap(token: str, request: Request, db: Session = Depends(get_db)):
     method = vsphere.parse_method(body)
     xml, status, _ = vsphere.handle(dc, method, body)
     return Response(xml, media_type=_XML, status_code=status)
+
+
+# --- Apex (root) routes ---------------------------------------------------------------------
+# The SmartConsole vCenter "Hostname" field is a bare host (no path), and vCenter always connects
+# to https://<host>/sdk. So we serve /sdk at the root and resolve the single vCenter datacenter
+# (most-recently created). One vCenter mock per portal — the apex single-tenant model.
+def _single_dc(db: Session) -> Datacenter:
+    dc = db.scalar(select(Datacenter).where(Datacenter.provider == "vcenter")
+                   .order_by(Datacenter.created_at.desc()))
+    if dc is None:
+        raise HTTPException(status_code=404, detail="No vCenter datacenter configured")
+    return dc
+
+
+@router.get("/sdk/vimServiceVersions.xml")
+def vim_versions_apex(db: Session = Depends(get_db)):
+    _single_dc(db)
+    return Response(vsphere.VIM_SERVICE_VERSIONS, media_type="text/xml")
+
+
+@router.get("/sdk")
+def sdk_probe_apex(db: Session = Depends(get_db)):
+    _single_dc(db)
+    return Response(vsphere.VIM_SERVICE_VERSIONS, media_type="text/xml")
+
+
+@router.post("/sdk")
+async def sdk_soap_apex(request: Request, db: Session = Depends(get_db)):
+    dc = _single_dc(db)
+    body = await request.body()
+    method = vsphere.parse_method(body)
+    xml, status, _ = vsphere.handle(dc, method, body)
+    return Response(xml, media_type=_XML, status_code=status)
