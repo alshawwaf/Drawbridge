@@ -86,11 +86,17 @@ def test_propertycollector_workflow_enumerates_full_inventory():
         assert f'type="{motype}"' in xml, motype
     # containers + 2 hosts + 2 vms all arrive as 'enter' updates
     assert xml.count("<kind>enter</kind>") == 10
-    # VMs carry name/IP/power and are parented under the vm folder; tree refs present
+    # VMs carry name/IP and are parented under the vm folder; tree refs present
     assert 'type="VirtualMachine">vm-1' in xml and "web-1" in xml and "10.0.0.11" in xml
-    assert "poweredOn" in xml and "poweredOff" in xml
     assert "<name>vmFolder</name>" in xml and "<name>childEntity</name>" in xml
     assert "ArrayOfManagedObjectReference" in xml
+    # the property set mirrors CloudGuard's CreateFilter propSet EXACTLY (all=false):
+    # the requested ones are present...
+    for prop in ("guest.ipAddress", "config.instanceUuid", "childType", "networkFolder", "hostFolder"):
+        assert f"<name>{prop}</name>" in xml, prop
+    # ...and properties it did NOT request are absent (extras make the strict client drop objects)
+    for extra in ("runtime.powerState", "config.uuid", "guest.hostName", "config.guestFullName"):
+        assert extra not in xml, extra
     # the mock issues an inventory-derived version token
     version = re.search(r"<version>(.*?)</version>", xml).group(1)
     # polling with that exact token -> no further updates, so the client stops re-syncing
