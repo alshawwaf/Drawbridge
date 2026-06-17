@@ -1,6 +1,7 @@
-"""vCenter SOAP mock: method parsing, dispatch, VM enumeration, and password redaction."""
+"""vCenter SOAP mock: method parsing, dispatch, VM enumeration, auth, and password redaction."""
 from app.middleware import _kind, _parse_request
 from app.routers.datacenters import parse_vms
+from app.security import hash_password
 from app.services import vsphere
 
 
@@ -38,6 +39,21 @@ def test_login_returns_session_and_never_echoes_password():
     xml, status, _ = vsphere.handle(DC, "Login", body)
     assert status == 200 and "<userName>admin</userName>" in xml and "<key>" in xml
     assert "s3cret" not in xml
+
+
+def test_login_rejects_wrong_credentials_when_configured():
+    dc = _DC("tok-auth", {"vms": [], "auth": {"username": "admin", "password_hash": hash_password("Cpwins!1")}})
+    good = '<Body><Login xmlns="urn:vim25"><userName>admin</userName><password>Cpwins!1</password></Login></Body>'
+    bad = '<Body><Login xmlns="urn:vim25"><userName>admin</userName><password>nope</password></Login></Body>'
+    assert vsphere.handle(dc, "Login", good)[1] == 200
+    xml, status, _ = vsphere.handle(dc, "Login", bad)
+    assert status == 500 and "InvalidLogin" in xml          # real vCenter fault on bad creds
+
+
+def test_login_permissive_without_configured_credentials():
+    body = '<Body><Login xmlns="urn:vim25"><userName>x</userName><password>y</password></Login></Body>'
+    xml, status, _ = vsphere.handle(DC, "Login", body)       # DC has no auth -> open lab
+    assert status == 200 and "LoginResponse" in xml
 
 
 def test_retrieve_properties_enumerates_every_vm():

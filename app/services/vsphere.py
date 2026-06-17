@@ -18,6 +18,8 @@ import datetime as dt
 import re
 import uuid
 
+from ..security import verify_password
+
 VIM_NS = "urn:vim25"
 
 _ENVELOPE = (
@@ -103,6 +105,30 @@ def login_response(user: str) -> str:
     return envelope(inner)
 
 
+def _unescape(s: str) -> str:
+    return (s.replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", '"')
+            .replace("&apos;", "'").replace("&amp;", "&"))
+
+
+def auth_ok(dc, username: str, password: str) -> bool:
+    """Validate the SOAP Login credentials against the datacenter's configured ones; permissive
+    if none are configured."""
+    cfg = (dc.content or {}).get("auth") or {}
+    if not cfg.get("password_hash"):
+        return True
+    return username == cfg.get("username") and verify_password(password, cfg["password_hash"])
+
+
+def login_fault() -> str:
+    """vSphere InvalidLogin fault — what real vCenter returns for bad credentials."""
+    inner = ('<soapenv:Fault><faultcode>ServerFaultCode</faultcode>'
+             '<faultstring>Cannot complete login due to an incorrect user name or password.'
+             '</faultstring><detail>'
+             f'<InvalidLoginFault xmlns="{VIM_NS}" xsi:type="InvalidLogin"/></detail>'
+             '</soapenv:Fault>')
+    return envelope(inner)
+
+
 def logout_response() -> str:
     return envelope(f'<LogoutResponse xmlns="{VIM_NS}"/>')
 
@@ -176,6 +202,10 @@ def handle(dc, method: str, body) -> tuple[str, int, str]:
         text = body.decode("utf-8", "replace") if isinstance(body, (bytes, bytearray)) else (body or "")
         m = re.search(r"<userName>(.*?)</userName>", text, re.S)
         user = (m.group(1).strip() if m else "administrator@vsphere.local")
+        pm = re.search(r"<password>(.*?)</password>", text, re.S)
+        password = _unescape(pm.group(1)) if pm else ""
+        if not auth_ok(dc, user, password):   # wrong creds -> real vCenter InvalidLogin fault
+            return login_fault(), 500, method
         return login_response(user), 200, method
     if method == "Logout":
         return logout_response(), 200, method
