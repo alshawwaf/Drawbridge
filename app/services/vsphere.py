@@ -215,7 +215,7 @@ _CLUSTER, _RP = "domain-c7", "resgroup-8"
 _HOSTS = ["host-13", "host-14"]
 # Bump when the WaitForUpdates response SHAPE changes: it feeds the version token, so a bump forces
 # the controller (which caches the last version per host) to re-sync with the new shape.
-_SCHEMA_VERSION = "6"
+_SCHEMA_VERSION = "7"
 
 
 def _moref(motype: str, moid: str) -> str:
@@ -254,15 +254,14 @@ def inventory_object_updates(dc) -> list[str]:
     vms = _vms(dc)
     vm_moids = [f"vm-{i + 1}" for i in range(len(vms))]
     objs = [
-        # Folder -> name, parent, childEntity, childType. The root folder's parent points to an
-        # un-sent super-root: the scanner's fillProperties dereferences `parent` for EVERY object
-        # (NPEs if absent), but stores it lazily, and anchors the tree at ServiceContent.rootFolder
-        # (== group-d1) regardless — so an unresolved parent here is harmless.
+        # Folder -> name, childEntity, childType. The root folder has NO parent (matches real vCenter
+        # MOB: parent=Unset; the scanner handles that). childType values are the FULLY-QUALIFIED vim
+        # type names ("vim.Folder", not "Folder") -- the scanner maps childType strings to VIM types
+        # and NPEs on the bare form, and it processes the root folder first (hence the group-d1 NPE).
         _object_update("Folder", _ROOT, [
             _change("name", _str_val("Datacenters")),
-            _change("parent", _moref("Folder", "group-d0")),
             _change("childEntity", _moref_array([("Datacenter", _DC)])),
-            _change("childType", _string_array(["Folder", "Datacenter"])),
+            _change("childType", _string_array(["vim.Folder", "vim.Datacenter"])),
         ]),
         # Datacenter -> name, parent, hostFolder, vmFolder, networkFolder
         _object_update("Datacenter", _DC, [
@@ -276,13 +275,13 @@ def inventory_object_updates(dc) -> list[str]:
             _change("name", _str_val("vm")),
             _change("parent", _moref("Datacenter", _DC)),
             _change("childEntity", _moref_array([("VirtualMachine", m) for m in vm_moids])),
-            _change("childType", _string_array(["Folder", "VirtualMachine", "VirtualApp"])),
+            _change("childType", _string_array(["vim.Folder", "vim.VirtualMachine", "vim.VirtualApp"])),
         ]),
         _object_update("Folder", _HOSTF, [
             _change("name", _str_val("host")),
             _change("parent", _moref("Datacenter", _DC)),
             _change("childEntity", _moref_array([("ClusterComputeResource", _CLUSTER)])),
-            _change("childType", _string_array(["Folder", "ComputeResource"])),
+            _change("childType", _string_array(["vim.Folder", "vim.ComputeResource"])),
         ]),
         # ClusterComputeResource -> name, parent, resourcePool (hosts/VMs link back via their parent)
         _object_update("ClusterComputeResource", _CLUSTER, [
