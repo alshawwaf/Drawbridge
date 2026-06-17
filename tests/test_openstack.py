@@ -11,9 +11,9 @@ class _DC:
 
 
 DC = _DC("tok123", {
-    "instances": [{"name": "web-1", "ip": "10.0.0.11", "tags": ["web", "prod"]}],
+    "instances": [{"name": "web-1", "ip": "10.0.0.11", "tags": ["web-sg", "prod-sg"]}],
     "subnets": [{"name": "app", "cidr": "10.0.0.0/24"}],
-    "security_groups": [{"name": "web-sg"}],
+    "security_groups": [{"name": "mgmt-sg"}],   # an extra group nobody joins
 })
 
 
@@ -40,7 +40,7 @@ def test_nova_servers_shape():
     server = os_mock.nova_servers(DC)["servers"][0]
     assert server["name"] == "web-1"
     assert server["addresses"]["default-net"][0]["addr"] == "10.0.0.11"  # keyed by network name
-    assert server["tags"] == ["web", "prod"]
+    assert [g["name"] for g in server["security_groups"]] == ["web-sg", "prod-sg"]
 
 
 def test_ports_link_vm_to_a_real_subnet_and_network():
@@ -56,7 +56,19 @@ def test_ports_link_vm_to_a_real_subnet_and_network():
 
 def test_neutron_subnets_and_secgroups():
     assert os_mock.neutron_subnets(DC)["subnets"][0]["cidr"] == "10.0.0.0/24"
-    assert os_mock.neutron_security_groups(DC)["security_groups"][0]["name"] == "web-sg"
+    names = [g["name"] for g in os_mock.neutron_security_groups(DC)["security_groups"]]
+    # explicit (mgmt-sg) + the groups an instance joins (web-sg, prod-sg)
+    assert set(names) == {"mgmt-sg", "web-sg", "prod-sg"}
+
+
+def test_security_groups_resolve_to_member_instances():
+    sgs = {g["name"]: g for g in os_mock.neutron_security_groups(DC)["security_groups"]}
+    port = os_mock.neutron_ports(DC)["ports"][0]            # web-1's port
+    # the port references the SG ids of the groups web-1 joins, so each SG resolves to its IP
+    assert sgs["web-sg"]["id"] in port["security_groups"]
+    assert sgs["prod-sg"]["id"] in port["security_groups"]
+    assert sgs["mgmt-sg"]["id"] not in port["security_groups"]   # empty group, no members
+    assert sgs["web-sg"]["security_group_rules"][0]["direction"] == "egress"
 
 
 def test_neutron_floatingips_is_empty_list_not_404():
