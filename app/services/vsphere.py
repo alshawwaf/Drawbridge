@@ -24,7 +24,8 @@ VIM_NS = "urn:vim25"
 
 _ENVELOPE = (
     '<?xml version="1.0" encoding="UTF-8"?>'
-    '<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"'
+    '<soapenv:Envelope xmlns:soapenc="http://schemas.xmlsoap.org/soap/encoding/"'
+    ' xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"'
     ' xmlns:xsd="http://www.w3.org/2001/XMLSchema"'
     ' xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">'
     "<soapenv:Body>{body}</soapenv:Body></soapenv:Envelope>"
@@ -51,41 +52,40 @@ def envelope(inner: str) -> str:
     return _ENVELOPE.format(body=inner)
 
 
-def _instance_uuid(token: str) -> str:
-    return str(uuid.uuid5(uuid.NAMESPACE_DNS, f"vcenter-{token}"))
-
-
-def service_content(token: str) -> str:
-    """RetrieveServiceContent — the entry point; advertises the managers + 'VirtualCenter' apiType."""
-    inner = f"""<RetrieveServiceContentResponse xmlns="{VIM_NS}"><returnval>
-<rootFolder type="Folder">group-d1</rootFolder>
-<propertyCollector type="PropertyCollector">propertyCollector</propertyCollector>
-<viewManager type="ViewManager">ViewManager</viewManager>
-<about>
-<name>VMware vCenter Server</name>
-<fullName>VMware vCenter Server 8.0.0 build-20519528</fullName>
-<vendor>VMware, Inc.</vendor>
-<version>8.0.0</version>
-<build>20519528</build>
-<localeVersion>INTL</localeVersion>
-<localeBuild>000</localeBuild>
-<osType>linux-x64</osType>
-<productLineId>vpx</productLineId>
-<apiType>VirtualCenter</apiType>
-<apiVersion>8.0.0.0</apiVersion>
-<instanceUuid>{_instance_uuid(token)}</instanceUuid>
-<licenseProductName>VMware VirtualCenter Server</licenseProductName>
-<licenseProductVersion>8.0</licenseProductVersion>
-</about>
-<setting type="OptionManager">VpxSettings</setting>
-<userDirectory type="UserDirectory">UserDirectory</userDirectory>
-<sessionManager type="SessionManager">SessionManager</sessionManager>
-<authorizationManager type="AuthorizationManager">AuthorizationManager</authorizationManager>
-<perfManager type="PerformanceManager">PerfMgr</perfManager>
-<eventManager type="EventManager">EventManager</eventManager>
-<taskManager type="TaskManager">TaskManager</taskManager>
-<searchIndex type="SearchIndex">SearchIndex</searchIndex>
-</returnval></RetrieveServiceContentResponse>"""
+def service_content(token: str = "") -> str:
+    """RetrieveServiceContent — matched byte-for-byte to a real vCenter 8.0.3 ServiceContent
+    (exact manager set, order, and AboutInfo). The vSphere SDK deserializer is element- and
+    order-sensitive, so this mirrors a captured real response rather than an approximation."""
+    inner = (
+        f'<RetrieveServiceContentResponse xmlns="{VIM_NS}"><returnval>'
+        '<rootFolder type="Folder">group-d1</rootFolder>'
+        '<propertyCollector type="PropertyCollector">propertyCollector</propertyCollector>'
+        '<viewManager type="ViewManager">ViewManager</viewManager>'
+        '<about><name>VMware vCenter Server</name>'
+        '<fullName>VMware vCenter Server 8.0.3 build-24022515</fullName>'
+        '<vendor>VMware, Inc.</vendor><version>8.0.3</version><build>24022515</build>'
+        '<localeVersion>INTL</localeVersion><localeBuild>000</localeBuild>'
+        '<osType>linux-x64</osType><productLineId>vpx</productLineId>'
+        '<apiType>VirtualCenter</apiType><apiVersion>8.0.3.0</apiVersion></about>'
+        '<setting type="OptionManager">VpxSettings</setting>'
+        '<userDirectory type="UserDirectory">UserDirectory</userDirectory>'
+        '<sessionManager type="SessionManager">SessionManager</sessionManager>'
+        '<authorizationManager type="AuthorizationManager">AuthorizationManager</authorizationManager>'
+        '<perfManager type="PerformanceManager">PerfMgr</perfManager>'
+        '<scheduledTaskManager type="ScheduledTaskManager">ScheduledTaskManager</scheduledTaskManager>'
+        '<alarmManager type="AlarmManager">AlarmManager</alarmManager>'
+        '<eventManager type="EventManager">EventManager</eventManager>'
+        '<taskManager type="TaskManager">TaskManager</taskManager>'
+        '<extensionManager type="ExtensionManager">ExtensionManager</extensionManager>'
+        '<customizationSpecManager type="CustomizationSpecManager">CustomizationSpecManager</customizationSpecManager>'
+        '<customFieldsManager type="CustomFieldsManager">CustomFieldsManager</customFieldsManager>'
+        '<diagnosticManager type="DiagnosticManager">DiagMgr</diagnosticManager>'
+        '<licenseManager type="LicenseManager">LicenseManager</licenseManager>'
+        '<searchIndex type="SearchIndex">SearchIndex</searchIndex>'
+        '<fileManager type="FileManager">FileManager</fileManager>'
+        '<virtualDiskManager type="VirtualDiskManager">virtualDiskManager</virtualDiskManager>'
+        '</returnval></RetrieveServiceContentResponse>'
+    )
     return envelope(inner)
 
 
