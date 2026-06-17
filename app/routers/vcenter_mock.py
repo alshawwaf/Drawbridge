@@ -6,6 +6,8 @@ with any read-only credentials. Every SOAP request/response is captured in the A
 masking the password), so the exact PropertyCollector calls CloudGuard makes are visible and the
 VM enumeration can be tuned to match.
 """
+import re
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
 from sqlalchemy import select
@@ -18,6 +20,17 @@ from ..services import vsphere
 router = APIRouter(tags=["vcenter-mock"])
 
 _XML = "text/xml; charset=utf-8"
+
+
+def _soap_response(method: str, xml: str, status: int) -> Response:
+    """Wrap a SOAP reply; on Login, set the vmware_soap_session cookie real vCenter sets (later
+    calls echo it back as the session credential)."""
+    resp = Response(xml, media_type=_XML, status_code=status)
+    if method == "Login" and status == 200:
+        m = re.search(r"<key>(.*?)</key>", xml)
+        if m:
+            resp.set_cookie("vmware_soap_session", m.group(1), httponly=True)
+    return resp
 
 
 def _dc(db: Session, token: str) -> Datacenter:
@@ -47,7 +60,7 @@ async def sdk_soap(token: str, request: Request, db: Session = Depends(get_db)):
     body = await request.body()
     method = vsphere.parse_method(body)
     xml, status, _ = vsphere.handle(dc, method, body)
-    return Response(xml, media_type=_XML, status_code=status)
+    return _soap_response(method, xml, status)
 
 
 # --- Apex (root) routes ---------------------------------------------------------------------
@@ -80,4 +93,4 @@ async def sdk_soap_apex(request: Request, db: Session = Depends(get_db)):
     body = await request.body()
     method = vsphere.parse_method(body)
     xml, status, _ = vsphere.handle(dc, method, body)
-    return Response(xml, media_type=_XML, status_code=status)
+    return _soap_response(method, xml, status)

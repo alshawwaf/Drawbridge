@@ -32,6 +32,9 @@ def test_service_content_advertises_virtualcenter():
     assert status == 200 and method == "RetrieveServiceContent"
     assert "<apiType>VirtualCenter</apiType>" in xml
     assert 'type="SessionManager">SessionManager' in xml
+    # rootSnapshot is NOT a ServiceContent element — its presence broke the strict deserializer
+    assert "rootSnapshot" not in xml
+    assert 'type="SearchIndex">SearchIndex' in xml
 
 
 def test_login_returns_session_and_never_echoes_password():
@@ -39,6 +42,8 @@ def test_login_returns_session_and_never_echoes_password():
     xml, status, _ = vsphere.handle(DC, "Login", body)
     assert status == 200 and "<userName>admin</userName>" in xml and "<key>" in xml
     assert "s3cret" not in xml
+    # UserSession has no optional fields — a strict client needs all of them present
+    assert "<extensionSession>" in xml and "<ipAddress>" in xml and "<callCount>" in xml
 
 
 def test_login_rejects_wrong_credentials_when_configured():
