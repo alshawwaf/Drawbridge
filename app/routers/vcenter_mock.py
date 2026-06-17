@@ -133,9 +133,42 @@ def rest_session_delete(db: Session = Depends(get_db)):
     return Response(status_code=200)
 
 
-# Any other REST call CloudGuard makes (tagging enumeration, etc.) — return an empty value-list
-# so the import doesn't 404-stall. Each call is in the Activity log so specific endpoints (tags)
-# can be modeled with real data next.
+# vCenter tags (vSphere tagging service). CloudGuard reads these so policy can target VMs by tag —
+# the primary reason to add a vCenter Data Center object. Derived from the VMs' tags.
+_TAG = "/rest/com/vmware/cis/tagging"
+
+
+@router.get(_TAG + "/category")
+def rest_tag_categories(db: Session = Depends(get_db)):
+    return JSONResponse({"value": [vsphere.tag_catalog(_single_dc(db))["category"]["id"]]})
+
+
+@router.get(_TAG + "/category/{cid}")
+def rest_tag_category(cid: str, db: Session = Depends(get_db)):
+    return JSONResponse({"value": vsphere.tag_catalog(_single_dc(db))["category"]})
+
+
+@router.get(_TAG + "/tag")
+def rest_tags(db: Session = Depends(get_db)):
+    return JSONResponse({"value": [t["id"] for t in vsphere.tag_catalog(_single_dc(db))["tags"]]})
+
+
+@router.get(_TAG + "/tag/{tid}")
+def rest_tag(tid: str, db: Session = Depends(get_db)):
+    tid = tid[3:] if tid.startswith("id:") else tid
+    tags = vsphere.tag_catalog(_single_dc(db))["tags"]
+    return JSONResponse({"value": next((t for t in tags if t["id"] == tid), {})})
+
+
+@router.api_route(_TAG + "/tag-association/{tid}", methods=["GET", "POST"])
+def rest_tag_association(tid: str, db: Session = Depends(get_db)):
+    tid = tid[3:] if tid.startswith("id:") else tid
+    members = vsphere.tag_catalog(_single_dc(db))["assoc"].get(tid, [])
+    return JSONResponse({"value": [{"id": m, "type": "VirtualMachine"} for m in members]})
+
+
+# Any other REST call CloudGuard makes — return an empty value-list so the import doesn't 404-stall.
+# Each call is in the Activity log so unmodeled endpoints can be filled in from the real traffic.
 @router.api_route("/rest/{rest:path}", methods=["GET", "POST"])
 def rest_other(rest: str, db: Session = Depends(get_db)):
     _single_dc(db)
