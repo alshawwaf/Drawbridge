@@ -31,7 +31,8 @@ The Check Point **Hostname/URL** field decides how a mock is addressed:
 Every datacenter mock must expose **all** the object types CloudGuard imports for that provider, and
 **group-type objects must resolve to member IPs** (vCenter tag → VMs, OpenStack security group →
 instances, NSX-T NS group → VMs). An empty group object reads as a broken integration in a PoV.
-Check the provider's importable types in the R82 admin guide before declaring it done.
+Check the provider's importable types in the **R82.10** admin guide (the deployed version — always
+read the latest, never older) before declaring it done.
 
 ## Shared diagnostics
 
