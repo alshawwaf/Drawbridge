@@ -4,6 +4,7 @@ subnets/security-groups/networks/ports) from a Datacenter's simulated inventory.
 The Keystone catalog points back at the portal's own mock Nova/Neutron endpoints (token-scoped),
 so Check Point follows the catalog exactly as it would against a real OpenStack cloud.
 """
+import ipaddress
 import uuid
 
 from ..security import verify_password
@@ -11,6 +12,27 @@ from ..security import verify_password
 _NS = uuid.UUID("00000000-0000-0000-0000-0000000c0de1")
 _EXPIRES = "2035-01-01T00:00:00.000000Z"
 _ISSUED = "2020-01-01T00:00:00.000000Z"
+_NETWORK_NAME = "default-net"  # the single mock network; VM addresses are keyed by this name
+
+
+def _subnets(dc) -> list[dict]:
+    """The datacenter's subnets as {id, name, cidr} — the canonical ids ports/networks reference."""
+    out = []
+    for i, s in enumerate(dc.content.get("subnets", []) or []):
+        name = s.get("name") or f"subnet-{i + 1}"
+        out.append({"id": _id(dc.token, "subnet", name), "name": name, "cidr": s.get("cidr", "")})
+    return out
+
+
+def _subnet_for_ip(dc, subnets: list[dict], ip: str) -> str:
+    """The id of the subnet whose CIDR contains ip; falls back to the first subnet."""
+    for s in subnets:
+        try:
+            if ip and s["cidr"] and ipaddress.ip_address(ip) in ipaddress.ip_network(s["cidr"], strict=False):
+                return s["id"]
+        except ValueError:
+            continue
+    return subnets[0]["id"] if subnets else _id(dc.token, "subnet", "default")
 
 
 def _id(*parts: str) -> str:
@@ -100,7 +122,7 @@ def nova_servers(dc) -> dict:
         servers.append({
             "id": _id(dc.token, "server", name), "name": name, "status": "ACTIVE",
             "tenant_id": _id(dc.token, "project"), "user_id": _id(dc.token, "user"),
-            "addresses": {"private": addrs},
+            "addresses": {_NETWORK_NAME: addrs},  # keyed by the network name, as real Nova does
             "metadata": inst.get("metadata", {}) or {},
             "tags": inst.get("tags", []) or [],
             "security_groups": [{"name": g} for g in (inst.get("security_groups") or ["default"])],
@@ -111,13 +133,12 @@ def nova_servers(dc) -> dict:
 
 
 def neutron_subnets(dc) -> dict:
+    net_id = _id(dc.token, "network", "default")
     out = []
-    for i, s in enumerate(dc.content.get("subnets", []) or []):
-        name = s.get("name") or f"subnet-{i + 1}"
-        cidr = s.get("cidr", "")
-        out.append({"id": _id(dc.token, "subnet", name), "name": name, "cidr": cidr,
-                    "ip_version": 6 if ":" in cidr else 4, "enable_dhcp": True,
-                    "network_id": _id(dc.token, "network", "default"),
+    for s in _subnets(dc):
+        out.append({"id": s["id"], "name": s["name"], "cidr": s["cidr"],
+                    "ip_version": 6 if ":" in s["cidr"] else 4, "enable_dhcp": True,
+                    "network_id": net_id,
                     "tenant_id": _id(dc.token, "project"), "project_id": _id(dc.token, "project")})
     return {"subnets": out}
 
@@ -150,12 +171,21 @@ def neutron_floatingips(dc) -> dict:
 
 
 def neutron_ports(dc) -> dict:
+    """One port per instance, fully linked: network_id -> the network, fixed_ips.subnet_id -> the
+    real subnet the IP belongs to, device_id -> the server. Without these links the controller
+    can fetch everything (200s) yet never assemble the topology — the 'still initializing' symptom."""
     out = []
-    default_subnet = _id(dc.token, "subnet", "default")
+    subs = _subnets(dc)
+    net_id = _id(dc.token, "network", "default")
     for i, inst in enumerate(dc.content.get("instances", []) or []):
         name = inst.get("name") or f"instance-{i + 1}"
-        out.append({"id": _id(dc.token, "port", name), "name": "", "status": "ACTIVE",
-                    "device_id": _id(dc.token, "server", name),
-                    "fixed_ips": [{"ip_address": ip, "subnet_id": default_subnet} for ip in _ips(inst)],
-                    "tenant_id": _id(dc.token, "project")})
+        fixed = [{"ip_address": ip, "subnet_id": _subnet_for_ip(dc, subs, ip)} for ip in _ips(inst)]
+        out.append({
+            "id": _id(dc.token, "port", name), "name": "", "status": "ACTIVE",
+            "network_id": net_id, "device_id": _id(dc.token, "server", name),
+            "device_owner": "compute:nova", "admin_state_up": True,
+            "mac_address": "fa:16:3e:%02x:%02x:%02x" % (i & 0xff, (i >> 8) & 0xff, (i + 1) & 0xff),
+            "fixed_ips": fixed, "security_groups": [],
+            "tenant_id": _id(dc.token, "project"), "project_id": _id(dc.token, "project"),
+        })
     return {"ports": out}

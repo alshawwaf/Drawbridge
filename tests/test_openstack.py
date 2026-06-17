@@ -39,8 +39,19 @@ def test_keystone_projects_lists_the_scoped_project():
 def test_nova_servers_shape():
     server = os_mock.nova_servers(DC)["servers"][0]
     assert server["name"] == "web-1"
-    assert server["addresses"]["private"][0]["addr"] == "10.0.0.11"
+    assert server["addresses"]["default-net"][0]["addr"] == "10.0.0.11"  # keyed by network name
     assert server["tags"] == ["web", "prod"]
+
+
+def test_ports_link_vm_to_a_real_subnet_and_network():
+    subnet_ids = {s["id"] for s in os_mock.neutron_subnets(DC)["subnets"]}
+    net_id = os_mock.neutron_networks(DC)["networks"][0]["id"]
+    server_id = os_mock.nova_servers(DC)["servers"][0]["id"]
+    port = os_mock.neutron_ports(DC)["ports"][0]
+    assert port["network_id"] == net_id                       # port -> network
+    assert port["device_id"] == server_id                     # port -> VM
+    assert port["fixed_ips"][0]["subnet_id"] in subnet_ids     # -> a REAL subnet (10.0.0.11 in app)
+    assert port["fixed_ips"][0]["ip_address"] == "10.0.0.11"
 
 
 def test_neutron_subnets_and_secgroups():
