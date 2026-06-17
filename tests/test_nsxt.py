@@ -97,3 +97,10 @@ def test_global_groups_use_global_infra_path():
 
 def test_middleware_classifies_global_manager_as_datacenter():
     assert _kind("/global-manager/api/v1/global-infra/domains/default/groups") == "datacenter"
+
+
+def test_domains_lists_the_default_domain():
+    # CloudGuard enumerates /infra/domains before fetching each domain's groups.
+    assert nsxt.domains()["results"] == [{"resource_type": "Domain", "id": "default",
+                                          "display_name": "default", "path": "/infra/domains/default"}]
+    assert nsxt.domains(infra="global-infra")["results"][0]["path"] == "/global-infra/domains/default"
