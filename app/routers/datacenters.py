@@ -113,7 +113,7 @@ def dc_list(request: Request, db: Session = Depends(get_db)):
         c = d.content or {}
         if d.provider == "vcenter":
             summary = f"{len(c.get('vms', []) or [])} VM(s)"
-        elif d.provider == "nsxt":
+        elif d.provider in ("nsxt", "globalnsxt"):
             summary = f"{len(c.get('vms', []) or [])} VM(s) · {len(c.get('groups', []) or [])} group(s)"
         else:
             summary = (f"{len(c.get('instances', []) or [])} instance(s) · "
@@ -247,6 +247,47 @@ def dc_create_nsxt(request: Request, name: str = Form(...), description: str = F
     return RedirectResponse(f"/datacenters/{dc.id}", status_code=303)
 
 
+@router.get("/datacenters/new/globalnsxt", response_class=HTMLResponse)
+def dc_new_globalnsxt(request: Request, db: Session = Depends(get_db)):
+    if get_user_or_none(request, db) is None:
+        return RedirectResponse("/login", status_code=303)
+    return templates.TemplateResponse(request, "dc_new_globalnsxt.html", {"error": None, "form": {
+        "name": "Global-NSX-T-lab", "description": "", "vms_text": DEFAULT_NSXT_VMS,
+        "groups_text": DEFAULT_NSXT_GROUPS, "nsxt_username": "admin",
+    }})
+
+
+@router.post("/datacenters/new/globalnsxt")
+def dc_create_globalnsxt(request: Request, name: str = Form(...), description: str = Form(""),
+                         vms_text: str = Form(""), groups_text: str = Form(""),
+                         nsxt_username: str = Form("admin"), nsxt_password: str = Form(""),
+                         db: Session = Depends(get_db)):
+    user = get_user_or_none(request, db)
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+    try:
+        # Same data model as NSX-T (VMs + NS Groups); the Global Manager just serves it at a
+        # different policy path. parse_instances/parse_nsxt_groups are shared.
+        content = {"vms": parse_instances(vms_text), "groups": parse_nsxt_groups(groups_text)}
+        if not (content["vms"] or content["groups"]):
+            raise ValueError("Add at least one VM or group.")
+        if nsxt_password:
+            content["auth"] = {"username": nsxt_username or "admin",
+                               "password_hash": hash_password(nsxt_password)}
+    except Exception as exc:
+        return templates.TemplateResponse(request, "dc_new_globalnsxt.html", {"error": str(exc), "form": {
+            "name": name, "description": description, "vms_text": vms_text,
+            "groups_text": groups_text, "nsxt_username": nsxt_username,
+        }}, status_code=400)
+    dc = Datacenter(token=new_feed_token(), provider="globalnsxt", name=name,
+                    description=description, content=content, owner_id=user.id)
+    db.add(dc)
+    db.commit()
+    db.refresh(dc)
+    _flash(request, f"Global NSX-T datacenter “{name}” saved.")
+    return RedirectResponse(f"/datacenters/{dc.id}", status_code=303)
+
+
 @router.get("/datacenters/{dc_id}", response_class=HTMLResponse)
 def dc_detail(dc_id: int, request: Request, db: Session = Depends(get_db)):
     user = get_user_or_none(request, db)
@@ -261,7 +302,7 @@ def dc_detail(dc_id: int, request: Request, db: Session = Depends(get_db)):
             "vms": dc.content.get("vms", []) or [], "dc_auth": (dc.content or {}).get("auth") or {},
             "flash": _pop_flash(request),
         })
-    if dc.provider == "nsxt":
+    if dc.provider in ("nsxt", "globalnsxt"):
         return templates.TemplateResponse(request, "dc_detail.html", {
             "dc": dc, "apex_host": apex_host,
             "vms": dc.content.get("vms", []) or [], "groups": dc.content.get("groups", []) or [],

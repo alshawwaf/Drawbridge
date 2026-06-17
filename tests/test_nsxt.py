@@ -82,3 +82,18 @@ def test_parse_nsxt_groups():
 
 def test_middleware_classifies_nsxt_as_datacenter():
     assert _kind("/nsxt/tok/policy/api/v1/infra/domains/default/groups") == "datacenter"
+
+
+# --- Global NSX-T (Global Manager) -----------------------------------------------------------
+
+def test_global_groups_use_global_infra_path():
+    # Local Manager (default) vs Global Manager only differ in the policy path segment.
+    assert nsxt.groups(DC)["results"][0]["path"].startswith("/infra/domains/")
+    g = nsxt.groups(DC, infra="global-infra")["results"][0]
+    assert g["path"] == "/global-infra/domains/default/groups/web-servers"
+    # the rest (membership condition, tags) is identical — same data model
+    assert g["expression"][0]["value"] == "tier|web"
+
+
+def test_middleware_classifies_global_manager_as_datacenter():
+    assert _kind("/global-manager/api/v1/global-infra/domains/default/groups") == "datacenter"
