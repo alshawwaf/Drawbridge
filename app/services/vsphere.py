@@ -230,8 +230,11 @@ VIM_SERVICE_VERSIONS = (
     '<namespaces version="1.0">\n'
     " <namespace>\n"
     "  <name>urn:vim25</name>\n"
-    "  <version>8.0.0.0</version>\n"
+    "  <version>8.0.3.0</version>\n"   # must match ServiceContent's apiVersion
     "  <priorVersions>\n"
+    "   <version>8.0.2.0</version>\n"
+    "   <version>8.0.1.0</version>\n"
+    "   <version>8.0.0.1</version>\n"   # the version CloudGuard's CXF SOAPAction uses
     "   <version>7.0.0.0</version>\n"
     "   <version>6.7.3</version>\n"
     "   <version>6.5</version>\n"
