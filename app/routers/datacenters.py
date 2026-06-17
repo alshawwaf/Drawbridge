@@ -16,9 +16,10 @@ from .ui import _flash, _pop_flash, templates
 
 router = APIRouter(include_in_schema=False)
 
-DEFAULT_INSTANCES = "web-1 = 10.0.0.11 | web, prod\nweb-2 = 10.0.0.12 | web, prod\ndb-1 = 10.0.0.21 | db, prod"
+DEFAULT_INSTANCES = ("web-1 = 10.0.0.11 | web-sg, prod-sg\nweb-2 = 10.0.0.12 | web-sg, prod-sg\n"
+                     "db-1 = 10.0.0.21 | db-sg, prod-sg")
 DEFAULT_SUBNETS = "app-subnet = 10.0.0.0/24"
-DEFAULT_SECGROUPS = "web-sg\ndb-sg"
+DEFAULT_SECGROUPS = "web-sg\ndb-sg\nprod-sg\nmgmt-sg"
 
 
 def _owned(db: Session, dc_id: int, user: User) -> Datacenter:

@@ -45,6 +45,28 @@ def _ips(inst: dict) -> list[str]:
     return [inst["ip"]] if inst.get("ip") else []
 
 
+def _instance_sgs(inst: dict) -> list[str]:
+    """The security-group names an instance belongs to. For OpenStack the instance's '| ...' list IS
+    its security-group membership (CloudGuard imports SGs, not Nova tags), so each SG object resolves
+    to the IPs of its member instances."""
+    return inst.get("security_groups") or inst.get("tags") or []
+
+
+def _secgroup_names(dc) -> list[str]:
+    """Every security group to expose: those explicitly defined, plus any referenced by an instance
+    (so a group an instance joins always exists as an object, and explicit groups can be empty)."""
+    names: list[str] = []
+    for g in (dc.content.get("security_groups") or []):
+        name = (g.get("name") if isinstance(g, dict) else str(g)) or ""
+        if name and name not in names:
+            names.append(name)
+    for inst in (dc.content.get("instances") or []):
+        for name in _instance_sgs(inst):
+            if name and name not in names:
+                names.append(name)
+    return names
+
+
 def keystone_token(dc, base_url: str, *, user: str = "admin", project: str = "demo") -> tuple[str, dict]:
     """Return (X-Subject-Token, response body). Catalog endpoints point at this portal."""
     base = f"{base_url.rstrip('/')}/openstack/{dc.token}"
@@ -125,7 +147,7 @@ def nova_servers(dc) -> dict:
             "addresses": {_NETWORK_NAME: addrs},  # keyed by the network name, as real Nova does
             "metadata": inst.get("metadata", {}) or {},
             "tags": inst.get("tags", []) or [],
-            "security_groups": [{"name": g} for g in (inst.get("security_groups") or ["default"])],
+            "security_groups": [{"name": g} for g in (_instance_sgs(inst) or ["default"])],
             "OS-EXT-AZ:availability_zone": "nova",
             "OS-EXT-STS:vm_state": "active",
         })
@@ -144,14 +166,24 @@ def neutron_subnets(dc) -> dict:
 
 
 def neutron_security_groups(dc) -> dict:
+    """Every security group (explicit + instance-referenced), each with an id that ports/servers
+    reference so CloudGuard resolves the group to its member instances' IPs. A default egress rule
+    is included for realism."""
+    pid = _id(dc.token, "project")
     out = []
-    for i, g in enumerate(dc.content.get("security_groups", []) or []):
-        name = g.get("name") if isinstance(g, dict) else str(g)
-        name = name or f"sg-{i + 1}"
-        out.append({"id": _id(dc.token, "sg", name), "name": name,
-                    "description": (g.get("description", "") if isinstance(g, dict) else ""),
-                    "tenant_id": _id(dc.token, "project"), "project_id": _id(dc.token, "project"),
-                    "security_group_rules": []})
+    for name in _secgroup_names(dc):
+        sid = _id(dc.token, "sg", name)
+        out.append({
+            "id": sid, "name": name, "description": f"{name} security group",
+            "tenant_id": pid, "project_id": pid,
+            "security_group_rules": [
+                {"id": _id(dc.token, "sgr", name, "egress"), "security_group_id": sid,
+                 "direction": "egress", "ethertype": "IPv4", "protocol": None,
+                 "remote_ip_prefix": None, "remote_group_id": None,
+                 "port_range_min": None, "port_range_max": None,
+                 "tenant_id": pid, "project_id": pid},
+            ],
+        })
     return {"security_groups": out}
 
 
@@ -185,7 +217,8 @@ def neutron_ports(dc) -> dict:
             "network_id": net_id, "device_id": _id(dc.token, "server", name),
             "device_owner": "compute:nova", "admin_state_up": True,
             "mac_address": "fa:16:3e:%02x:%02x:%02x" % (i & 0xff, (i >> 8) & 0xff, (i + 1) & 0xff),
-            "fixed_ips": fixed, "security_groups": [],
+            "fixed_ips": fixed,
+            "security_groups": [_id(dc.token, "sg", n) for n in _instance_sgs(inst)],
             "tenant_id": _id(dc.token, "project"), "project_id": _id(dc.token, "project"),
         })
     return {"ports": out}
