@@ -84,16 +84,21 @@ def service_content(token: str) -> str:
 <perfManager type="PerformanceManager">PerfMgr</perfManager>
 <eventManager type="EventManager">EventManager</eventManager>
 <taskManager type="TaskManager">TaskManager</taskManager>
-<customFieldsManager type="CustomFieldsManager">CustomFieldsManager</customFieldsManager>
-<rootSnapshot/>
+<searchIndex type="SearchIndex">SearchIndex</searchIndex>
 </returnval></RetrieveServiceContentResponse>"""
     return envelope(inner)
 
 
-def login_response(user: str) -> str:
+def session_key() -> str:
+    return f"52{uuid.uuid4().hex}"
+
+
+def login_response(user: str, key: str) -> str:
+    # UserSession has NO optional fields — every element below is required (vim25 schema), so a
+    # strict client rejects the response if any is missing. Order matches the WSDL sequence.
     now = _now_iso()
     inner = f"""<LoginResponse xmlns="{VIM_NS}"><returnval>
-<key>52{uuid.uuid4().hex}</key>
+<key>{_esc(key)}</key>
 <userName>{_esc(user)}</userName>
 <fullName>{_esc(user)}</fullName>
 <loginTime>{now}</loginTime>
@@ -101,6 +106,9 @@ def login_response(user: str) -> str:
 <locale>en</locale>
 <messageLocale>en</messageLocale>
 <extensionSession>false</extensionSession>
+<ipAddress>127.0.0.1</ipAddress>
+<userAgent>CloudGuard Controller</userAgent>
+<callCount>0</callCount>
 </returnval></LoginResponse>"""
     return envelope(inner)
 
@@ -206,7 +214,7 @@ def handle(dc, method: str, body) -> tuple[str, int, str]:
         password = _unescape(pm.group(1)) if pm else ""
         if not auth_ok(dc, user, password):   # wrong creds -> real vCenter InvalidLogin fault
             return login_fault(), 500, method
-        return login_response(user), 200, method
+        return login_response(user, session_key()), 200, method
     if method == "Logout":
         return logout_response(), 200, method
     if method == "CurrentTime":
