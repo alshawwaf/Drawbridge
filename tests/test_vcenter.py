@@ -97,14 +97,16 @@ def test_propertycollector_workflow_enumerates_full_inventory():
     # ...and properties it did NOT request are absent (extras make the strict client drop objects)
     for extra in ("runtime.powerState", "config.uuid", "guest.hostName", "config.guestFullName"):
         assert extra not in xml, extra
-    # the mock issues an inventory-derived version token
+    # real vCenter version semantics: the mock issues an inventory-derived token
     version = re.search(r"<version>(.*?)</version>", xml).group(1)
-    # polling with that exact token -> no further updates, so the client stops re-syncing
+    # echoing that exact token -> no further updates (steady state)
     held = f"<WaitForUpdatesEx><version>{version}</version></WaitForUpdatesEx>".encode()
-    assert "<kind>enter</kind>" not in vsphere.handle(DC, "WaitForUpdatesEx", held)[0]
-    # but a STALE/foreign version (e.g. a cached '1') MUST re-deliver -> VMs always land
-    stale = b"<WaitForUpdatesEx><version>1</version></WaitForUpdatesEx>"
-    assert "<kind>enter</kind>" in vsphere.handle(DC, "WaitForUpdatesEx", stale)[0]
+    hx, hs, _ = vsphere.handle(DC, "WaitForUpdatesEx", held)
+    assert hs == 200 and "<kind>enter</kind>" not in hx
+    # a STALE/foreign version (e.g. one cached from a prior collector) -> InvalidCollectorVersion
+    # fault, which makes the controller reset to an empty version for a clean initial sync
+    sx, ss, _ = vsphere.handle(DC, "WaitForUpdatesEx", b"<WaitForUpdatesEx><version>1</version></WaitForUpdatesEx>")
+    assert ss == 500 and "InvalidCollectorVersion" in sx
     # cleanup methods are void 200s, not faults
     assert vsphere.handle(DC, "DestroyPropertyFilter", b"<x/>")[1] == 200
 
