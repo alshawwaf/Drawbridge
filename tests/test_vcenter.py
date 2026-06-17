@@ -89,8 +89,11 @@ def test_propertycollector_workflow_enumerates_full_inventory():
     # children precede parents so the scanner resolves downward refs against already-seen objects
     assert xml.index('<obj type="Datacenter">datacenter-2') < xml.index('<obj type="Folder">group-d1')
     assert xml.index('<obj type="VirtualMachine">vm-1') < xml.index('<obj type="Folder">group-v22')
-    # EVERY object (incl. the root folder) carries a parent — fillProperties NPEs on a missing one
-    assert xml.count("<name>parent</name>") == 10
+    # the root folder has NO parent (matches real vCenter MOB: parent=Unset); the other 9 do
+    assert xml.count("<name>parent</name>") == 9
+    # childType uses fully-qualified vim.* type names (real vCenter form), not bare "Folder"
+    assert "<string>vim.Folder</string>" in xml and "<string>vim.Datacenter</string>" in xml
+    assert "<string>Folder</string>" not in xml
     # VMs carry name/IP and are parented under the vm folder; tree refs present
     assert 'type="VirtualMachine">vm-1' in xml and "web-1" in xml and "10.0.0.11" in xml
     assert "<name>vmFolder</name>" in xml and "<name>childEntity</name>" in xml
