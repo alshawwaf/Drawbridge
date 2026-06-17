@@ -40,9 +40,12 @@ def keystone_version(token: str, db: Session = Depends(get_db)):
 def keystone_auth(token: str, body: dict, db: Session = Depends(get_db)):
     dc = _dc(db, token)
     auth = (body or {}).get("auth", {}) or {}
-    user = (((auth.get("identity") or {}).get("password") or {}).get("user") or {}).get("name", "admin")
-    scope = auth.get("scope") or {}
-    project = (scope.get("project") or {}).get("name", "demo") if isinstance(scope, dict) else "demo"
+    creds = ((auth.get("identity") or {}).get("password") or {}).get("user") or {}
+    user = creds.get("name", "admin")
+    password = creds.get("password", "")
+    if not os_mock.auth_ok(dc, user, password):  # wrong creds -> realistic Keystone 401
+        return JSONResponse(os_mock.keystone_error_401(), status_code=401)
+    project = os_mock.configured_project(dc)
     subject, resp = os_mock.keystone_token(dc, get_settings().base_url, user=user, project=project)
     return JSONResponse(resp, status_code=201, headers={"X-Subject-Token": subject})
 
@@ -52,7 +55,8 @@ def keystone_projects(token: str, db: Session = Depends(get_db),
                       x_auth_token: str | None = Header(default=None)):
     """Projects the token can access — CloudGuard enumerates these after authenticating."""
     _require_token(x_auth_token)
-    return os_mock.keystone_projects(_dc(db, token), get_settings().base_url)
+    dc = _dc(db, token)
+    return os_mock.keystone_projects(dc, get_settings().base_url, project=os_mock.configured_project(dc))
 
 
 @router.get("/openstack/{token}/nova/v2.1/servers/detail")

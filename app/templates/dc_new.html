@@ -22,6 +22,15 @@
   <label>Security groups — one per line</label>
   <textarea name="secgroups_text" style="min-height:80px;" placeholder="web-sg">{{ form.secgroups_text }}</textarea>
 
+  <h2 style="font-size:15px; margin:22px 0 0;">Keystone credentials</h2>
+  <div class="row">
+    <div class="grow"><label>Username</label><input name="os_username" value="{{ form.os_username }}" placeholder="admin"></div>
+    <div class="grow"><label>Project / tenant</label><input name="os_project" value="{{ form.os_project }}" placeholder="demo"></div>
+  </div>
+  <label>Password <span class="muted" style="font-weight:400;">— optional</span></label>
+  <input name="os_password" type="password" autocomplete="new-password" placeholder="Leave blank to accept any password (open lab)">
+  <p class="muted">If set, the mock validates the username + password and returns <code>401 Unauthorized</code> on mismatch — like production OpenStack. The password is stored only as a one-way hash (never in clear). Enter these exact values in the SmartConsole Data Center object.</p>
+
   <div class="row" style="margin-top:18px;">
     <button type="submit">Create datacenter</button>
     <a class="btn secondary" href="/datacenters">Cancel</a>
