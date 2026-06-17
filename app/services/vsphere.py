@@ -215,7 +215,7 @@ _CLUSTER, _RP = "domain-c7", "resgroup-8"
 _HOSTS = ["host-13", "host-14"]
 # Bump when the WaitForUpdates response SHAPE changes: it feeds the version token, so a bump forces
 # the controller (which caches the last version per host) to re-sync with the new shape.
-_SCHEMA_VERSION = "7"
+_SCHEMA_VERSION = "8"
 
 
 def _moref(motype: str, moid: str) -> str:
@@ -223,7 +223,8 @@ def _moref(motype: str, moid: str) -> str:
 
 
 def _moref_array(refs: list[tuple[str, str]]) -> str:
-    items = "".join(f'<ManagedObjectReference type="{t}">{m}</ManagedObjectReference>' for t, m in refs)
+    items = "".join(f'<ManagedObjectReference type="{t}" xsi:type="ManagedObjectReference">{m}'
+                    "</ManagedObjectReference>" for t, m in refs)
     return f'<val xsi:type="ArrayOfManagedObjectReference">{items}</val>'
 
 
@@ -232,12 +233,15 @@ def _str_val(text: str) -> str:
 
 
 def _string_array(values: list[str]) -> str:
-    items = "".join(f"<string>{_esc(v)}</string>" for v in values)
+    items = "".join(f'<string xsi:type="xsd:string">{_esc(v)}</string>' for v in values)
     return f'<val xsi:type="ArrayOfString">{items}</val>'
 
 
-def _change(name: str, val_xml: str) -> str:
-    return f"<changeSet><name>{name}</name><op>assign</op>{val_xml}</changeSet>"
+def _change(name: str, val_xml: str | None = None) -> str:
+    # An UNSET requested property is still reported as a change-set with op=assign and NO <val> --
+    # real vCenter does exactly this, and the scanner's fillProperties NPEs if a requested property's
+    # change-set is missing entirely (this val-less `parent` on the root folder was the group-d1 NPE).
+    return f"<changeSet><name>{name}</name><op>assign</op>{val_xml or ''}</changeSet>"
 
 
 def _object_update(motype: str, moid: str, changes: list[str]) -> str:
@@ -254,14 +258,15 @@ def inventory_object_updates(dc) -> list[str]:
     vms = _vms(dc)
     vm_moids = [f"vm-{i + 1}" for i in range(len(vms))]
     objs = [
-        # Folder -> name, childEntity, childType. The root folder has NO parent (matches real vCenter
-        # MOB: parent=Unset; the scanner handles that). childType values are the FULLY-QUALIFIED vim
-        # type names ("vim.Folder", not "Folder") -- the scanner maps childType strings to VIM types
-        # and NPEs on the bare form, and it processes the root folder first (hence the group-d1 NPE).
+        # Folder -> name, parent, childEntity, childType (the full propSet; every requested property
+        # is sent). The root folder's `parent` is a VAL-LESS change-set (unset) -- captured from a
+        # real vCenter; omitting it was the group-d1 NPE. childType values are BARE ("Folder", not
+        # "vim.Folder" -- the MOB only displays the vim.* form; the wire value is bare).
         _object_update("Folder", _ROOT, [
             _change("name", _str_val("Datacenters")),
+            _change("parent"),
             _change("childEntity", _moref_array([("Datacenter", _DC)])),
-            _change("childType", _string_array(["vim.Folder", "vim.Datacenter"])),
+            _change("childType", _string_array(["Folder", "Datacenter"])),
         ]),
         # Datacenter -> name, parent, hostFolder, vmFolder, networkFolder
         _object_update("Datacenter", _DC, [
@@ -275,13 +280,13 @@ def inventory_object_updates(dc) -> list[str]:
             _change("name", _str_val("vm")),
             _change("parent", _moref("Datacenter", _DC)),
             _change("childEntity", _moref_array([("VirtualMachine", m) for m in vm_moids])),
-            _change("childType", _string_array(["vim.Folder", "vim.VirtualMachine", "vim.VirtualApp"])),
+            _change("childType", _string_array(["Folder", "VirtualMachine", "VirtualApp"])),
         ]),
         _object_update("Folder", _HOSTF, [
             _change("name", _str_val("host")),
             _change("parent", _moref("Datacenter", _DC)),
             _change("childEntity", _moref_array([("ClusterComputeResource", _CLUSTER)])),
-            _change("childType", _string_array(["vim.Folder", "vim.ComputeResource"])),
+            _change("childType", _string_array(["Folder", "ComputeResource"])),
         ]),
         # ClusterComputeResource -> name, parent, resourcePool (hosts/VMs link back via their parent)
         _object_update("ClusterComputeResource", _CLUSTER, [
@@ -301,21 +306,24 @@ def inventory_object_updates(dc) -> list[str]:
             _change("name", _str_val(f"esxi-0{i + 1}.lab.local")),
             _change("parent", _moref("ClusterComputeResource", _CLUSTER)),
         ]))
-    # VirtualMachine -> name, parent, resourcePool, config.instanceUuid, config.annotation, guest.ipAddress
+    # VirtualMachine -> the FULL propSet CloudGuard requests; properties we don't model are still
+    # sent as val-less change-sets (matching real vCenter) so fillProperties never hits a null.
     for i, vm in enumerate(vms):
         moid = vm_moids[i]
         name = vm.get("name") or moid
         ip = vm.get("ip") or ""
-        changes = [
+        objs.append(_object_update("VirtualMachine", moid, [
             _change("name", _str_val(name)),
             _change("parent", _moref("Folder", _VMF)),
-            _change("resourcePool", _moref("ResourcePool", _RP)),
-            _change("config.instanceUuid", _str_val(str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{name}-iu")))),
+            _change("parentVApp"),                                       # not in a vApp -> unset
             _change("config.annotation", _str_val(vm.get("notes") or "")),
-        ]
-        if ip:
-            changes.append(_change("guest.ipAddress", _str_val(ip)))
-        objs.append(_object_update("VirtualMachine", moid, changes))
+            _change("guest.net"),                                        # per-NIC detail not modeled
+            _change("guest.ipAddress", _str_val(ip) if ip else None),
+            _change("resourcePool", _moref("ResourcePool", _RP)),
+            _change("config.managedBy"),                                 # unset
+            _change("config.instanceUuid", _str_val(str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{name}-iu")))),
+            _change("config.tools"),                                     # ToolsConfigInfo not modeled
+        ]))
     # Emit CHILDREN before PARENTS. CloudGuard's scanner resolves downward refs (childEntity,
     # vmFolder, hostFolder, host, resourcePool) eagerly as it fills each object, so a parent that
     # arrives before its children NPEs (it was the root folder group-d1 -> childEntity -> a
