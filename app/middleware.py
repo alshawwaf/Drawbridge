@@ -26,7 +26,7 @@ def _kind(path: str) -> str:
         return "gaia_mock"
     if path.startswith(("/gdc/", "/netfeed/", "/ioc/")):
         return "feed_poll"
-    if path.startswith(("/openstack/", "/vcenter/")):
+    if path.startswith(("/openstack/", "/vcenter/", "/nsxt/")):
         return "datacenter"
     if path.startswith("/api"):
         return "api"

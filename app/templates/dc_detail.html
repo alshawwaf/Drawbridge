@@ -31,6 +31,40 @@
   <h2 style="margin-top:0;">Live calls</h2>
   <p class="muted">Every vSphere SOAP request from CloudGuard is captured in the <a href="/activity?kind=datacenter">Activity log</a> — full request &amp; response, password masked. The mock currently answers version negotiation, <code>RetrieveServiceContent</code>, <code>Login</code>, <code>RetrieveProperties[Ex]</code> (VM enumeration), and <code>Logout</code>.</p>
 </div>
+{% elif dc.provider == 'nsxt' %}
+<div class="row">
+  <div class="grow"><h1>{{ dc.name }} <span class="pill">{{ dc.provider }}</span></h1>
+    <p class="muted">{{ dc.description or "Mock VMware NSX-T Manager (Policy Mode REST API)" }}</p></div>
+  <form method="post" action="/datacenters/{{ dc.id }}/delete">
+    <button class="danger" type="submit" data-confirm="Delete “{{ dc.name }}”? This removes the mock datacenter.">Delete</button>
+  </form>
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0;">Connect from SmartConsole</h2>
+  <p class="muted">Objects → New → More → Cloud → Data Center → <i>VMware NSX-T…</i> (keep <i>Policy Mode</i> on), then enter:</p>
+  <label>Hostname (NSX-T Manager)</label>
+  <div class="row" style="gap:8px; align-items:center; flex-wrap:nowrap;">
+    <span class="copy grow">{{ nsxt_url }}</span>
+    <button class="copybtn" type="button" data-copy="{{ nsxt_url }}">Copy</button>
+  </div>
+  {% if dc_auth and dc_auth.username %}
+  <p class="muted" style="margin-top:10px;">Username <code>{{ dc_auth.username }}</code> · Password <code>(the one you set)</code> — the mock validates these and returns <b>403</b> on anything else. NSX-T role: Auditor or higher. Click <i>Test Connection</i>, then import.</p>
+  {% else %}
+  <p class="muted" style="margin-top:10px;">Username <code>any</code> · Password <code>any</code> — the mock accepts any read-only credentials (no password set). Click <i>Test Connection</i>, then import.</p>
+  {% endif %}
+  <p class="muted"><b>Heads-up:</b> NSX-T is built iteratively. If Test Connection or import isn't fully working yet, every call CloudGuard makes is captured in the <a href="/activity?kind=datacenter">Activity log</a> so the Policy-Mode responses can be tuned to match.</p>
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0;">Groups Check Point will import ({{ groups|length }})</h2>
+  {% for g in groups %}<div class="itemrow"><span class="pill">Group</span> <b>{{ g.name }}</b>{% if g.member_tag %} <span class="muted">members: VMs tagged</span> <span class="pill faint">{{ g.member_tag }}</span>{% endif %} {% for t in g.tags %}<span class="pill ok">{{ t }}</span>{% endfor %}</div>{% else %}<p class="muted">none</p>{% endfor %}
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0;">VMs Check Point will import ({{ vms|length }})</h2>
+  {% for v in vms %}<div class="itemrow"><span class="pill">VM</span> <b>{{ v.name }}</b> <code>{{ v.ip }}</code> {% for t in v.tags %}<span class="pill ok">{{ t }}</span>{% endfor %}</div>{% else %}<p class="muted">none</p>{% endfor %}
+</div>
 {% else %}
 <div class="row">
   <div class="grow"><h1>{{ dc.name }} <span class="pill">{{ dc.provider }}</span></h1>
