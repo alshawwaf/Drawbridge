@@ -1,5 +1,5 @@
 """vCenter SOAP mock: method parsing, dispatch, VM enumeration, auth, and password redaction."""
-from app.middleware import _kind, _parse_request
+from app.middleware import _kind, _parse_request, _soap_op
 from app.routers.datacenters import parse_vms
 from app.security import hash_password
 from app.services import vsphere
@@ -87,6 +87,12 @@ def test_parse_vms_quick_entry():
     assert out[0] == {"name": "web-1", "ip": "10.0.0.11", "tags": ["web", "prod"],
                       "power": "poweredOn", "guest_os": ""}
     assert out[1]["name"] == "db-1" and out[1]["tags"] == []
+
+
+def test_soap_op_labels_sdk_calls():
+    assert _soap_op("/sdk", b'<soap:Envelope><soap:Body><RetrieveServiceContent xmlns="urn:vim25">x') == "RetrieveServiceContent"
+    assert _soap_op("/vcenter/tok/sdk", b"<Body><Login><userName>a</userName>") == "Login"
+    assert _soap_op("/openstack/x/v3/auth/tokens", b"{}") == ""   # non-/sdk -> no SOAP op
 
 
 def test_middleware_classifies_and_redacts_vcenter_soap():
