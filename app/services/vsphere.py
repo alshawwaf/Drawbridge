@@ -248,6 +248,29 @@ def wait_for_updates(dc, body, *, ex: bool) -> str:
                     f'<truncated>false</truncated></returnval></{resp}>')
 
 
+def tag_catalog(dc) -> dict:
+    """vCenter tags derived from the VMs' `tags`, in the vSphere tagging-service shape. One category
+    groups every distinct tag; each tag is associated with the VMs that carry it. VM moids match the
+    WaitForUpdates enumeration (vm-1, vm-2, ...) so CloudGuard links tags to the imported VMs."""
+    vms = _vms(dc)
+    names: list[str] = []
+    for vm in vms:
+        for tag in (vm.get("tags") or []):
+            if tag and tag not in names:
+                names.append(tag)
+    cat_id = ("urn:vmomi:InventoryServiceCategory:"
+              + str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{dc.token}-category")) + ":GLOBAL")
+    category = {"id": cat_id, "name": "CloudGuard", "description": "Tags imported by CloudGuard",
+                "cardinality": "MULTIPLE", "associable_types": ["VirtualMachine"], "used_by": []}
+    tags, assoc = [], {}
+    for name in names:
+        tid = ("urn:vmomi:InventoryServiceTag:"
+               + str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{dc.token}-tag-{name}")) + ":GLOBAL")
+        tags.append({"id": tid, "name": name, "description": "", "category_id": cat_id, "used_by": []})
+        assoc[tid] = [f"vm-{i + 1}" for i, vm in enumerate(vms) if name in (vm.get("tags") or [])]
+    return {"category": category, "tags": tags, "assoc": assoc}
+
+
 def fault(message: str, detail: str = "") -> str:
     """A SOAP fault — used for methods we don't model yet (surfaced in the trace so we can add them)."""
     inner = ("<soapenv:Fault><faultcode>ServerFaultCode</faultcode>"

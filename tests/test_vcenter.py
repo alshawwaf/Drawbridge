@@ -88,6 +88,17 @@ def test_propertycollector_workflow_enumerates_vms():
     assert vsphere.handle(DC, "DestroyPropertyFilter", b"<x/>")[1] == 200
 
 
+def test_tag_catalog_from_vm_tags():
+    cat = vsphere.tag_catalog(DC)
+    assert cat["category"]["name"] == "CloudGuard"
+    assert cat["category"]["associable_types"] == ["VirtualMachine"]
+    names = [t["name"] for t in cat["tags"]]
+    assert names == ["web"]                              # only web-1 carries a tag
+    web = next(t for t in cat["tags"] if t["name"] == "web")
+    assert web["category_id"] == cat["category"]["id"]
+    assert cat["assoc"][web["id"]] == ["vm-1"]           # associated to web-1 (vm-1) only
+
+
 def test_unknown_method_returns_soap_fault():
     xml, status, _ = vsphere.handle(DC, "RebootHost_Task", b"")
     assert status == 500 and "Fault" in xml and "not modelled" in xml
