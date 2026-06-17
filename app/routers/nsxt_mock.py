@@ -71,6 +71,18 @@ def group_members(token: str, group_id: str, request: Request, db: Session = Dep
     return _guard(dc, request) or nsxt.group_members(dc, group_id)
 
 
+@router.get("/nsxt/{token}/policy/api/v1/infra/domains/default/groups/{group_id}/members/ip-addresses")
+def group_member_ips(token: str, group_id: str, request: Request, db: Session = Depends(get_db)):
+    dc = _dc(db, token)
+    return _guard(dc, request) or nsxt.group_member_ips(dc, group_id)
+
+
+@router.get("/nsxt/{token}/policy/api/v1/infra/realized-state/enforcement-points/default/vifs")
+def realized_vifs(token: str, request: Request, db: Session = Depends(get_db)):
+    dc = _dc(db, token)
+    return _guard(dc, request) or nsxt.vifs(dc)
+
+
 @router.get("/nsxt/{token}/policy/api/v1/infra/realized-state/virtual-machines")
 def realized_vms(token: str, request: Request, db: Session = Depends(get_db)):
     dc = _dc(db, token)
@@ -161,6 +173,18 @@ def group_members_apex(group_id: str, request: Request, db: Session = Depends(ge
     return _guard(dc, request) or nsxt.group_members(dc, group_id)
 
 
+@router.get("/policy/api/v1/infra/domains/default/groups/{group_id}/members/ip-addresses")
+def group_member_ips_apex(group_id: str, request: Request, db: Session = Depends(get_db)):
+    dc = _single_dc(db)
+    return _guard(dc, request) or nsxt.group_member_ips(dc, group_id)
+
+
+@router.get("/policy/api/v1/infra/realized-state/enforcement-points/default/vifs")
+def realized_vifs_apex(request: Request, db: Session = Depends(get_db)):
+    dc = _single_dc(db)
+    return _guard(dc, request) or nsxt.vifs(dc)
+
+
 @router.get("/policy/api/v1/infra/realized-state/virtual-machines")
 def realized_vms_apex(request: Request, db: Session = Depends(get_db)):
     dc = _single_dc(db)
@@ -209,6 +233,18 @@ def gm_groups_apex(request: Request, db: Session = Depends(get_db)):
 def gm_group_members_apex(group_id: str, request: Request, db: Session = Depends(get_db)):
     dc = _global_dc(db)
     return _guard(dc, request) or nsxt.group_members(dc, group_id)
+
+
+@router.get(_GM + "/domains/default/groups/{group_id}/members/ip-addresses")
+def gm_group_member_ips_apex(group_id: str, request: Request, db: Session = Depends(get_db)):
+    dc = _global_dc(db)
+    return _guard(dc, request) or nsxt.group_member_ips(dc, group_id)
+
+
+@router.get(_GM + "/realized-state/enforcement-points/default/vifs")
+def gm_realized_vifs_apex(request: Request, db: Session = Depends(get_db)):
+    dc = _global_dc(db)
+    return _guard(dc, request) or nsxt.vifs(dc)
 
 
 @router.get(_GM + "/realized-state/virtual-machines")

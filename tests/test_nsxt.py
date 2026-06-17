@@ -55,6 +55,12 @@ def test_group_members_resolve_by_tag():
     assert members[0]["resource_type"] == "RealizedVirtualMachine"
 
 
+def test_group_member_ips_resolve_to_member_vm_ips():
+    # CloudGuard (Policy Mode) resolves a group to IPs via .../members/ip-addresses, not VMs.
+    assert nsxt.group_member_ips(DC, "web-servers")["results"] == ["10.10.20.5"]  # web-vm-01 only
+    assert nsxt.group_member_ips(DC, "nope")["results"] == []
+
+
 def test_auth_validates_only_when_configured():
     dc = _DC("a", {"vms": [], "auth": {"username": "ops", "password_hash": hash_password("nsx!")}})
     assert nsxt.auth_ok(dc, "ops", "nsx!") is True

@@ -109,6 +109,21 @@ def groups(dc, infra: str = "infra") -> dict:
     return list_result(res)
 
 
+def group_member_ips(dc, group_id: str) -> dict:
+    """Effective member IP ADDRESSES of a group (Policy `.../members/ip-addresses`) — the IPs of the
+    VMs whose tags satisfy the group's membership tag. This is how CloudGuard resolves a group to the
+    IPs it enforces on (it calls this, NOT `.../members/virtual-machines`)."""
+    g = next((x for x in ((dc.content or {}).get("groups", []) or [])
+              if _gid(x.get("name", "")) == group_id), None)
+    ips: list[str] = []
+    if g and g.get("member_tag"):
+        want = _tag(g["member_tag"])
+        for vm in _vms(dc):
+            if any(_tag(t) == want for t in (vm.get("tags") or [])):
+                ips.extend(_ips(vm))
+    return list_result(ips)
+
+
 def group_members(dc, group_id: str) -> dict:
     """Effective VM members of a group — VMs whose tags satisfy the group's membership tag."""
     g = next((x for x in ((dc.content or {}).get("groups", []) or [])
