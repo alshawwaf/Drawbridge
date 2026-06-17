@@ -35,6 +35,16 @@ def _kind(path: str) -> str:
     return "ui"
 
 
+def _soap_op(path: str, raw: bytes) -> str:
+    """vCenter SOAP operation name (first element inside <Body>) for /sdk calls — surfaced in the
+    log so each vSphere call is readable (RetrieveServiceContent / Login / RetrieveProperties...)."""
+    if not (path.endswith("/sdk") and raw):
+        return ""
+    m = re.search(r"<(?:[\w.-]+:)?Body[^>]*>\s*<(?:[\w.-]+:)?([A-Za-z][\w.]*)",
+                  raw.decode("utf-8", "replace"))
+    return m.group(1) if m else ""
+
+
 def _redact_xml(text: str) -> str:
     """Mask <password>…</password> in SOAP/XML bodies (e.g. the vSphere Login call)."""
     return re.sub(r"(<(?:\w+:)?password[^>]*>).*?(</(?:\w+:)?password>)", r"\1***\2", text,
@@ -131,6 +141,8 @@ class ActivityLogMiddleware:
             "response": {"status": resp["status"], "content_type": resp_ct,
                          "body": _parse_response(bytes(resp["body"]), resp_ct)},
         }
-        write_activity(kind=_kind(path), direction="inbound", method=method, path=path,
+        op = _soap_op(path, req_body)
+        disp = f"{path} · {op}" if op else path  # show the SOAP op for /sdk calls
+        write_activity(kind=_kind(path), direction="inbound", method=method, path=disp,
                        source_ip=src, status=resp["status"], duration_ms=ms,
-                       summary=f"{method} {path} → {resp['status']}", detail=detail)
+                       summary=f"{method} {disp} → {resp['status']}", detail=detail)
