@@ -72,6 +72,22 @@ def test_retrieve_properties_enumerates_every_vm():
     assert "poweredOn" in xml and "poweredOff" in xml
 
 
+def test_propertycollector_workflow_enumerates_vms():
+    # CloudGuard's real path: CreateContainerView -> CreateFilter -> WaitForUpdatesEx.
+    assert 'type="ContainerView"' in vsphere.handle(DC, "CreateContainerView", b"<x/>")[0]
+    assert 'type="PropertyFilter"' in vsphere.handle(DC, "CreateFilter", b"<x/>")[0]
+    # first WaitForUpdatesEx (no version) -> every VM as an 'enter' object update
+    xml, status, _ = vsphere.handle(DC, "WaitForUpdatesEx", b"<WaitForUpdatesEx></WaitForUpdatesEx>")
+    assert status == 200 and xml.count("<kind>enter</kind>") == 2
+    assert 'type="VirtualMachine">vm-1' in xml and "web-1" in xml and "10.0.0.11" in xml
+    assert "poweredOn" in xml and "poweredOff" in xml
+    # subsequent call (version held) -> no further updates, so the client stops polling
+    again = vsphere.handle(DC, "WaitForUpdatesEx", b"<WaitForUpdatesEx><version>1</version></WaitForUpdatesEx>")[0]
+    assert "<kind>enter</kind>" not in again
+    # cleanup methods are void 200s, not faults
+    assert vsphere.handle(DC, "DestroyPropertyFilter", b"<x/>")[1] == 200
+
+
 def test_unknown_method_returns_soap_fault():
     xml, status, _ = vsphere.handle(DC, "RebootHost_Task", b"")
     assert status == 500 and "Fault" in xml and "not modelled" in xml
