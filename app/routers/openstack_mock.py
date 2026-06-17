@@ -88,3 +88,21 @@ def neutron_networks(token: str, db: Session = Depends(get_db), x_auth_token: st
 def neutron_ports(token: str, db: Session = Depends(get_db), x_auth_token: str | None = Header(default=None)):
     _require_token(x_auth_token)
     return os_mock.neutron_ports(_dc(db, token))
+
+
+@router.get("/openstack/{token}/neutron/v2.0/floatingips")
+def neutron_floatingips(token: str, db: Session = Depends(get_db), x_auth_token: str | None = Header(default=None)):
+    _require_token(x_auth_token)
+    return os_mock.neutron_floatingips(_dc(db, token))
+
+
+# Declared LAST so the explicit collections above always win. Any other single-segment Neutron
+# collection CloudGuard probes during import (routers, trunks, …) gets an empty, shape-correct
+# list instead of a 404 that would stall enumeration. Each call is still in the Activity log,
+# so you can see what was requested and model it explicitly if a demo needs it.
+@router.get("/openstack/{token}/neutron/v2.0/{resource}")
+def neutron_other_collection(token: str, resource: str, db: Session = Depends(get_db),
+                             x_auth_token: str | None = Header(default=None)):
+    _require_token(x_auth_token)
+    _dc(db, token)
+    return {resource.replace("-", "_"): []}

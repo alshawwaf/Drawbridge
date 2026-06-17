@@ -48,6 +48,10 @@ def test_neutron_subnets_and_secgroups():
     assert os_mock.neutron_security_groups(DC)["security_groups"][0]["name"] == "web-sg"
 
 
+def test_neutron_floatingips_is_empty_list_not_404():
+    assert os_mock.neutron_floatingips(DC) == {"floatingips": []}
+
+
 def test_parse_instances_with_tags():
     out = parse_instances("web-1 = 10.0.0.11 | web, prod\ndb-1 = 10.0.0.21")
     assert out[0] == {"name": "web-1", "ip": "10.0.0.11", "tags": ["web", "prod"]}
