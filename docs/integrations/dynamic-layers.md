@@ -2,7 +2,7 @@
 
 Unlike the feeds and datacenter mocks (which CloudGuard **polls**), this is a **push** model: the
 portal authors an Access Control rulebase and applies it to a gateway's **Gaia API**
-(`set-dynamic-content`, R82) — either a **real gateway**, or the built-in **mock Gaia API** for a
+(`set-dynamic-content`, R82.10) — either a **real gateway**, or the built-in **mock Gaia API** for a
 no-hardware demo with a realistic async task + change summary.
 
 - Builder/apply router: [`app/routers/dynamic_layers.py`](../../app/routers/dynamic_layers.py)
@@ -51,7 +51,7 @@ Long object lists are paginated in the builder (designed for e.g. a customer wit
 
 ## Notes
 
-- The real R82 commands are `set-dynamic-content` (push the layer's content) and
+- The real R82.10 commands are `set-dynamic-content` (push the layer's content) and
   `set/show-dynamic-layer(s)` (manage the layers). See the memory note `gaia-dynamic-layer-api`.
 - This is the one integration where the portal is the **client** (pushing) rather than the server
   (being polled) — useful when a PoV can't expose a pollable URL to the gateway.

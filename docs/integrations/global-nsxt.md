@@ -6,8 +6,9 @@ Groups, VMs, and Tags that span sites — the federated sibling of [NSX-T](nsxt.
 - Service: [`app/services/nsxt.py`](../../app/services/nsxt.py) (shared with NSX-T)
 - Router: [`app/routers/nsxt_mock.py`](../../app/routers/nsxt_mock.py) (`/global-manager/…` routes)
 
-> **Status:** built and unit-tested; pending first validation against a live CloudGuard. Supported on
-> NSX-T **4.1** (Global Manager). Config is unified with NSX-T under the `nsxt.` prefix.
+> **Status:** built and unit-tested; pending first validation against a live CloudGuard. Per the
+> [R82.10 admin guide](https://sc1.checkpoint.com/documents/R82.10/WebAdminGuides/EN/CP_R82.10_CloudGuard_Controller_AdminGuide/Content/Topics-CGRDG/Supported-Data-Centers-VMware.htm),
+> the Global Manager is **NSX-T 4.1 only**; config is unified with NSX-T under the `nsxt.` prefix.
 
 ## How it differs from NSX-T
 
@@ -19,7 +20,7 @@ data model — only the **policy path** changes, plus it adds **Regions**:
 | Session | `/api/session/create` | `/api/session/create` *(shared)* |
 | Groups | `/policy/api/v1/infra/…` | **`/global-manager/api/v1/global-infra/…`** |
 | Group `path` | `/infra/domains/default/groups/<id>` | `/global-infra/domains/default/groups/<id>` |
-| Imports | NS Groups, VMs, Tags | **Regions**, NS Groups, VMs (VIFs optional), Tags |
+| Imports (R82.10) | NS Groups, **VMs**, Tags | **Regions**, NS Groups, **VIFs as IP expressions** (optional) — **no VMs** |
 
 ## Configure in SmartConsole
 
@@ -36,8 +37,10 @@ Apex single-tenant (bare host), like NSX-T — **one Global NSX-T mock per porta
 - `POST /api/session/create` / `destroy` — shared with NSX-T; resolves the most-recent NSX-T-family DC
 - `GET /global-manager/api/v1/global-infra/domains/default/groups` — global NS Groups
 - `GET …/global-infra/domains/default/groups/{id}/members/virtual-machines` — group members (by tag)
-- `GET …/global-infra/realized-state/virtual-machines` — VMs
-- `GET /api/v1/fabric/vifs` — VM IPs (shared)
+- `GET /api/v1/fabric/vifs` — VIFs → IPs (shared; on the GM these are the **IP expressions** that back
+  the groups, since Global NSX-T imports VIFs rather than VM objects)
+- `GET …/global-infra/realized-state/virtual-machines` — served defensively; R82.10 does **not** list
+  VMs among Global NSX-T's imported objects, so CloudGuard may not call it
 - catch-all `GET /global-manager/api/v1/{path}` → empty `ListResult` (so **Regions** and any other GM
   call don't 404-stall before they're modeled)
 
