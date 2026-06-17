@@ -18,8 +18,11 @@
     <span class="copy grow">{{ sdk_url }}</span>
     <button class="copybtn" type="button" data-copy="{{ sdk_url }}">Copy</button>
   </div>
-  <p class="muted" style="margin-top:10px;">Username <code>any</code> · Password <code>any</code> — the mock accepts any read-only credentials. Click <i>Test Connection</i>, then import the VMs.</p>
-  <p class="muted"><b>Heads-up:</b> vCenter speaks SOAP and this mock is being built iteratively. If Test Connection or import isn't fully working yet, every call CloudGuard makes is captured in the Activity log (below) so the responses can be tuned to match.</p>
+  {% if dc_auth and dc_auth.username %}
+  <p class="muted" style="margin-top:10px;">Username <code>{{ dc_auth.username }}</code> · Password <code>(the one you set)</code> — the mock validates these on Login and returns <b>InvalidLogin</b> on anything else. Role: Auditor or higher. Click <i>Test Connection</i>, then import the VMs.</p>
+  {% else %}
+  <p class="muted" style="margin-top:10px;">Username <code>any</code> · Password <code>any</code> — the mock accepts any read-only credentials (no password set). Click <i>Test Connection</i>, then import the VMs.</p>
+  {% endif %}
 </div>
 
 <div class="card">

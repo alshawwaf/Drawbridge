@@ -16,6 +16,13 @@
   <textarea name="vms_text" placeholder="web-1 = 10.0.0.11 | web, prod">{{ form.vms_text }}</textarea>
   <p class="muted">Served as VirtualMachine objects (name, IP, power state, tags) over the vSphere SOAP API. Tags after <code>|</code> become the VM's tags.</p>
 
+  <h2 style="font-size:15px; margin:22px 0 0;">vCenter credentials</h2>
+  <label>Username</label>
+  <input name="vc_username" value="{{ form.vc_username }}" placeholder="administrator@vsphere.local">
+  <label>Password <span class="muted" style="font-weight:400;">— optional</span></label>
+  <input name="vc_password" type="password" autocomplete="new-password" placeholder="Leave blank to accept any read-only credentials (open lab)">
+  <p class="muted">If set, the mock validates the username + password on Login and returns a vSphere <code>InvalidLogin</code> fault on mismatch — like real vCenter. Stored only as a one-way hash. Use the <i>Auditor</i> role or higher.</p>
+
   <div class="row" style="margin-top:18px;">
     <button type="submit">Create datacenter</button>
     <a class="btn secondary" href="/datacenters">Cancel</a>

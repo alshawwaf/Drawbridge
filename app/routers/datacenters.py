@@ -175,13 +175,14 @@ def dc_new_vcenter(request: Request, db: Session = Depends(get_db)):
     if get_user_or_none(request, db) is None:
         return RedirectResponse("/login", status_code=303)
     return templates.TemplateResponse(request, "dc_new_vcenter.html", {"error": None, "form": {
-        "name": "vCenter-lab", "description": "", "vms_text": DEFAULT_VMS,
+        "name": "vCenter-lab", "description": "", "vms_text": DEFAULT_VMS, "vc_username": "administrator@vsphere.local",
     }})
 
 
 @router.post("/datacenters/new/vcenter")
 def dc_create_vcenter(request: Request, name: str = Form(...), description: str = Form(""),
-                      vms_text: str = Form(""), db: Session = Depends(get_db)):
+                      vms_text: str = Form(""), vc_username: str = Form("administrator@vsphere.local"),
+                      vc_password: str = Form(""), db: Session = Depends(get_db)):
     user = get_user_or_none(request, db)
     if user is None:
         return RedirectResponse("/login", status_code=303)
@@ -189,12 +190,16 @@ def dc_create_vcenter(request: Request, name: str = Form(...), description: str 
         vms = parse_vms(vms_text)
         if not vms:
             raise ValueError("Add at least one VM.")
+        content = {"vms": vms}
+        if vc_password:  # validated on the SOAP Login; stored only as a one-way hash
+            content["auth"] = {"username": vc_username or "administrator@vsphere.local",
+                               "password_hash": hash_password(vc_password)}
     except Exception as exc:
         return templates.TemplateResponse(request, "dc_new_vcenter.html", {"error": str(exc), "form": {
-            "name": name, "description": description, "vms_text": vms_text,
+            "name": name, "description": description, "vms_text": vms_text, "vc_username": vc_username,
         }}, status_code=400)
     dc = Datacenter(token=new_feed_token(), provider="vcenter", name=name,
-                    description=description, content={"vms": vms}, owner_id=user.id)
+                    description=description, content=content, owner_id=user.id)
     db.add(dc)
     db.commit()
     db.refresh(dc)
@@ -251,7 +256,8 @@ def dc_detail(dc_id: int, request: Request, db: Session = Depends(get_db)):
     if dc.provider == "vcenter":
         return templates.TemplateResponse(request, "dc_detail.html", {
             "dc": dc, "sdk_url": f"{base}/vcenter/{dc.token}/sdk",
-            "vms": dc.content.get("vms", []) or [], "flash": _pop_flash(request),
+            "vms": dc.content.get("vms", []) or [], "dc_auth": (dc.content or {}).get("auth") or {},
+            "flash": _pop_flash(request),
         })
     if dc.provider == "nsxt":
         return templates.TemplateResponse(request, "dc_detail.html", {
