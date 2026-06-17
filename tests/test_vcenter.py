@@ -89,11 +89,16 @@ def test_propertycollector_workflow_enumerates_full_inventory():
     # children precede parents so the scanner resolves downward refs against already-seen objects
     assert xml.index('<obj type="Datacenter">datacenter-2') < xml.index('<obj type="Folder">group-d1')
     assert xml.index('<obj type="VirtualMachine">vm-1') < xml.index('<obj type="Folder">group-v22')
-    # the root folder has NO parent (matches real vCenter MOB: parent=Unset); the other 9 do
-    assert xml.count("<name>parent</name>") == 9
-    # childType uses fully-qualified vim.* type names (real vCenter form), not bare "Folder"
-    assert "<string>vim.Folder</string>" in xml and "<string>vim.Datacenter</string>" in xml
-    assert "<string>Folder</string>" not in xml
+    # every object sends a `parent` change-set -- incl. the root folder, whose parent is VAL-LESS
+    # (captured from real vCenter; its ABSENCE, not a wrong value, was the group-d1 fillProperties NPE)
+    assert "<changeSet><name>parent</name><op>assign</op></changeSet>" in xml   # root: parent, no val
+    assert xml.count("<name>parent</name>") == 10
+    # childType wire values are BARE (real vCenter; the MOB only DISPLAYS the vim.* form)
+    assert '<string xsi:type="xsd:string">Folder</string>' in xml and "vim.Folder" not in xml
+    # array items carry xsi:type, matching real vCenter's encoding
+    assert 'xsi:type="ManagedObjectReference">datacenter-2' in xml
+    # VMs send their full propSet, including unset props as val-less change-sets
+    assert "<name>parentVApp</name>" in xml and "<name>guest.net</name>" in xml
     # VMs carry name/IP and are parented under the vm folder; tree refs present
     assert 'type="VirtualMachine">vm-1' in xml and "web-1" in xml and "10.0.0.11" in xml
     assert "<name>vmFolder</name>" in xml and "<name>childEntity</name>" in xml
