@@ -53,6 +53,12 @@ def session_destroy(token: str, db: Session = Depends(get_db)):
     return Response(status_code=200)
 
 
+@router.get("/nsxt/{token}/policy/api/v1/infra/domains")
+def list_domains(token: str, request: Request, db: Session = Depends(get_db)):
+    dc = _dc(db, token)
+    return _guard(dc, request) or nsxt.domains()
+
+
 @router.get("/nsxt/{token}/policy/api/v1/infra/domains/default/groups")
 def list_groups(token: str, request: Request, db: Session = Depends(get_db)):
     dc = _dc(db, token)
@@ -137,6 +143,12 @@ def session_destroy_apex(db: Session = Depends(get_db)):
     return Response(status_code=200)
 
 
+@router.get("/policy/api/v1/infra/domains")
+def list_domains_apex(request: Request, db: Session = Depends(get_db)):
+    dc = _single_dc(db)
+    return _guard(dc, request) or nsxt.domains()
+
+
 @router.get("/policy/api/v1/infra/domains/default/groups")
 def list_groups_apex(request: Request, db: Session = Depends(get_db)):
     dc = _single_dc(db)
@@ -179,6 +191,12 @@ def manager_other_apex(rest: str, request: Request, db: Session = Depends(get_db
 # Resolves the most-recent globalnsxt datacenter. Imports: NS Groups (-> member VMs), VMs, Tags;
 # Regions land via the catch-all until the first real-CloudGuard trace shows their exact shape.
 _GM = "/global-manager/api/v1/global-infra"
+
+
+@router.get(_GM + "/domains")
+def gm_domains_apex(request: Request, db: Session = Depends(get_db)):
+    dc = _global_dc(db)
+    return _guard(dc, request) or nsxt.domains(infra="global-infra")
 
 
 @router.get(_GM + "/domains/default/groups")

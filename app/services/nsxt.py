@@ -82,6 +82,15 @@ def vifs(dc) -> dict:
     return list_result(res)
 
 
+def domains(infra: str = "infra") -> dict:
+    """The policy domains list. CloudGuard enumerates domains (`…/infra/domains`) before fetching
+    each domain's groups, so the 'default' domain must be present or no groups are ever discovered."""
+    return list_result([{
+        "resource_type": "Domain", "id": "default", "display_name": "default",
+        "path": f"/{infra}/domains/default",
+    }])
+
+
 def groups(dc, infra: str = "infra") -> dict:
     """NS Groups. ``infra`` is the policy path segment: ``infra`` for a Local Manager (NSX-T) or
     ``global-infra`` for the Global Manager (Global NSX-T) — it only changes the object ``path``."""
