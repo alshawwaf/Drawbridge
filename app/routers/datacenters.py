@@ -253,15 +253,16 @@ def dc_detail(dc_id: int, request: Request, db: Session = Depends(get_db)):
         return RedirectResponse("/login", status_code=303)
     dc = _owned(db, dc_id, user)
     base = get_settings().base_url.rstrip("/")
+    apex_host = base.split("://", 1)[-1]  # bare host SmartConsole enters for vCenter/NSX-T
     if dc.provider == "vcenter":
         return templates.TemplateResponse(request, "dc_detail.html", {
-            "dc": dc, "sdk_url": f"{base}/vcenter/{dc.token}/sdk",
+            "dc": dc, "apex_host": apex_host,
             "vms": dc.content.get("vms", []) or [], "dc_auth": (dc.content or {}).get("auth") or {},
             "flash": _pop_flash(request),
         })
     if dc.provider == "nsxt":
         return templates.TemplateResponse(request, "dc_detail.html", {
-            "dc": dc, "nsxt_url": f"{base}/nsxt/{dc.token}",
+            "dc": dc, "apex_host": apex_host,
             "vms": dc.content.get("vms", []) or [], "groups": dc.content.get("groups", []) or [],
             "dc_auth": (dc.content or {}).get("auth") or {}, "flash": _pop_flash(request),
         })

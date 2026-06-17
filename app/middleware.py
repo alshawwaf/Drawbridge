@@ -26,7 +26,9 @@ def _kind(path: str) -> str:
         return "gaia_mock"
     if path.startswith(("/gdc/", "/netfeed/", "/ioc/")):
         return "feed_poll"
-    if path.startswith(("/openstack/", "/vcenter/", "/nsxt/")):
+    # Datacenter mocks — token-prefixed, plus the apex (bare-host) vCenter/NSX-T endpoints.
+    if (path.startswith(("/openstack/", "/vcenter/", "/nsxt/", "/policy/", "/sdk"))
+            or path.startswith("/api/session") or path.startswith("/api/v1/")):
         return "datacenter"
     if path.startswith("/api"):
         return "api"
