@@ -190,6 +190,64 @@ def retrieve_properties(dc, *, ex: bool) -> str:
     return envelope(inner)
 
 
+# --- PropertyCollector update protocol (how CloudGuard actually enumerates VMs) ------------
+# CloudGuard creates a container view + property filter, then calls WaitForUpdatesEx to receive
+# the inventory as "enter" object updates. (It does NOT use RetrieveProperties.)
+_COLLECTOR = "session[mock]propertyCollector"
+_FILTER = "session[mock]propertyFilter"
+_VIEW = "session[mock]containerView"
+
+
+def _moref_response(method: str, motype: str, moid: str) -> str:
+    return envelope(f'<{method}Response xmlns="{VIM_NS}">'
+                    f'<returnval type="{motype}">{moid}</returnval></{method}Response>')
+
+
+def void_response(method: str) -> str:
+    return envelope(f'<{method}Response xmlns="{VIM_NS}"/>')
+
+
+def _vm_changeset(vm: dict, index: int) -> str:
+    """A VirtualMachine 'enter' object update — its properties as assign change-sets."""
+    moid = f"vm-{index}"
+    power = vm.get("power") or "poweredOn"
+    ip = vm.get("ip") or ""
+    name = vm.get("name") or moid
+    guest_os = vm.get("guest_os") or "otherGuest"
+    props = [
+        ("name", "xsd:string", name),
+        ("runtime.powerState", "VirtualMachinePowerState", power),
+        ("guest.ipAddress", "xsd:string", ip),
+        ("guest.hostName", "xsd:string", name),
+        ("guest.guestState", "xsd:string", "running" if power == "poweredOn" else "notRunning"),
+        ("config.guestFullName", "xsd:string", guest_os),
+        ("config.instanceUuid", "xsd:string", str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{name}-iu"))),
+        ("config.uuid", "xsd:string", str(uuid.uuid5(uuid.NAMESPACE_DNS, name))),
+    ]
+    changes = "".join(
+        f'<changeSet><name>{n}</name><op>assign</op><val xsi:type="{t}">{_esc(v)}</val></changeSet>'
+        for n, t, v in props if v != ""
+    )
+    return f'<objectSet><kind>enter</kind><obj type="VirtualMachine">{moid}</obj>{changes}</objectSet>'
+
+
+def wait_for_updates(dc, body, *, ex: bool) -> str:
+    """WaitForUpdates[Ex] — first call (empty version) returns the full VM set as 'enter' updates;
+    once a version is held, report no further changes so the client stops polling."""
+    text = body.decode("utf-8", "replace") if isinstance(body, (bytes, bytearray)) else (body or "")
+    m = re.search(r"<version>(.*?)</version>", text, re.S)
+    version = m.group(1).strip() if m else ""
+    resp = "WaitForUpdatesExResponse" if ex else "WaitForUpdatesResponse"
+    if version:  # initial state already delivered -> no further updates
+        return envelope(f'<{resp} xmlns="{VIM_NS}"><returnval><version>{version}</version>'
+                        f'<truncated>false</truncated></returnval></{resp}>')
+    objects = "".join(_vm_changeset(vm, i + 1) for i, vm in enumerate(_vms(dc)))
+    filter_set = (f'<filterSet><filter type="PropertyFilter">{_FILTER}</filter>{objects}</filterSet>'
+                  if objects else "")
+    return envelope(f'<{resp} xmlns="{VIM_NS}"><returnval><version>1</version>{filter_set}'
+                    f'<truncated>false</truncated></returnval></{resp}>')
+
+
 def fault(message: str, detail: str = "") -> str:
     """A SOAP fault — used for methods we don't model yet (surfaced in the trace so we can add them)."""
     inner = ("<soapenv:Fault><faultcode>ServerFaultCode</faultcode>"
@@ -221,6 +279,18 @@ def handle(dc, method: str, body) -> tuple[str, int, str]:
         return current_time(), 200, method
     if method in ("RetrieveProperties", "RetrievePropertiesEx"):
         return retrieve_properties(dc, ex=method.endswith("Ex")), 200, method
+    # PropertyCollector update protocol — how CloudGuard actually enumerates VMs.
+    if method == "CreatePropertyCollector":
+        return _moref_response(method, "PropertyCollector", _COLLECTOR), 200, method
+    if method == "CreateContainerView":
+        return _moref_response(method, "ContainerView", _VIEW), 200, method
+    if method == "CreateFilter":
+        return _moref_response(method, "PropertyFilter", _FILTER), 200, method
+    if method in ("WaitForUpdates", "WaitForUpdatesEx"):
+        return wait_for_updates(dc, body, ex=method.endswith("Ex")), 200, method
+    if method in ("DestroyPropertyFilter", "CancelWaitForUpdates",
+                  "DestroyPropertyCollector", "DestroyView"):
+        return void_response(method), 200, method
     # Unknown / not-yet-modelled method: return a fault (logged) so we can see what to add next.
     return fault(f"Method '{method or 'unknown'}' is not modelled by the vCenter mock yet."), 500, method
 
