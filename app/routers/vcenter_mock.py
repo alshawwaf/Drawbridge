@@ -6,10 +6,12 @@ with any read-only credentials. Every SOAP request/response is captured in the A
 masking the password), so the exact PropertyCollector calls CloudGuard makes are visible and the
 VM enumeration can be tuned to match.
 """
+import base64
 import re
+import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import Response
+from fastapi.responses import JSONResponse, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -94,3 +96,47 @@ async def sdk_soap_apex(request: Request, db: Session = Depends(get_db)):
     method = vsphere.parse_method(body)
     xml, status, _ = vsphere.handle(dc, method, body)
     return _soap_response(method, xml, status)
+
+
+# --- vSphere Automation REST API (/rest/com/vmware/...) -------------------------------------
+# CloudGuard authenticates to the REST API (session) in addition to SOAP, and reads vCenter tags
+# through it. Served at the apex like /sdk. Responses use the vSphere 6.5-7.0 {"value": ...} shape.
+def _basic_creds(request: Request) -> tuple[str, str]:
+    h = request.headers.get("authorization", "")
+    if h.lower().startswith("basic "):
+        try:
+            user, _, pwd = base64.b64decode(h[6:]).decode("utf-8").partition(":")
+            return user, pwd
+        except Exception:
+            return "", ""
+    return "", ""
+
+
+def _rest_unauthenticated() -> JSONResponse:
+    return JSONResponse({"type": "com.vmware.vapi.std.errors.unauthenticated",
+                         "value": {"messages": [{"default_message": "Authentication required."}]}},
+                        status_code=401)
+
+
+@router.post("/rest/com/vmware/cis/session")
+def rest_session_create(request: Request, db: Session = Depends(get_db)):
+    dc = _single_dc(db)
+    user, pwd = _basic_creds(request)
+    if not vsphere.auth_ok(dc, user, pwd):
+        return _rest_unauthenticated()
+    return JSONResponse({"value": uuid.uuid4().hex})
+
+
+@router.delete("/rest/com/vmware/cis/session")
+def rest_session_delete(db: Session = Depends(get_db)):
+    _single_dc(db)
+    return Response(status_code=200)
+
+
+# Any other REST call CloudGuard makes (tagging enumeration, etc.) — return an empty value-list
+# so the import doesn't 404-stall. Each call is in the Activity log so specific endpoints (tags)
+# can be modeled with real data next.
+@router.api_route("/rest/{rest:path}", methods=["GET", "POST"])
+def rest_other(rest: str, db: Session = Depends(get_db)):
+    _single_dc(db)
+    return JSONResponse({"value": []})

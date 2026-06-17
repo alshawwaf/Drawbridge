@@ -89,6 +89,19 @@ def test_parse_vms_quick_entry():
     assert out[1]["name"] == "db-1" and out[1]["tags"] == []
 
 
+def test_rest_basic_creds_decoding():
+    import base64
+
+    from app.routers.vcenter_mock import _basic_creds
+
+    class _R:
+        def __init__(self, h):
+            self.headers = {"authorization": h}
+
+    assert _basic_creds(_R("Basic " + base64.b64encode(b"admin:pw!1").decode())) == ("admin", "pw!1")
+    assert _basic_creds(_R("")) == ("", "")
+
+
 def test_soap_op_labels_sdk_calls():
     assert _soap_op("/sdk", b'<soap:Envelope><soap:Body><RetrieveServiceContent xmlns="urn:vim25">x') == "RetrieveServiceContent"
     assert _soap_op("/vcenter/tok/sdk", b"<Body><Login><userName>a</userName>") == "Login"
