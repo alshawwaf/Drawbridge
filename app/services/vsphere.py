@@ -215,7 +215,7 @@ _CLUSTER, _RP = "domain-c7", "resgroup-8"
 _HOSTS = ["host-13", "host-14"]
 # Bump when the WaitForUpdates response SHAPE changes: it feeds the version token, so a bump forces
 # the controller (which caches the last version per host) to re-sync with the new shape.
-_SCHEMA_VERSION = "4"
+_SCHEMA_VERSION = "5"
 
 
 def _moref(motype: str, moid: str) -> str:
@@ -313,7 +313,12 @@ def inventory_object_updates(dc) -> list[str]:
         if ip:
             changes.append(_change("guest.ipAddress", _str_val(ip)))
         objs.append(_object_update("VirtualMachine", moid, changes))
-    return objs
+    # Emit CHILDREN before PARENTS. CloudGuard's scanner resolves downward refs (childEntity,
+    # vmFolder, hostFolder, host, resourcePool) eagerly as it fills each object, so a parent that
+    # arrives before its children NPEs (it was the root folder group-d1 -> childEntity -> a
+    # not-yet-seen Datacenter). Reversed, every downward ref points at an already-received object;
+    # `parent` refs point the other way but aren't traversal paths, so they're resolved lazily.
+    return list(reversed(objs))
 
 
 def _inventory_version(dc) -> str:

@@ -86,6 +86,9 @@ def test_propertycollector_workflow_enumerates_full_inventory():
         assert f'type="{motype}"' in xml, motype
     # containers + 2 hosts + 2 vms all arrive as 'enter' updates
     assert xml.count("<kind>enter</kind>") == 10
+    # children precede parents so the scanner resolves downward refs against already-seen objects
+    assert xml.index('<obj type="Datacenter">datacenter-2') < xml.index('<obj type="Folder">group-d1')
+    assert xml.index('<obj type="VirtualMachine">vm-1') < xml.index('<obj type="Folder">group-v22')
     # VMs carry name/IP and are parented under the vm folder; tree refs present
     assert 'type="VirtualMachine">vm-1' in xml and "web-1" in xml and "10.0.0.11" in xml
     assert "<name>vmFolder</name>" in xml and "<name>childEntity</name>" in xml
