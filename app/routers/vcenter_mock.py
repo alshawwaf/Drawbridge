@@ -42,6 +42,17 @@ def _dc(db: Session, token: str) -> Datacenter:
     return dc
 
 
+def _bump_filter_epoch(db: Session, dc: Datacenter) -> None:
+    """A fresh CreateFilter is a new collector generation: rotate the DC's sync epoch so the inventory
+    version token changes. The controller's next WaitForUpdates carries its OLD cached version, which
+    is now stale -> rejected with InvalidCollectorVersion -> it resets and does a clean initial sync.
+    (Without this, a controller that persists+reuses its version starves the freshly-created filter.)"""
+    content = dict(dc.content or {})
+    content["_vc_epoch"] = uuid.uuid4().hex[:8]
+    dc.content = content
+    db.commit()
+
+
 @router.get("/vcenter/{token}/sdk/vimServiceVersions.xml")
 def vim_service_versions(token: str, db: Session = Depends(get_db)):
     """vSphere clients fetch this first to negotiate the API version."""
@@ -61,6 +72,8 @@ async def sdk_soap(token: str, request: Request, db: Session = Depends(get_db)):
     dc = _dc(db, token)
     body = await request.body()
     method = vsphere.parse_method(body)
+    if method == "CreateFilter":
+        _bump_filter_epoch(db, dc)
     xml, status, _ = vsphere.handle(dc, method, body)
     return _soap_response(method, xml, status)
 
@@ -94,6 +107,8 @@ async def sdk_soap_apex(request: Request, db: Session = Depends(get_db)):
     dc = _single_dc(db)
     body = await request.body()
     method = vsphere.parse_method(body)
+    if method == "CreateFilter":
+        _bump_filter_epoch(db, dc)
     xml, status, _ = vsphere.handle(dc, method, body)
     return _soap_response(method, xml, status)
 

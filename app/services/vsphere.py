@@ -215,7 +215,7 @@ _CLUSTER, _RP = "domain-c7", "resgroup-8"
 _HOSTS = ["host-13", "host-14"]
 # Bump when the WaitForUpdates response SHAPE changes: it feeds the version token, so a bump forces
 # the controller (which caches the last version per host) to re-sync with the new shape.
-_SCHEMA_VERSION = "3"
+_SCHEMA_VERSION = "4"
 
 
 def _moref(motype: str, moid: str) -> str:
@@ -324,27 +324,43 @@ def _inventory_version(dc) -> str:
     would freeze the inventory forever; deriving the token from the data avoids that and also makes
     edits to the datacenter re-sync automatically.)"""
     vms = _vms(dc)
-    seed = _SCHEMA_VERSION + "|" + "|".join(
+    epoch = (dc.content or {}).get("_vc_epoch", "")  # bumped on CreateFilter -> a reconnect re-syncs
+    seed = f"{_SCHEMA_VERSION}|{epoch}|" + "|".join(
         f"{v.get('name')}={v.get('ip')}:{v.get('power')}:{','.join(v.get('tags') or [])}" for v in vms)
     return "dcsim-" + uuid.uuid5(uuid.NAMESPACE_DNS, seed).hex[:12]
 
 
-def wait_for_updates(dc, body, *, ex: bool) -> str:
-    """WaitForUpdates[Ex] — deliver the full inventory as 'enter' updates whenever the client's
-    version doesn't match the current inventory token (so a stale/cached version still gets the
-    objects); once the client echoes our token, report no further changes."""
+def invalid_collector_version_fault() -> str:
+    """The fault real vCenter raises when a client polls with a version the current collector never
+    issued (e.g. a version cached from a destroyed filter/session after a reconnect). It is the
+    signal that makes the controller RESET — re-poll with an empty version for a clean initial sync.
+    Without it, a controller that persists+reuses its version starves a freshly-created filter."""
+    return fault("The specified version was not valid for the current PropertyCollector.",
+                 '<InvalidCollectorVersion xmlns="urn:vim25" xsi:type="InvalidCollectorVersion">'
+                 "</InvalidCollectorVersion>")
+
+
+def wait_for_updates(dc, body, *, ex: bool) -> tuple[str, int]:
+    """WaitForUpdates[Ex] with real vCenter version semantics, returning (xml, http_status):
+      - empty version (initial sync, or after a reset) -> deliver the full inventory as 'enter';
+      - the current token (client is up to date)       -> no further changes;
+      - any other (stale/cached) version               -> InvalidCollectorVersion fault, which makes
+        the controller reset to an empty version. This last case is essential: CloudGuard persists
+        its version and reuses it on a fresh filter, so we must reject it to trigger a clean sync."""
     text = body.decode("utf-8", "replace") if isinstance(body, (bytes, bytearray)) else (body or "")
     m = re.search(r"<version>(.*?)</version>", text, re.S)
     version = m.group(1).strip() if m else ""
     current = _inventory_version(dc)
     resp = "WaitForUpdatesExResponse" if ex else "WaitForUpdatesResponse"
-    if version == current:  # client already holds the current inventory -> no changes
-        return envelope(f'<{resp} xmlns="{VIM_NS}"><returnval><version>{current}</version>'
-                        f'<truncated>false</truncated></returnval></{resp}>')
-    objects = "".join(inventory_object_updates(dc))
+    if version and version != current:          # stale version from a prior collector -> force reset
+        return invalid_collector_version_fault(), 500
+    if version == current:                       # already holds the current inventory -> no changes
+        return (envelope(f'<{resp} xmlns="{VIM_NS}"><returnval><version>{current}</version>'
+                         f'<truncated>false</truncated></returnval></{resp}>'), 200)
+    objects = "".join(inventory_object_updates(dc))   # empty version -> full initial state
     filter_set = f'<filterSet><filter type="PropertyFilter">{_FILTER}</filter>{objects}</filterSet>'
-    return envelope(f'<{resp} xmlns="{VIM_NS}"><returnval><version>{current}</version>{filter_set}'
-                    f'<truncated>false</truncated></returnval></{resp}>')
+    return (envelope(f'<{resp} xmlns="{VIM_NS}"><returnval><version>{current}</version>{filter_set}'
+                     f'<truncated>false</truncated></returnval></{resp}>'), 200)
 
 
 def tag_catalog(dc) -> dict:
@@ -409,7 +425,8 @@ def handle(dc, method: str, body) -> tuple[str, int, str]:
     if method == "CreateFilter":
         return _moref_response(method, "PropertyFilter", _FILTER), 200, method
     if method in ("WaitForUpdates", "WaitForUpdatesEx"):
-        return wait_for_updates(dc, body, ex=method.endswith("Ex")), 200, method
+        xml, status = wait_for_updates(dc, body, ex=method.endswith("Ex"))
+        return xml, status, method
     if method in ("DestroyPropertyFilter", "CancelWaitForUpdates",
                   "DestroyPropertyCollector", "DestroyView"):
         return void_response(method), 200, method
