@@ -29,6 +29,21 @@ Access Control rulebase in the portal and apply it to a gateway's Gaia API — o
 
 See [PLAN.md](PLAN.md) for the full design and the verified feed formats.
 
+## Integrations
+
+Each integration makes the portal *act as the external system Check Point integrates with*. Full
+docs — what it mocks, how to point Check Point at it, endpoints, object model, gotchas — live in
+**[docs/integrations/](docs/integrations/)**:
+
+| Integration | Mocks | Check Point object |
+|---|---|---|
+| [Generic Data Center](docs/integrations/generic-datacenter.md) | sk167210 JSON server | Generic Data Center |
+| [Network Feed](docs/integrations/network-feed.md) | feed server (list / JSON+JQ) | Network Feed |
+| [OpenStack](docs/integrations/openstack.md) | Keystone + Nova + Neutron | Data Center → OpenStack |
+| [VMware vCenter](docs/integrations/vcenter.md) | vSphere SOAP + REST | Data Center → vCenter |
+| [VMware NSX-T](docs/integrations/nsxt.md) | NSX-T Policy Mode REST | Data Center → NSX-T |
+| [Dynamic Layers](docs/integrations/dynamic-layers.md) | Gaia API push (`set-dynamic-content`) | *(push to gateway / mock)* |
+
 ## Quick start (local dev)
 
 ```bash
