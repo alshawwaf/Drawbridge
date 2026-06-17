@@ -225,20 +225,18 @@ def handle(dc, method: str, body) -> tuple[str, int, str]:
     return fault(f"Method '{method or 'unknown'}' is not modelled by the vCenter mock yet."), 500, method
 
 
+# Matched byte-for-byte to a real vCenter 8.0.3 /sdk/vimServiceVersions.xml (full version list).
 VIM_SERVICE_VERSIONS = (
-    '<?xml version="1.0" encoding="UTF-8"?>\n'
-    '<namespaces version="1.0">\n'
-    " <namespace>\n"
-    "  <name>urn:vim25</name>\n"
-    "  <version>8.0.3.0</version>\n"   # must match ServiceContent's apiVersion
-    "  <priorVersions>\n"
-    "   <version>8.0.2.0</version>\n"
-    "   <version>8.0.1.0</version>\n"
-    "   <version>8.0.0.1</version>\n"   # the version CloudGuard's CXF SOAPAction uses
-    "   <version>7.0.0.0</version>\n"
-    "   <version>6.7.3</version>\n"
-    "   <version>6.5</version>\n"
-    "  </priorVersions>\n"
-    " </namespace>\n"
-    "</namespaces>\n"
+    '<?xml version="1.0" encoding="UTF-8" ?><namespaces version="1.0"><namespace>'
+    '<name>urn:vim25</name><version>8.0.3.0</version><priorVersions>'
+    '<version>8.0.2.0</version><version>8.0.1.0</version><version>8.0.0.2</version>'
+    '<version>8.0.0.1</version><version>8.0.0.0</version><version>7.0.3.2</version>'
+    '<version>7.0.3.1</version><version>7.0.3.0</version><version>7.0.2.1</version>'
+    '<version>7.0.2.0</version><version>7.0.1.1</version><version>7.0.1.0</version>'
+    '<version>7.0.0.2</version><version>7.0.0.0</version><version>6.9.1</version>'
+    '<version>6.8.7</version><version>6.7.3</version><version>6.7.2</version>'
+    '<version>6.7.1</version><version>6.7</version><version>6.5</version>'
+    '<version>6.0</version><version>5.5</version><version>5.1</version>'
+    '<version>5.0</version><version>4.1</version><version>4.0</version>'
+    "</priorVersions></namespace></namespaces>"
 )
