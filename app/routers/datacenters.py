@@ -73,6 +73,32 @@ def parse_vms(text: str) -> list[dict]:
              "power": "poweredOn", "guest_os": ""} for vm in parse_instances(text)]
 
 
+# NSX-T tags are scope/value pairs, written here as 'scope=value' (bare 'value' = empty scope).
+DEFAULT_NSXT_VMS = ("web-vm-01 = 10.10.20.5 | tier=web, env=prod\n"
+                    "web-vm-02 = 10.10.20.6 | tier=web, env=prod\n"
+                    "db-vm-01 = 10.10.30.5 | tier=db, env=prod")
+DEFAULT_NSXT_GROUPS = "Web Servers = tier=web | env=production\nDB Servers = tier=db"
+
+
+def parse_nsxt_groups(text: str) -> list[dict]:
+    """NSX-T group quick-entry: 'GroupName = member_tag | grouptag1, grouptag2' per line.
+    member_tag (a VM 'scope=value' tag) defines dynamic membership; the trailing tags are the
+    group's own NSX-T tags."""
+    out = []
+    for ln in text.splitlines():
+        ln = ln.strip()
+        if not ln or ln.startswith("#"):
+            continue
+        name, _, rest = ln.partition("=")
+        name = name.strip()
+        if not name:
+            continue
+        member, _, gtags = rest.partition("|")
+        out.append({"name": name, "member_tag": member.strip(),
+                    "tags": [t.strip() for t in gtags.split(",") if t.strip()]})
+    return out
+
+
 @router.get("/datacenters", response_class=HTMLResponse)
 def dc_list(request: Request, db: Session = Depends(get_db)):
     user = get_user_or_none(request, db)
@@ -86,6 +112,8 @@ def dc_list(request: Request, db: Session = Depends(get_db)):
         c = d.content or {}
         if d.provider == "vcenter":
             summary = f"{len(c.get('vms', []) or [])} VM(s)"
+        elif d.provider == "nsxt":
+            summary = f"{len(c.get('vms', []) or [])} VM(s) · {len(c.get('groups', []) or [])} group(s)"
         else:
             summary = (f"{len(c.get('instances', []) or [])} instance(s) · "
                        f"{len(c.get('subnets', []) or [])} subnet(s) · "
@@ -174,6 +202,45 @@ def dc_create_vcenter(request: Request, name: str = Form(...), description: str 
     return RedirectResponse(f"/datacenters/{dc.id}", status_code=303)
 
 
+@router.get("/datacenters/new/nsxt", response_class=HTMLResponse)
+def dc_new_nsxt(request: Request, db: Session = Depends(get_db)):
+    if get_user_or_none(request, db) is None:
+        return RedirectResponse("/login", status_code=303)
+    return templates.TemplateResponse(request, "dc_new_nsxt.html", {"error": None, "form": {
+        "name": "NSX-T-lab", "description": "", "vms_text": DEFAULT_NSXT_VMS,
+        "groups_text": DEFAULT_NSXT_GROUPS, "nsxt_username": "admin",
+    }})
+
+
+@router.post("/datacenters/new/nsxt")
+def dc_create_nsxt(request: Request, name: str = Form(...), description: str = Form(""),
+                   vms_text: str = Form(""), groups_text: str = Form(""),
+                   nsxt_username: str = Form("admin"), nsxt_password: str = Form(""),
+                   db: Session = Depends(get_db)):
+    user = get_user_or_none(request, db)
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+    try:
+        content = {"vms": parse_instances(vms_text), "groups": parse_nsxt_groups(groups_text)}
+        if not (content["vms"] or content["groups"]):
+            raise ValueError("Add at least one VM or group.")
+        if nsxt_password:  # validated at session/login time; stored only as a one-way hash
+            content["auth"] = {"username": nsxt_username or "admin",
+                               "password_hash": hash_password(nsxt_password)}
+    except Exception as exc:
+        return templates.TemplateResponse(request, "dc_new_nsxt.html", {"error": str(exc), "form": {
+            "name": name, "description": description, "vms_text": vms_text,
+            "groups_text": groups_text, "nsxt_username": nsxt_username,
+        }}, status_code=400)
+    dc = Datacenter(token=new_feed_token(), provider="nsxt", name=name,
+                    description=description, content=content, owner_id=user.id)
+    db.add(dc)
+    db.commit()
+    db.refresh(dc)
+    _flash(request, f"NSX-T datacenter “{name}” saved.")
+    return RedirectResponse(f"/datacenters/{dc.id}", status_code=303)
+
+
 @router.get("/datacenters/{dc_id}", response_class=HTMLResponse)
 def dc_detail(dc_id: int, request: Request, db: Session = Depends(get_db)):
     user = get_user_or_none(request, db)
@@ -185,6 +252,12 @@ def dc_detail(dc_id: int, request: Request, db: Session = Depends(get_db)):
         return templates.TemplateResponse(request, "dc_detail.html", {
             "dc": dc, "sdk_url": f"{base}/vcenter/{dc.token}/sdk",
             "vms": dc.content.get("vms", []) or [], "flash": _pop_flash(request),
+        })
+    if dc.provider == "nsxt":
+        return templates.TemplateResponse(request, "dc_detail.html", {
+            "dc": dc, "nsxt_url": f"{base}/nsxt/{dc.token}",
+            "vms": dc.content.get("vms", []) or [], "groups": dc.content.get("groups", []) or [],
+            "dc_auth": (dc.content or {}).get("auth") or {}, "flash": _pop_flash(request),
         })
     keystone_url = f"{base}/openstack/{dc.token}/v3"
     preview = {

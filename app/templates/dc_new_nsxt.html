@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}New NSX-T datacenter{% endblock %}
+{% block content %}
+<h1>New NSX-T datacenter</h1>
+<p class="muted">Define the inventory the mock VMware NSX-T Manager (Policy Mode REST API) will serve. Point a SmartConsole <i>VMware NSX-T</i> Data Center object at the portal to import Groups, VMs, and Tags.</p>
+{% if error %}<div class="err" style="margin:12px 0;">{{ error }}</div>{% endif %}
+
+<form method="post" action="/datacenters/new/nsxt" class="card">
+  <label>Name</label>
+  <input name="name" value="{{ form.name }}" placeholder="NSX-T-lab" required>
+
+  <label>Description (optional)</label>
+  <input name="description" value="{{ form.description }}">
+
+  <label>Virtual machines — one per line: <code>name = ip | scope=tag, scope=tag</code></label>
+  <textarea name="vms_text" placeholder="web-vm-01 = 10.10.20.5 | tier=web, env=prod">{{ form.vms_text }}</textarea>
+  <p class="muted">Served as NSX-T VirtualMachine objects with their VIF IP and NSX-T tags. A tag is a <code>scope=value</code> pair (a bare <code>value</code> = empty scope).</p>
+
+  <label>Groups (NS Groups) — one per line: <code>GroupName = member_tag | grouptag1, grouptag2</code></label>
+  <textarea name="groups_text" style="min-height:80px;" placeholder="Web Servers = tier=web | env=production">{{ form.groups_text }}</textarea>
+  <p class="muted"><code>member_tag</code> (a VM tag) defines dynamic membership — the group's effective VMs are those carrying it. Trailing tags are the group's own NSX-T tags.</p>
+
+  <h2 style="font-size:15px; margin:22px 0 0;">NSX-T credentials</h2>
+  <label>Username</label>
+  <input name="nsxt_username" value="{{ form.nsxt_username }}" placeholder="admin">
+  <label>Password <span class="muted" style="font-weight:400;">— optional</span></label>
+  <input name="nsxt_password" type="password" autocomplete="new-password" placeholder="Leave blank to accept any read-only credentials (open lab)">
+  <p class="muted">If set, the mock validates the username + password on login and returns <code>403</code> on mismatch. Stored only as a one-way hash. Enter these in the SmartConsole NSX-T object (NSX-T role: Auditor or higher).</p>
+
+  <div class="row" style="margin-top:18px;">
+    <button type="submit">Create datacenter</button>
+    <a class="btn secondary" href="/datacenters">Cancel</a>
+  </div>
+</form>
+{% endblock %}
