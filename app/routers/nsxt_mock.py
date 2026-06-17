@@ -99,10 +99,30 @@ def _single_dc(db: Session) -> Datacenter:
     return dc
 
 
+def _global_dc(db: Session) -> Datacenter:
+    """Most-recent Global NSX-T (Global Manager) datacenter."""
+    dc = db.scalar(select(Datacenter).where(Datacenter.provider == "globalnsxt")
+                   .order_by(Datacenter.created_at.desc()))
+    if dc is None:
+        raise HTTPException(status_code=404, detail="No Global NSX-T datacenter configured")
+    return dc
+
+
+def _family_dc(db: Session) -> Datacenter:
+    """Most-recent NSX-T *family* datacenter (Local or Global Manager). Used for the endpoints both
+    share — the session handshake (/api/session) and the Manager API (/api/v1/...) — since they're
+    distinguished only by the later policy path (/policy/... = LM, /global-manager/... = GM)."""
+    dc = db.scalar(select(Datacenter).where(Datacenter.provider.in_(("nsxt", "globalnsxt")))
+                   .order_by(Datacenter.created_at.desc()))
+    if dc is None:
+        raise HTTPException(status_code=404, detail="No NSX-T datacenter configured")
+    return dc
+
+
 @router.post("/api/session/create")
 def session_create_apex(request: Request, j_username: str = Form(""), j_password: str = Form(""),
                         db: Session = Depends(get_db)):
-    dc = _single_dc(db)
+    dc = _family_dc(db)  # shared by NSX-T (LM) and Global NSX-T (GM)
     if not nsxt.auth_ok(dc, j_username, j_password):
         return JSONResponse(nsxt.forbidden(), status_code=403)
     resp = Response(status_code=200)
@@ -113,7 +133,7 @@ def session_create_apex(request: Request, j_username: str = Form(""), j_password
 
 @router.post("/api/session/destroy")
 def session_destroy_apex(db: Session = Depends(get_db)):
-    _single_dc(db)
+    _family_dc(db)
     return Response(status_code=200)
 
 
@@ -137,12 +157,49 @@ def realized_vms_apex(request: Request, db: Session = Depends(get_db)):
 
 @router.get("/api/v1/fabric/vifs")
 def fabric_vifs_apex(request: Request, db: Session = Depends(get_db)):
-    dc = _single_dc(db)
+    dc = _family_dc(db)  # the Manager (/api/v1) API is shared by LM and GM
     return _guard(dc, request) or nsxt.vifs(dc)
 
 
 @router.get("/policy/api/v1/{rest:path}")
-@router.get("/api/v1/{rest:path}")
 def nsxt_other_apex(rest: str, request: Request, db: Session = Depends(get_db)):
     dc = _single_dc(db)
+    return _guard(dc, request) or nsxt.list_result([])
+
+
+@router.get("/api/v1/{rest:path}")
+def manager_other_apex(rest: str, request: Request, db: Session = Depends(get_db)):
+    dc = _family_dc(db)
+    return _guard(dc, request) or nsxt.list_result([])
+
+
+# --- Global NSX-T (Global Manager / Federation) ---------------------------------------------
+# Same handshake (/api/session) and Manager API (/api/v1) as NSX-T, but objects live under the GM
+# policy path /global-manager/api/v1/global-infra/... (vs the LM's /policy/api/v1/infra/...).
+# Resolves the most-recent globalnsxt datacenter. Imports: NS Groups (-> member VMs), VMs, Tags;
+# Regions land via the catch-all until the first real-CloudGuard trace shows their exact shape.
+_GM = "/global-manager/api/v1/global-infra"
+
+
+@router.get(_GM + "/domains/default/groups")
+def gm_groups_apex(request: Request, db: Session = Depends(get_db)):
+    dc = _global_dc(db)
+    return _guard(dc, request) or nsxt.groups(dc, infra="global-infra")
+
+
+@router.get(_GM + "/domains/default/groups/{group_id}/members/virtual-machines")
+def gm_group_members_apex(group_id: str, request: Request, db: Session = Depends(get_db)):
+    dc = _global_dc(db)
+    return _guard(dc, request) or nsxt.group_members(dc, group_id)
+
+
+@router.get(_GM + "/realized-state/virtual-machines")
+def gm_realized_vms_apex(request: Request, db: Session = Depends(get_db)):
+    dc = _global_dc(db)
+    return _guard(dc, request) or nsxt.virtual_machines(dc)
+
+
+@router.get("/global-manager/api/v1/{rest:path}")
+def gm_other_apex(rest: str, request: Request, db: Session = Depends(get_db)):
+    dc = _global_dc(db)
     return _guard(dc, request) or nsxt.list_result([])

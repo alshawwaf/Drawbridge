@@ -12,7 +12,8 @@ PoV can be demoed end-to-end without the real thing. Two interaction models:
 | [Network Feed](network-feed.md) | feed server (list / JSON+JQ) | Network Feed | `https://<portal>/netfeed/<token>` |
 | [OpenStack](openstack.md) | Keystone + Nova + Neutron | Data Center → OpenStack | `https://<portal>/openstack/<token>/v3` |
 | [VMware vCenter](vcenter.md) | vSphere SOAP + REST | Data Center → vCenter | bare host (apex) — `<portal>` |
-| [VMware NSX-T](nsxt.md) | NSX-T Policy Mode REST | Data Center → NSX-T | bare host (apex) — `<portal>` |
+| [VMware NSX-T](nsxt.md) | NSX-T Policy Mode REST (Local Manager) | Data Center → NSX-T | bare host (apex) — `<portal>` |
+| [VMware Global NSX-T](global-nsxt.md) | NSX-T Global Manager / Federation | Data Center → Global NSX-T | bare host (apex) — `<portal>` |
 | [Dynamic Layers](dynamic-layers.md) | Gaia API (`set-dynamic-content`) | *(push to gateway / mock)* | n/a — portal is the client |
 
 ## Routing: path-based vs apex single-tenant

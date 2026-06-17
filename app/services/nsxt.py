@@ -82,7 +82,9 @@ def vifs(dc) -> dict:
     return list_result(res)
 
 
-def groups(dc) -> dict:
+def groups(dc, infra: str = "infra") -> dict:
+    """NS Groups. ``infra`` is the policy path segment: ``infra`` for a Local Manager (NSX-T) or
+    ``global-infra`` for the Global Manager (Global NSX-T) — it only changes the object ``path``."""
     res = []
     for g in (dc.content or {}).get("groups", []) or []:
         expr = []
@@ -92,7 +94,7 @@ def groups(dc) -> dict:
         gid = _gid(g.get("name", ""))
         res.append({
             "id": gid, "display_name": g.get("name"), "resource_type": "Group",
-            "path": f"/infra/domains/default/groups/{gid}", "expression": expr,
+            "path": f"/{infra}/domains/default/groups/{gid}", "expression": expr,
             "tags": [_tag(t) for t in (g.get("tags") or [])],
         })
     return list_result(res)

@@ -35,10 +35,11 @@
   <h2 style="margin-top:0;">Live calls</h2>
   <p class="muted">Every vSphere SOAP request from CloudGuard is captured in the <a href="/activity?kind=datacenter">Activity log</a> — full request &amp; response, password masked. The mock currently answers version negotiation, <code>RetrieveServiceContent</code>, <code>Login</code>, <code>RetrieveProperties[Ex]</code> (VM enumeration), and <code>Logout</code>.</p>
 </div>
-{% elif dc.provider == 'nsxt' %}
+{% elif dc.provider in ('nsxt', 'globalnsxt') %}
+{% set is_global = dc.provider == 'globalnsxt' %}
 <div class="row">
   <div class="grow"><h1>{{ dc.name }} <span class="pill">{{ dc.provider }}</span></h1>
-    <p class="muted">{{ dc.description or "Mock VMware NSX-T Manager (Policy Mode REST API)" }}</p></div>
+    <p class="muted">Mock VMware {{ "Global NSX-T (Global Manager / Federation)" if is_global else "NSX-T Manager" }} — Policy Mode REST API</p></div>
   <form method="post" action="/datacenters/{{ dc.id }}/delete">
     <button class="danger" type="submit" data-confirm="Delete “{{ dc.name }}”? This removes the mock datacenter.">Delete</button>
   </form>
@@ -46,19 +47,19 @@
 
 <div class="card">
   <h2 style="margin-top:0;">Connect from SmartConsole</h2>
-  <p class="muted">Objects → New → More → Cloud → Data Center → <i>VMware NSX-T…</i> (keep <i>Policy Mode</i> on), then enter:</p>
+  <p class="muted">Objects → New → More → Cloud → Data Center → VMware by Broadcom → <i>{{ "VMware Global NSX-T…" if is_global else "VMware NSX-T…" }}</i> (keep <i>Policy Mode</i> on), then enter:</p>
   <label>Hostname <span class="muted" style="font-weight:400;">— enter exactly this (no <code>https://</code>, no path)</span></label>
   <div class="row" style="gap:8px; align-items:center; flex-wrap:nowrap;">
     <span class="copy grow">{{ apex_host }}</span>
     <button class="copybtn" type="button" data-copy="{{ apex_host }}">Copy</button>
   </div>
-  <p class="muted" style="margin:6px 0 0; font-size:12px;">The controller connects to <code>https://{{ apex_host }}/api/...</code> and <code>/policy/api/v1/...</code>. The portal serves one NSX-T at this host — if you have several, the most recently created is the one CloudGuard reaches.</p>
+  <p class="muted" style="margin:6px 0 0; font-size:12px;">The controller connects to <code>https://{{ apex_host }}/api/...</code> and <code>{{ "/global-manager/api/v1/global-infra/..." if is_global else "/policy/api/v1/..." }}</code>. The portal serves one {{ "Global NSX-T" if is_global else "NSX-T" }} at this host — if you have several, the most recently created is the one CloudGuard reaches.</p>
   {% if dc_auth and dc_auth.username %}
   <p class="muted" style="margin-top:10px;">Username <code>{{ dc_auth.username }}</code> · Password <code>(the one you set)</code> — the mock validates these and returns <b>403</b> on anything else. NSX-T role: Auditor or higher. Click <i>Test Connection</i>, then import.</p>
   {% else %}
   <p class="muted" style="margin-top:10px;">Username <code>any</code> · Password <code>any</code> — the mock accepts any read-only credentials (no password set). Click <i>Test Connection</i>, then import.</p>
   {% endif %}
-  <p class="muted"><b>Heads-up:</b> NSX-T is built iteratively. If Test Connection or import isn't fully working yet, every call CloudGuard makes is captured in the <a href="/activity?kind=datacenter">Activity log</a> so the Policy-Mode responses can be tuned to match.</p>
+  <p class="muted"><b>Heads-up:</b> {{ "Global NSX-T" if is_global else "NSX-T" }} responses are tuned iteratively. If Test Connection or import isn't fully working yet, every call CloudGuard makes is captured in the <a href="/activity?kind=datacenter">Activity log</a>{% if is_global %} — Regions in particular are modeled from the first real trace{% endif %}, so the Policy-Mode responses can be matched.</p>
 </div>
 
 <div class="card">
