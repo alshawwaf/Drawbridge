@@ -6,6 +6,8 @@ so Check Point follows the catalog exactly as it would against a real OpenStack 
 """
 import uuid
 
+from ..security import verify_password
+
 _NS = uuid.UUID("00000000-0000-0000-0000-0000000c0de1")
 _EXPIRES = "2035-01-01T00:00:00.000000Z"
 _ISSUED = "2020-01-01T00:00:00.000000Z"
@@ -67,6 +69,26 @@ def keystone_projects(dc, base_url: str, *, project: str = "demo") -> dict:
         }],
         "links": {"self": f"{base}/v3/auth/projects", "previous": None, "next": None},
     }
+
+
+def keystone_error_401() -> dict:
+    """The Keystone body for a rejected login — so SmartConsole shows an auth error,
+    not the generic 'still initializing'."""
+    return {"error": {"code": 401, "title": "Unauthorized",
+                      "message": "The request you have made requires authentication."}}
+
+
+def configured_project(dc, fallback: str = "demo") -> str:
+    return ((dc.content or {}).get("auth") or {}).get("project") or fallback
+
+
+def auth_ok(dc, username: str, password: str) -> bool:
+    """True when the presented credentials match the datacenter's configured ones. If no
+    credentials are configured, the mock stays permissive (legacy / quick-lab datacenters)."""
+    cfg = (dc.content or {}).get("auth") or {}
+    if not cfg.get("password_hash"):
+        return True
+    return username == cfg.get("username") and verify_password(password, cfg["password_hash"])
 
 
 def nova_servers(dc) -> dict:

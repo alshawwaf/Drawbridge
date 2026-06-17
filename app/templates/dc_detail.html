@@ -48,7 +48,11 @@
     <span class="copy grow">{{ keystone_url }}</span>
     <button class="copybtn" type="button" data-copy="{{ keystone_url }}">Copy</button>
   </div>
-  <p class="muted" style="margin-top:10px;">Username <code>admin</code> · Password <code>any</code> · Domain <code>Default</code> — the mock accepts any credentials. Click <i>Test Connection</i>, then import Instances, Security Groups, and Subnets.</p>
+  {% if os_auth and os_auth.username %}
+  <p class="muted" style="margin-top:10px;">Username <code>{{ os_auth.username }}</code> · Password <code>(the one you set)</code> · Project <code>{{ os_auth.project or 'demo' }}</code> · Domain <code>Default</code> — the mock validates these and returns <b>401</b> on anything else. Click <i>Test Connection</i>, then import Instances, Security Groups, and Subnets.</p>
+  {% else %}
+  <p class="muted" style="margin-top:10px;">Username <code>admin</code> · Password <code>any</code> · Domain <code>Default</code> — the mock accepts any credentials (no password set). Click <i>Test Connection</i>, then import Instances, Security Groups, and Subnets.</p>
+  {% endif %}
   <h2>Test from a shell</h2>
   <pre>TOKEN=$(curl -sik {{ keystone_url }}/auth/tokens -H 'Content-Type: application/json' \
   -d '{"auth":{"identity":{"methods":["password"],"password":{"user":{"name":"admin","domain":{"id":"default"},"password":"x"}}}}}' \

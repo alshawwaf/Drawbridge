@@ -1,5 +1,6 @@
 """OpenStack mock: Keystone catalog points back at the portal; Nova/Neutron shapes correct."""
 from app.routers.datacenters import parse_instances, parse_subnets
+from app.security import hash_password
 from app.services import openstack as os_mock
 
 
@@ -55,3 +56,23 @@ def test_parse_instances_with_tags():
 
 def test_parse_subnets():
     assert parse_subnets("app = 10.0.0.0/24")[0] == {"name": "app", "cidr": "10.0.0.0/24"}
+
+
+def test_auth_ok_validates_configured_credentials():
+    dc = _DC("tok-auth", {"auth": {"username": "ops", "password_hash": hash_password("s3cret"),
+                                   "project": "prod"}})
+    assert os_mock.auth_ok(dc, "ops", "s3cret") is True
+    assert os_mock.auth_ok(dc, "ops", "wrong") is False      # wrong password
+    assert os_mock.auth_ok(dc, "admin", "s3cret") is False   # wrong username
+    assert os_mock.configured_project(dc) == "prod"
+
+
+def test_auth_ok_permissive_without_configured_credentials():
+    dc = _DC("tok-open", {"instances": []})
+    assert os_mock.auth_ok(dc, "anyone", "anything") is True   # no creds set = open lab
+    assert os_mock.configured_project(dc) == "demo"
+
+
+def test_keystone_error_401_shape():
+    err = os_mock.keystone_error_401()["error"]
+    assert err["code"] == 401 and "authentication" in err["message"].lower()

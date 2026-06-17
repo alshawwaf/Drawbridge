@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from ..config import get_settings
 from ..db import get_db
 from ..models import Datacenter, User
-from ..security import get_user_or_none, new_feed_token
+from ..security import get_user_or_none, hash_password, new_feed_token
 from ..services import openstack as os_mock
 from .ui import _flash, _pop_flash, templates
 
@@ -99,7 +99,7 @@ def dc_new(request: Request, db: Session = Depends(get_db)):
     if get_user_or_none(request, db) is None:
         return RedirectResponse("/login", status_code=303)
     return templates.TemplateResponse(request, "dc_new.html", {"error": None, "form": {
-        "name": "OpenStack-lab", "description": "",
+        "name": "OpenStack-lab", "description": "", "os_username": "admin", "os_project": "demo",
         "instances_text": DEFAULT_INSTANCES, "subnets_text": DEFAULT_SUBNETS, "secgroups_text": DEFAULT_SECGROUPS,
     }})
 
@@ -107,7 +107,9 @@ def dc_new(request: Request, db: Session = Depends(get_db)):
 @router.post("/datacenters/new")
 def dc_create(request: Request, name: str = Form(...), description: str = Form(""),
               instances_text: str = Form(""), subnets_text: str = Form(""),
-              secgroups_text: str = Form(""), db: Session = Depends(get_db)):
+              secgroups_text: str = Form(""), os_username: str = Form("admin"),
+              os_password: str = Form(""), os_project: str = Form("demo"),
+              db: Session = Depends(get_db)):
     user = get_user_or_none(request, db)
     if user is None:
         return RedirectResponse("/login", status_code=303)
@@ -119,10 +121,17 @@ def dc_create(request: Request, name: str = Form(...), description: str = Form("
         }
         if not (content["instances"] or content["subnets"] or content["security_groups"]):
             raise ValueError("Add at least one instance, subnet, or security group.")
+        # When a password is set, Keystone validates it (and the username) and 401s on mismatch.
+        # The password is stored only as a one-way PBKDF2 hash; leave it blank for an open lab.
+        if os_password:
+            content["auth"] = {"username": os_username or "admin",
+                               "password_hash": hash_password(os_password),
+                               "project": os_project or "demo"}
     except Exception as exc:
         return templates.TemplateResponse(request, "dc_new.html", {"error": str(exc), "form": {
             "name": name, "description": description, "instances_text": instances_text,
             "subnets_text": subnets_text, "secgroups_text": secgroups_text,
+            "os_username": os_username, "os_project": os_project,
         }}, status_code=400)
     dc = Datacenter(token=new_feed_token(), provider="openstack", name=name,
                     description=description, content=content, owner_id=user.id)
@@ -188,6 +197,7 @@ def dc_detail(dc_id: int, request: Request, db: Session = Depends(get_db)):
         "instances": dc.content.get("instances", []) or [],
         "subnets": dc.content.get("subnets", []) or [],
         "secgroups": dc.content.get("security_groups", []) or [],
+        "os_auth": (dc.content or {}).get("auth") or {},
         "preview_json": json.dumps(preview, indent=2),
         "flash": _pop_flash(request),
     })
