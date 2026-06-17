@@ -215,7 +215,7 @@ _CLUSTER, _RP = "domain-c7", "resgroup-8"
 _HOSTS = ["host-13", "host-14"]
 # Bump when the WaitForUpdates response SHAPE changes: it feeds the version token, so a bump forces
 # the controller (which caches the last version per host) to re-sync with the new shape.
-_SCHEMA_VERSION = "5"
+_SCHEMA_VERSION = "6"
 
 
 def _moref(motype: str, moid: str) -> str:
@@ -254,9 +254,13 @@ def inventory_object_updates(dc) -> list[str]:
     vms = _vms(dc)
     vm_moids = [f"vm-{i + 1}" for i in range(len(vms))]
     objs = [
-        # Folder -> name, parent, childEntity, childType
+        # Folder -> name, parent, childEntity, childType. The root folder's parent points to an
+        # un-sent super-root: the scanner's fillProperties dereferences `parent` for EVERY object
+        # (NPEs if absent), but stores it lazily, and anchors the tree at ServiceContent.rootFolder
+        # (== group-d1) regardless — so an unresolved parent here is harmless.
         _object_update("Folder", _ROOT, [
             _change("name", _str_val("Datacenters")),
+            _change("parent", _moref("Folder", "group-d0")),
             _change("childEntity", _moref_array([("Datacenter", _DC)])),
             _change("childType", _string_array(["Folder", "Datacenter"])),
         ]),
