@@ -89,6 +89,8 @@ def test_propertycollector_workflow_enumerates_full_inventory():
     # children precede parents so the scanner resolves downward refs against already-seen objects
     assert xml.index('<obj type="Datacenter">datacenter-2') < xml.index('<obj type="Folder">group-d1')
     assert xml.index('<obj type="VirtualMachine">vm-1') < xml.index('<obj type="Folder">group-v22')
+    # EVERY object (incl. the root folder) carries a parent — fillProperties NPEs on a missing one
+    assert xml.count("<name>parent</name>") == 10
     # VMs carry name/IP and are parented under the vm folder; tree refs present
     assert 'type="VirtualMachine">vm-1' in xml and "web-1" in xml and "10.0.0.11" in xml
     assert "<name>vmFolder</name>" in xml and "<name>childEntity</name>" in xml
