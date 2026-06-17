@@ -34,7 +34,10 @@ def test_service_content_advertises_virtualcenter():
     assert 'type="SessionManager">SessionManager' in xml
     # rootSnapshot is NOT a ServiceContent element — its presence broke the strict deserializer
     assert "rootSnapshot" not in xml
-    assert 'type="SearchIndex">SearchIndex' in xml
+    # matched to a real vCenter 8.0.3 capture: version + the full manager set it returns
+    assert "<version>8.0.3</version>" in xml
+    assert 'type="LicenseManager">LicenseManager' in xml
+    assert 'type="ScheduledTaskManager">ScheduledTaskManager' in xml
 
 
 def test_login_returns_session_and_never_echoes_password():
