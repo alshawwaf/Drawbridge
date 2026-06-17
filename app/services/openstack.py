@@ -142,6 +142,13 @@ def neutron_networks(dc) -> dict:
                           "tenant_id": _id(dc.token, "project"), "project_id": _id(dc.token, "project")}]}
 
 
+def neutron_floatingips(dc) -> dict:
+    """Floating IPs (Neutron). This mock models private addressing only, so the list is empty —
+    but CloudGuard enumerates floating IPs during import, so we must answer with an empty list
+    rather than a 404 (which would stall the import)."""
+    return {"floatingips": []}
+
+
 def neutron_ports(dc) -> dict:
     out = []
     default_subnet = _id(dc.token, "subnet", "default")
