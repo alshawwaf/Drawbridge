@@ -7,11 +7,13 @@ real ACI fabric.
 - Service: [`app/services/aci.py`](../../app/services/aci.py)
 - Router: [`app/routers/aci_mock.py`](../../app/routers/aci_mock.py)
 
-> **Status:** first real trace taught us **CloudGuard's APIC client is XML-only** — it JAXB-unmarshals
-> every response, so the JSON first cut failed with `InvalidServerException … Content is not allowed in
-> prolog`. Now serves **APIC XML** (`<imdata><fvTenant …/></imdata>`) by default; `.json` still works
-> for shell testing. **Pending re-test** of Test Connection. (Every `/api/...` call is in the Activity
-> log; unmodeled classes return an empty `imdata` so enumeration never stalls.)
+> **Status:** the first real trace taught us **CloudGuard's APIC client is XML-only** — it
+> JAXB-unmarshals every response, so the JSON first cut failed with `InvalidServerException … Content
+> is not allowed in prolog`. The mock now answers **APIC XML for every extension**
+> (`.xml`, `.json`, or none — CloudGuard's client never wants JSON), e.g.
+> `<imdata totalCount="1"><fvTenant dn="uni/tn-DCSIM" name="DCSIM"/></imdata>`. **Pending re-test** of
+> Test Connection. (Every `/api/...` call is in the Activity log; unmodeled classes return an empty
+> `imdata` so enumeration never stalls.)
 
 ## R82.10 contract
 
