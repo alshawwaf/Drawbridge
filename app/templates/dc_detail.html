@@ -136,6 +136,43 @@
   {% for g in esgs %}<div class="itemrow"><span class="pill">ESG</span> <b>{{ g.name }}</b> {% for ip in g.ips %}<code>{{ ip }}</code> {% endfor %}</div>{% else %}<p class="muted">none</p>{% endfor %}
   <p class="muted" style="margin-top:8px; font-size:12px;">EPGs resolve to their endpoint IPs via <code>fvCEp</code>; ESGs via IP selectors (<code>fvEPSelector</code>). L2 Out / L2 External EPG are returned empty until the first trace.</p>
 </div>
+{% elif dc.provider == 'kubernetes' %}
+<div class="row">
+  <div class="grow"><h1>{{ dc.name }} <span class="pill">{{ dc.provider }}</span></h1>
+    <p class="muted">{{ dc.description or "Mock Kubernetes API server (kube-apiserver REST)" }}</p></div>
+  <form method="post" action="/datacenters/{{ dc.id }}/delete">
+    <button class="danger" type="submit" data-confirm="Delete “{{ dc.name }}”? This removes the mock datacenter.">Delete</button>
+  </form>
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0;">Connect from SmartConsole</h2>
+  <p class="muted">Objects → New → More → Cloud → Data Center → <i>Kubernetes…</i>, then enter:</p>
+  <label>Hostname / API server <span class="muted" style="font-weight:400;">— include <code>:443</code></span></label>
+  <div class="row" style="gap:8px; align-items:center; flex-wrap:nowrap;">
+    <span class="copy grow">{{ apex_host }}:443</span>
+    <button class="copybtn" type="button" data-copy="{{ apex_host }}:443">Copy</button>
+  </div>
+  <p class="muted" style="margin:6px 0 0; font-size:12px;"><b>The <code>:443</code> matters.</b> The kube-apiserver defaults to port <b>6443</b>, but the portal answers on <b>443</b> — so set the port to 443. CloudGuard then calls <code>https://{{ apex_host }}:443/api</code> then <code>…/api/v1/{nodes,pods,services,endpoints}</code>. The portal serves one Kubernetes at this host (most recently created wins).</p>
+  {% if dc_auth and dc_auth.token_hash %}
+  <p class="muted" style="margin-top:10px;">Bearer token <code>(the one you set)</code> — the mock validates <code>Authorization: Bearer &lt;token&gt;</code> and returns <b>401</b> on mismatch. Use a ServiceAccount token with read on nodes/pods/services/endpoints. Click <i>Test Connection</i>, then import.</p>
+  {% else %}
+  <p class="muted" style="margin-top:10px;">Token <code>any</code> — the mock accepts any (or no) bearer token (none set). Click <i>Test Connection</i>, then import.</p>
+  {% endif %}
+  <p class="muted"><b>Heads-up:</b> every <code>/api/...</code> call CloudGuard makes is captured in the <a href="/activity?kind=datacenter">Activity log</a> (filter → Data Center → Kubernetes), so the responses can be matched to the first real trace.</p>
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0;">Objects Check Point will import</h2>
+  <p class="muted" style="margin-top:0;">Namespaces ({{ namespaces|length }}): {% for ns in namespaces %}<span class="pill">{{ ns }}</span> {% endfor %}<span class="muted" style="font-size:12px;">— a Namespace resolves to all its pods' IPs</span></p>
+  <h3>Pods ({{ pods|length }})</h3>
+  {% for p in pods %}<div class="itemrow"><span class="pill">Pod</span> <span class="pill faint">{{ p.namespace }}</span> <b>{{ p.name }}</b> <code>{{ p.ip }}</code> {% for k, v in (p.labels or {}).items() %}<span class="pill ok">{{ k }}={{ v }}</span>{% endfor %}</div>{% else %}<p class="muted">none</p>{% endfor %}
+  <div class="row" style="align-items:flex-start; gap:28px; margin-top:6px;">
+    <div class="grow"><h3>Nodes ({{ nodes|length }})</h3>{% for n in nodes %}<div class="itemrow"><span class="pill">Node</span> <b>{{ n.name }}</b> <code>{{ n.ip }}</code></div>{% else %}<span class="muted">none</span>{% endfor %}</div>
+    <div class="grow"><h3>Services ({{ services|length }})</h3>{% for s in services %}<div class="itemrow"><span class="pill">Svc</span> <span class="pill faint">{{ s.namespace }}</span> <b>{{ s.name }}</b> <code>{{ s.cluster_ip }}</code> <span class="pill">{{ s.type }}</span></div>{% else %}<span class="muted">none</span>{% endfor %}</div>
+  </div>
+  <p class="muted" style="margin-top:8px; font-size:12px;">Namespaces &amp; the Label view are derived from the pods; each Service's <code>/endpoints</code> resolves to the pod IPs in its namespace.</p>
+</div>
 {% else %}
 <div class="row">
   <div class="grow"><h1>{{ dc.name }} <span class="pill">{{ dc.provider }}</span></h1>
