@@ -21,7 +21,7 @@ Access Control rulebase in the portal and apply it to a gateway's Gaia API — o
 | M1 | **Generic Data Center** feed end-to-end (the hero demo, 10s sync) | ✅ done |
 | M2 | IoC feed (CSV Check Point format) | ⏳ next |
 | M3 | Network Feed (flat list + JSON/JQ, HTTP Basic auth) | ✅ done |
-| M4 | Demo scenario engine + live request-log UI | ⏳ |
+| M4 | **Scenarios** — live inventory mutation (tag flip / scale-out / remove) + named presets + server-side timed runner with live timeline + baseline/reset | ✅ done |
 | DC | **Data Centers** — mock OpenStack (Keystone + Nova + Neutron) CP connects to; template for more providers | ✅ done |
 | M6 | Branded UI, templates/presets, import/export | ⏳ |
 | DL | **Dynamic Layer** (set-dynamic-content): builder, mock Gaia API + real-gateway push, live progress + HTTP trace | ✅ done |
@@ -44,6 +44,7 @@ docs — what it mocks, how to point Check Point at it, endpoints, object model,
 | [VMware NSX-T](docs/integrations/nsxt.md) | NSX-T Policy Mode REST (Local Manager) | Data Center → NSX-T |
 | [VMware Global NSX-T](docs/integrations/global-nsxt.md) | NSX-T Global Manager / Federation | Data Center → Global NSX-T |
 | [Dynamic Layers](docs/integrations/dynamic-layers.md) | Gaia API push (`set-dynamic-content`) | *(push to gateway / mock)* |
+| [Scenarios](docs/integrations/scenarios.md) | live inventory mutation + timed presets | *(drives any DC mock's next poll)* |
 
 ## Quick start (local dev)
 

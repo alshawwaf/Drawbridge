@@ -6,6 +6,9 @@ PoV can be demoed end-to-end without the real thing. Two interaction models:
 - **Pull** — Check Point polls/scans the portal: the **feeds** and the **datacenter** API mocks.
 - **Push** — the portal pushes to the gateway's Gaia API: **Dynamic Layers**.
 
+To *drive* the pull model live during a demo, see **[Scenarios](scenarios.md)** — mutate a DC's
+inventory (flip a tag, scale out, run a timed preset) and the next ~30s scan re-resolves policy.
+
 | Integration | Mocks | Check Point object | Where you point it |
 |---|---|---|---|
 | [Generic Data Center](generic-datacenter.md) | sk167210 JSON server | Generic Data Center | `https://<portal>/gdc/<token>.json` |
@@ -19,6 +22,7 @@ PoV can be demoed end-to-end without the real thing. Two interaction models:
 | [Kubernetes](kubernetes.md) | kube-apiserver REST (bearer token) | Data Center → Kubernetes | full **URL** (apex) — `https://<portal>` |
 | [Nutanix Prism](nutanix.md) | Prism REST v3 + v4 (Basic auth) | Data Center → Nutanix | bare host (apex) — `<portal>` **on port 9440** (connector-fixed) |
 | [Dynamic Layers](dynamic-layers.md) | Gaia API (`set-dynamic-content`) | *(push to gateway / mock)* | n/a — portal is the client |
+| [Scenarios](scenarios.md) | live inventory mutation + timed presets | *(drives any DC mock's next poll)* | n/a — portal control panel (`/scenarios`) |
 
 ## Routing: path-based vs apex single-tenant
 
