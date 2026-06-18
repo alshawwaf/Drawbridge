@@ -135,6 +135,114 @@ def remove_workload(provider: str, content: dict, name: str) -> tuple[dict, str]
     return c, f"removed {_singular(provider)} {name}"
 
 
+def apply_action(provider: str, content: dict, action: str, *,
+                 name: str = "", value: str = "", ip: str = "") -> tuple[dict, str]:
+    """Dispatch one mutation by name — the single entry point shared by the control panel and the
+    timed runner. Raises ValueError on an unknown action or an invalid target."""
+    name, value, ip = name.strip(), value.strip(), ip.strip()
+    if action == "add_tag":
+        return add_tag(provider, content, name, value)
+    if action == "remove_tag":
+        return remove_tag(provider, content, name, value)
+    if action == "add_workload":
+        return add_workload(provider, content, name, ip, [value] if value else None)
+    if action == "remove_workload":
+        return remove_workload(provider, content, name)
+    raise ValueError(f"unknown action {action!r}")
+
+
+# ── Named presets ─────────────────────────────────────────────────────────────────────────────────
+# A preset expands (against the DC's current inventory) into an ordered list of steps the runner
+# applies — one per "tick" so each lands in a separate ~30s scan. Keys are stable; labels are UI text.
+_PRESET_LABELS = {
+    "quarantine": "Quarantine the first workload",
+    "scale_out": "Scale out (+3 workloads)",
+    "blocklist": "Blocklist every workload",
+}
+
+
+def _tag_literal(provider: str, word: str) -> str:
+    """A tag in the provider's style: bare ``word`` for list tags, ``word=true`` for map tags."""
+    return f"{word}=true" if is_map_tags(provider) else word
+
+
+def _gen_names(provider: str, content: dict, n: int, stem: str) -> list[str]:
+    existing = {w.get("name") for w in workloads(provider, content)}
+    out: list[str] = []
+    i = 1
+    while len(out) < n:
+        cand = f"{stem}-{i}"
+        i += 1
+        if cand not in existing and cand not in out:
+            out.append(cand)
+    return out
+
+
+def _gen_ips(provider: str, content: dict, n: int) -> list[str]:
+    """Pick ``n`` free IPs in the /24 of an existing workload (or 10.99.0.0/24), high in the range."""
+    existing = {w.get("ip") for w in workloads(provider, content)}
+    prefix = "10.99.0"
+    for w in workloads(provider, content):
+        parts = (w.get("ip") or "").split(".")
+        if len(parts) == 4 and all(p.isdigit() for p in parts):
+            prefix = ".".join(parts[:3])
+            break
+    out: list[str] = []
+    host = 201
+    while len(out) < n and host < 255:
+        cand = f"{prefix}.{host}"
+        host += 1
+        if cand not in existing:
+            out.append(cand)
+    return out
+
+
+def plan_preset(key: str, provider: str, content: dict) -> tuple[str, list[dict]]:
+    """Expand a named preset into ordered steps for the current inventory. Returns (label, steps);
+    each step is ``{action, name, value?, ip?, desc}``. Raises ValueError if it can't apply."""
+    if not supports_tags(provider):
+        raise ValueError(f"presets aren't available for {provider!r}")
+    wls = workloads(provider, content)
+    if key == "quarantine":
+        if not wls:
+            raise ValueError("no workloads to quarantine")
+        w = wls[0]
+        tag = _tag_literal(provider, "quarantine")
+        return _PRESET_LABELS[key], [
+            {"action": "add_tag", "name": w["name"], "value": tag, "desc": f"quarantine {w['name']}"}]
+    if key == "blocklist":
+        if not wls:
+            raise ValueError("no workloads to blocklist")
+        tag = _tag_literal(provider, "blocklist")
+        return _PRESET_LABELS[key], [
+            {"action": "add_tag", "name": w["name"], "value": tag, "desc": f"blocklist {w['name']}"}
+            for w in wls]
+    if key == "scale_out":
+        stem = _singular(provider).lower()
+        names = _gen_names(provider, content, 3, f"{stem}-scaleout")
+        ips = _gen_ips(provider, content, 3)
+        tag = _tag_literal(provider, "scaleout")
+        return _PRESET_LABELS[key], [
+            {"action": "add_workload", "name": nm, "ip": ip, "value": tag, "desc": f"add {stem} {nm} ({ip})"}
+            for nm, ip in zip(names, ips)]
+    raise ValueError(f"unknown preset {key!r}")
+
+
+def list_presets(provider: str, content: dict) -> list[dict]:
+    """Presets available for this DC, each ``{key, label, count}`` — count 0 means it can't run now
+    (e.g. quarantine with no workloads), so the UI can disable it."""
+    if not supports_tags(provider):
+        return []
+    out = []
+    for key in ("quarantine", "scale_out", "blocklist"):
+        try:
+            label, steps = plan_preset(key, provider, content)
+            out.append({"key": key, "label": label, "count": len(steps)})
+        except ValueError:
+            out.append({"key": key, "label": _PRESET_LABELS[key], "count": 0})
+    return out
+
+
 def snapshot(content: dict) -> dict:
     """A deep copy to stash as the baseline before a scenario runs."""
     return copy.deepcopy(content or {})

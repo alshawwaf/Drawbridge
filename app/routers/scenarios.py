@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from ..db import get_db
 from ..models import Datacenter, DatacenterBaseline
 from ..security import get_user_or_none
-from ..services import scenarios
+from ..services import scenario_runner, scenarios
 from .ui import _flash, _pop_flash, templates
 
 router = APIRouter(include_in_schema=False)
@@ -53,6 +53,7 @@ def scenarios_page(request: Request, dc: int = 0, db: Session = Depends(get_db))
             "map_tags": scenarios.is_map_tags(selected.provider),
             "tag_field": scenarios.tag_field(selected.provider),
             "has_baseline": selected.baseline is not None,
+            "presets": scenarios.list_presets(selected.provider, selected.content),
         })
     return templates.TemplateResponse(request, "scenarios.html", ctx)
 
@@ -66,17 +67,7 @@ def mutate(dc_id: int, request: Request, action: str = Form(...), name: str = Fo
     dc = _owned(db, dc_id, user)
     try:
         _capture_baseline(db, dc)
-        if action == "add_tag":
-            new, desc = scenarios.add_tag(dc.provider, dc.content, name.strip(), value.strip())
-        elif action == "remove_tag":
-            new, desc = scenarios.remove_tag(dc.provider, dc.content, name.strip(), value.strip())
-        elif action == "add_workload":
-            tags = [value.strip()] if value.strip() else None
-            new, desc = scenarios.add_workload(dc.provider, dc.content, name.strip(), ip.strip(), tags)
-        elif action == "remove_workload":
-            new, desc = scenarios.remove_workload(dc.provider, dc.content, name.strip())
-        else:
-            raise ValueError(f"unknown action {action!r}")
+        new, desc = scenarios.apply_action(dc.provider, dc.content, action, name=name, value=value, ip=ip)
         dc.content = new
         db.commit()
         _flash(request, f"{desc} — {_SYNC}")
@@ -114,3 +105,49 @@ def reset(dc_id: int, request: Request, db: Session = Depends(get_db)):
         db.commit()
         _flash(request, f"Reset to baseline — {_SYNC}")
     return RedirectResponse(f"/scenarios?dc={dc_id}", status_code=303)
+
+
+@router.post("/scenarios/{dc_id}/run")
+async def run_scenario(dc_id: int, request: Request, preset: str = Form(...),
+                       interval: int = Form(0), db: Session = Depends(get_db)):
+    """Expand a named preset against the live inventory and start the server-side timed runner."""
+    user = get_user_or_none(request, db)
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+    dc = _owned(db, dc_id, user)
+    try:
+        _capture_baseline(db, dc)
+        db.commit()                                # persist the reset target before the runner mutates
+        label, steps = scenarios.plan_preset(preset, dc.provider, dc.content)
+    except Exception as exc:
+        db.rollback()
+        _flash(request, str(exc), "error")
+        return RedirectResponse(f"/scenarios?dc={dc_id}", status_code=303)
+    interval = max(0, min(interval, 600))
+    scenario_runner.start_run(dc.id, dc.name, label, steps, interval)
+    pace = f"every {interval}s" if interval else "all at once"
+    _flash(request, f"Running “{label}” — {len(steps)} step{'s' if len(steps) != 1 else ''}, {pace}. {_SYNC}")
+    return RedirectResponse(f"/scenarios?dc={dc_id}", status_code=303)
+
+
+@router.post("/scenarios/{dc_id}/stop")
+def stop_scenario(dc_id: int, request: Request, db: Session = Depends(get_db)):
+    user = get_user_or_none(request, db)
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+    _owned(db, dc_id, user)
+    _flash(request, "Scenario stopped." if scenario_runner.stop_run(dc_id) else "No scenario was running.")
+    return RedirectResponse(f"/scenarios?dc={dc_id}", status_code=303)
+
+
+@router.get("/scenarios/{dc_id}/run-status", response_class=HTMLResponse)
+def run_status(dc_id: int, request: Request, db: Session = Depends(get_db)):
+    """Timeline fragment for the DC's latest run (polled by the page); empty when there's none."""
+    user = get_user_or_none(request, db)
+    if user is None:
+        return HTMLResponse("", status_code=401)
+    _owned(db, dc_id, user)
+    run = scenario_runner.get_run(dc_id)
+    if not run:
+        return HTMLResponse("")
+    return templates.TemplateResponse(request, "scenario_timeline.html", {"run": run})

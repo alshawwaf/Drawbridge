@@ -1,0 +1,20 @@
+<div class="runbox" data-running="{{ 'true' if run.status == 'running' else 'false' }}">
+  <div class="row" style="margin-bottom:10px;">
+    <b>{{ run.label }}</b>
+    <span class="pill {{ 'ok' if run.status == 'done' else ('faint' if run.status in ('stopped', 'running') else '') }}">{{ run.status }}</span>
+    <span class="muted">{{ ('every ' ~ run.interval ~ 's') if run.interval else 'all at once' }}</span>
+    {% if run.status == 'running' %}
+    <form method="post" action="/scenarios/{{ run.dc_id }}/stop" style="margin:0 0 0 auto;">
+      <button type="submit" class="danger">Stop</button>
+    </form>
+    {% endif %}
+  </div>
+  {% for s in run.steps %}
+  <div class="itemrow">
+    <span class="pill {{ 'ok' if s.status == 'done' else ('faint' if s.status == 'pending' else '') }}">{{ s.status }}</span>
+    <span class="grow">{{ s.desc }}</span>
+    {% if s.detail %}<span class="err">{{ s.detail }}</span>{% endif %}
+    {% if s.at %}<span class="muted">{{ s.at[11:19] }} UTC</span>{% endif %}
+  </div>
+  {% endfor %}
+</div>
