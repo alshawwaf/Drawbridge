@@ -103,11 +103,16 @@ def sites(dc, infra: str = "global-infra") -> dict:
     domain has *span*, and span comes from onboarded Locations. With a single Location everything
     spans it implicitly (CloudGuard makes no `/span` or `/domain-deployment-maps` call — confirmed
     from a full GM scan trace, whose entire cycle is domains + groups + sites). Shape follows the
-    NSX-T policy Site object (``site_type`` ``ONPREM_LM``, path ``/{infra}/sites/<id>``)."""
+    NSX-T policy Site object (``site_type`` ``ONPREM_LM``, path ``/{infra}/sites/<id>``).
+
+    The site's system UUID (``unique_id``/``site_id``) is what each global Group references via its
+    ``origin_site_id`` ("which site owns the object") so CloudGuard can place the group under this
+    site's Region — see ``groups()``. Both carry the same deterministic UUID."""
+    sid = _uuid(dc.token, "site", "default")
     return list_result([{
         "resource_type": "Site", "id": "default", "display_name": "default",
         "path": f"/{infra}/sites/default", "parent_path": f"/{infra}", "relative_path": "default",
-        "site_type": "ONPREM_LM", "site_index": 0, "unique_id": _uuid(dc.token, "site", "default"),
+        "site_type": "ONPREM_LM", "site_index": 0, "unique_id": sid, "site_id": sid,
         "marked_for_delete": False, "_protection": "NOT_PROTECTED", "_revision": 0,
     }])
 
@@ -117,24 +122,34 @@ def groups(dc, infra: str = "infra") -> dict:
     ``global-infra`` for the Global Manager (Global NSX-T).
 
     Each group carries a **``parent_path``** pointing at its domain (``/{infra}/domains/default``).
-    A real NSX-T policy object always has this, and it's what makes the group nest under its domain:
-    on the Global Manager CloudGuard maps the domain to a **Region** and searches that region for its
-    children (``rootId: default``), so without ``parent_path`` the groups are fetched but never
-    associated with the Region. (Confirmed from the NSX-T policy Group schema + a real GM trace.)"""
+    A real NSX-T policy object always has this; on the Local Manager it's what files the group under
+    its domain.
+
+    On the **Global Manager** that wasn't enough: a trace showed the Site makes CloudGuard build a
+    navigable Region (it drills in with ``GetDCNodeChildren rootId: region_id``), but the groups still
+    didn't appear under it because nothing tied them to the site. The GM Group schema has **no inline
+    ``span``** — instead every federated object carries **``origin_site_id``** ("which site owns the
+    object"). So for the GM we stamp each group's ``origin_site_id`` with the Site's system UUID (see
+    ``sites()``); that's the link CloudGuard uses to nest the group under that site's Region. (Not set
+    on the LM, which has no Federation sites.)"""
     res = []
     domain_path = f"/{infra}/domains/default"
+    site_owner = _uuid(dc.token, "site", "default") if infra == "global-infra" else None
     for g in (dc.content or {}).get("groups", []) or []:
         expr = []
         if g.get("member_tag"):
             expr.append({"resource_type": "Condition", "member_type": "VirtualMachine",
                          "key": "Tag", "operator": "EQUALS", "value": _tag_value(_tag(g["member_tag"]))})
         gid = _gid(g.get("name", ""))
-        res.append({
+        entry = {
             "id": gid, "display_name": g.get("name"), "resource_type": "Group",
             "path": f"{domain_path}/groups/{gid}", "parent_path": domain_path, "relative_path": gid,
             "expression": expr, "tags": [_tag(t) for t in (g.get("tags") or [])],
             "marked_for_delete": False, "_protection": "NOT_PROTECTED", "_revision": 0,
-        })
+        }
+        if site_owner:
+            entry["origin_site_id"] = site_owner
+        res.append(entry)
     return list_result(res)
 
 
