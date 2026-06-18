@@ -73,6 +73,49 @@
   </form>
   {% endif %}
 </div>
+
+{% if taggable %}
+<div class="card">
+  <h2 style="margin-top:0;">Run a scenario <span class="pill">timed</span></h2>
+  <p class="muted">Fire a named sequence and pace it so each step lands in a separate ~30s scan. The runner keeps going <b>server-side</b> — start it, then switch to SmartConsole and watch policy follow.</p>
+  <form method="post" action="/scenarios/{{ selected.id }}/run" class="row endalign">
+    <div>
+      <label>Scenario</label>
+      <select name="preset">
+        {% for p in presets %}<option value="{{ p.key }}"{{ ' disabled' if p.count == 0 else '' }}>{{ p.label }}{% if p.count %} · {{ p.count }} step{{ 's' if p.count > 1 else '' }}{% endif %}</option>{% endfor %}
+      </select>
+    </div>
+    <div>
+      <label>Pacing</label>
+      <select name="interval">
+        <option value="0">All at once</option>
+        <option value="10">Every 10s</option>
+        <option value="20" selected>Every 20s</option>
+        <option value="30">Every 30s</option>
+      </select>
+    </div>
+    <button type="submit">Run</button>
+  </form>
+  <div id="run-timeline" data-poll="/scenarios/{{ selected.id }}/run-status" style="margin-top:16px;"></div>
+</div>
+<script>
+(function () {
+  var box = document.getElementById('run-timeline');
+  if (!box) return;
+  var url = box.getAttribute('data-poll');
+  function tick() {
+    fetch(url, { headers: { 'X-Requested-With': 'fetch' } })
+      .then(function (r) { return r.ok ? r.text() : ''; })
+      .then(function (html) {
+        box.innerHTML = html;
+        if (box.querySelector('[data-running="true"]')) setTimeout(tick, 2000);
+      })
+      .catch(function () { setTimeout(tick, 3000); });
+  }
+  tick();
+})();
+</script>
+{% endif %}
 {% endif %}
 {% endif %}
 {% endblock %}

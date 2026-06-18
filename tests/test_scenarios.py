@@ -82,6 +82,60 @@ def test_workloads_reads_provider_specific_key():
     assert scenarios.workloads("aci", {}) == []                     # no 'vms' key → empty, not a crash
 
 
+def test_apply_action_dispatch():
+    c = {"vms": [{"name": "a", "ip": "10.0.0.1", "tags": []}]}
+    c1, _ = scenarios.apply_action("vcenter", c, "add_tag", name="a", value="prod")
+    assert c1["vms"][0]["tags"] == ["prod"]
+    c2, _ = scenarios.apply_action("vcenter", c, "add_workload", name="b", ip="10.0.0.2", value="web")
+    assert {w["name"] for w in c2["vms"]} == {"a", "b"} and c2["vms"][1]["tags"] == ["web"]
+    c3, _ = scenarios.apply_action("vcenter", c2, "remove_workload", name="a")
+    assert [w["name"] for w in c3["vms"]] == ["b"]
+    with pytest.raises(ValueError):
+        scenarios.apply_action("vcenter", c, "frobnicate", name="a")
+
+
+def test_plan_preset_quarantine_and_blocklist():
+    vc = {"vms": [{"name": "web-1", "ip": "10.0.0.11", "tags": []},
+                  {"name": "web-2", "ip": "10.0.0.12", "tags": []}]}
+    _, steps = scenarios.plan_preset("quarantine", "vcenter", vc)
+    assert steps == [{"action": "add_tag", "name": "web-1", "value": "quarantine",
+                      "desc": "quarantine web-1"}]                          # first workload only
+    _, bsteps = scenarios.plan_preset("blocklist", "vcenter", vc)
+    assert [s["name"] for s in bsteps] == ["web-1", "web-2"]                # every workload
+    assert all(s["value"] == "blocklist" for s in bsteps)
+    k8s = {"pods": [{"name": "p1", "ip": "10.40.0.1", "labels": {}}]}
+    _, ksteps = scenarios.plan_preset("quarantine", "kubernetes", k8s)
+    assert ksteps[0]["value"] == "quarantine=true"                         # map providers: key=value
+    with pytest.raises(ValueError):
+        scenarios.plan_preset("quarantine", "vcenter", {"vms": []})        # nothing to quarantine
+    with pytest.raises(ValueError):
+        scenarios.plan_preset("quarantine", "aci", {})                     # provider not taggable
+
+
+def test_plan_preset_scale_out_generates_unique_targets():
+    vc = {"vms": [{"name": "vm-scaleout-1", "ip": "10.0.0.201", "tags": []}]}   # force collisions
+    _, steps = scenarios.plan_preset("scale_out", "vcenter", vc)
+    names = [s["name"] for s in steps]
+    ips = [s["ip"] for s in steps]
+    assert len(steps) == 3 and all(s["action"] == "add_workload" for s in steps)
+    assert "vm-scaleout-1" not in names and len(set(names)) == 3            # skips existing name
+    assert "10.0.0.201" not in ips and len(set(ips)) == 3                   # skips existing ip
+    assert all(ip.startswith("10.0.0.") for ip in ips)                     # same /24 as inventory
+    assert all(s["value"] == "scaleout" for s in steps)
+    _, empty = scenarios.plan_preset("scale_out", "openstack", {})         # works on empty inventory
+    assert [s["name"] for s in empty] == \
+        ["instance-scaleout-1", "instance-scaleout-2", "instance-scaleout-3"]
+    assert all(s["ip"].startswith("10.99.0.") for s in empty)              # default subnet
+
+
+def test_list_presets_gating():
+    assert scenarios.list_presets("aci", {}) == []                         # not taggable → none
+    full = {p["key"]: p["count"] for p in scenarios.list_presets("vcenter", {"vms": [{"name": "a", "ip": "1.1.1.1"}]})}
+    assert full == {"quarantine": 1, "scale_out": 3, "blocklist": 1}
+    empty = {p["key"]: p["count"] for p in scenarios.list_presets("vcenter", {"vms": []})}
+    assert empty == {"quarantine": 0, "scale_out": 3, "blocklist": 0}      # only scale-out runnable
+
+
 def test_scenarios_routes_registered():
     from app.main import create_app
 
@@ -94,4 +148,6 @@ def test_scenarios_routes_registered():
 
     registered = set(paths(create_app()))
     assert {"/scenarios", "/scenarios/{dc_id}/mutate",
-            "/scenarios/{dc_id}/set-baseline", "/scenarios/{dc_id}/reset"} <= registered
+            "/scenarios/{dc_id}/set-baseline", "/scenarios/{dc_id}/reset",
+            "/scenarios/{dc_id}/run", "/scenarios/{dc_id}/stop",
+            "/scenarios/{dc_id}/run-status"} <= registered
