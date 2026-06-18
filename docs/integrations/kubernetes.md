@@ -33,14 +33,17 @@ Apex single-tenant (bare host) — **one Kubernetes mock per portal**.
 
 1. Portal → **Data Centers → New → Kubernetes**. Add Pods (`namespace/name = ip | labels`), Nodes, and
    Services; optionally set a bearer token.
-2. On the portal DC page, click **⬇ Download Service Account Token** (the portal generates a valid
-   per-DC token file — nothing to type).
+2. On the portal DC page, download **both** files (buttons there): **⬇ Service Account Token** and
+   **⬇ CA Certificate** (the portal's own TLS chain).
 3. SmartConsole → **New → More → Cloud → Data Center → Kubernetes…**
    - **Hostname / API server:** the portal's host **with `:443`** (e.g. `dcsim.ai.alshawwaf.ca:443`).
      The kube-apiserver default is **6443**; the portal answers on 443, so the port must be 443.
-   - **Import Service Account Token…:** pick the file you downloaded (it's a **required** field — the
-     connector takes the token as a file, not typed).
-   - **CA Certificate:** leave **unchecked** — the portal serves a public certificate CloudGuard trusts.
+   - **Import Service Account Token…:** pick the token file (required field — token is a file, not typed).
+   - **CA Certificate:** **tick the box** and **Import CA Certificate…** → the `.pem`. **Required** —
+     unlike the other connectors (which use Java's default trust store), the K8s connector builds its
+     own (`DomainKeyStore`) and won't trust the portal's cert without it; the TLS handshake fails
+     before any HTTP (a *"connection has failed / make sure the server is running"* error, even though
+     `curl` to the same host works).
 4. **Test Connection → Select objects.**
 
 ## Endpoints served (apex)

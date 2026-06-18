@@ -19,11 +19,30 @@ subsets}, Subset{addresses}, EndpointAddress{ip}.
 """
 import base64
 import json
+import socket
+import ssl
 import uuid
 
 from ..security import verify_password
 
 _NS_DEFAULT = "default"
+
+
+def portal_tls_chain_pem(host: str, port: int = 443) -> str:
+    """The portal's own served TLS certificate chain (leaf + intermediates + root) as a PEM bundle, for
+    the user to import into SmartConsole's **CA Certificate** field. The Kubernetes connector builds a
+    custom trust store (``DomainKeyStore`` / ``isCertificateTrustedFromCA``) and won't trust the
+    portal's cert without it, so the TLS handshake fails before any HTTP — unlike the other connectors,
+    which use the default Java trust store. Fetched with an unverified context (we only need the certs
+    the server presents, not to verify them)."""
+    ctx = ssl._create_unverified_context()
+    with socket.create_connection((host, port), timeout=8) as sock:
+        with ctx.wrap_socket(sock, server_hostname=host) as ss:
+            chain = list(ss.get_unverified_chain() or []) if hasattr(ss, "get_unverified_chain") else []
+    pems = [ssl.DER_cert_to_PEM_cert(der) for der in chain]
+    if not pems:                                          # fallback: at least the leaf
+        pems = [ssl.get_server_certificate((host, port))]
+    return "".join(p if p.endswith("\n") else p + "\n" for p in pems)
 
 
 def _b64u(b: bytes) -> str:
