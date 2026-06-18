@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block title %}Scenarios{% endblock %}
+{% block content %}
+<h1>Scenarios <span class="pill">live demo control</span></h1>
+<p class="muted">Mutate a data center's inventory on cue — flip a tag, scale out/in. CloudGuard <b>polls every ~30s</b>, so there's nothing to push: the next scan re-resolves the affected dynamic objects and rules live. Watch it land in the <a href="/activity?kind=datacenter">Activity log</a> and in SmartConsole.</p>
+
+{% if not rows %}
+<div class="card"><p class="muted" style="margin:0;">No data centers yet. <a href="/datacenters">Create one</a> first, then come back to drive live changes.</p></div>
+{% else %}
+
+<div class="filterbar">
+  {% for r in rows %}
+  <a class="chip {{ 'active' if selected and selected.id == r.dc.id else '' }}" href="/scenarios?dc={{ r.dc.id }}">
+    {{ r.dc.name }} <span class="chipcount">{{ r.dc.provider }} · {{ r.count }}</span>
+  </a>
+  {% endfor %}
+</div>
+
+{% if not selected %}
+<div class="card"><p class="muted" style="margin:0;">Pick a data center above to drive live changes.</p></div>
+{% else %}
+{% set unit = 'Pod' if selected.provider == 'kubernetes' else ('Instance' if selected.provider == 'openstack' else 'VM') %}
+<div class="card">
+  <div class="row">
+    <div class="grow">
+      <h2 style="margin:0;">{{ selected.name }} <span class="pill">{{ selected.provider }}</span></h2>
+      <p class="muted" style="margin:4px 0 0;">{% if taggable %}Flip a tag on a workload and it joins/leaves the matching dynamic group on CloudGuard's next scan.{% else %}This provider's live mutations aren't modeled yet.{% endif %}</p>
+    </div>
+    <form method="post" action="/scenarios/{{ selected.id }}/set-baseline" style="margin:0;">
+      <button type="submit" class="secondary">Set baseline</button>
+    </form>
+    <form method="post" action="/scenarios/{{ selected.id }}/reset" style="margin:0;">
+      <button type="submit" class="danger" {% if not has_baseline %}disabled{% endif %}
+              data-confirm="Reset “{{ selected.name }}” to its baseline inventory? Undoes every live change.">Reset to baseline</button>
+    </form>
+  </div>
+
+  {% if workloads %}
+  <div style="margin-top:14px;">
+    {% for w in workloads %}
+    <div class="itemrow">
+      <span class="pill">{{ unit }}</span> <b>{{ w.name }}</b> <code>{{ w.ip }}</code>
+      {% if taggable %}
+        {% if map_tags %}{% for k, v in (w.get(tag_field) or {}).items() %}<span class="pill ok">{{ k }}={{ v }}</span>{% endfor %}
+        {% else %}{% for t in (w.get(tag_field) or []) %}<span class="pill ok">{{ t }}</span>{% endfor %}{% endif %}
+        <form method="post" action="/scenarios/{{ selected.id }}/mutate" class="row" style="gap:6px; margin:0 0 0 auto;">
+          <input type="hidden" name="name" value="{{ w.name }}">
+          <input name="value" placeholder="{{ 'key=value' if map_tags else 'tag' }}" style="width:150px;" required>
+          <button type="submit" name="action" value="add_tag" class="secondary">+ tag</button>
+          <button type="submit" name="action" value="remove_tag" class="secondary">− tag</button>
+        </form>
+      {% endif %}
+      <form method="post" action="/scenarios/{{ selected.id }}/mutate" style="margin:0 0 0 {{ 'auto' if not taggable else '0' }};">
+        <input type="hidden" name="action" value="remove_workload">
+        <input type="hidden" name="name" value="{{ w.name }}">
+        <button type="submit" class="minibtn" data-confirm="Remove {{ unit|lower }} “{{ w.name }}” from the inventory?">Remove</button>
+      </form>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="muted" style="margin-top:14px;">No workloads to mutate{% if not taggable %} — Cisco ACI (groups by IP) and the feeds aren't wired into the engine yet{% endif %}.</p>
+  {% endif %}
+
+  {% if taggable %}
+  <h3 style="margin-top:20px;">Scale out — add a {{ unit|lower }}</h3>
+  <form method="post" action="/scenarios/{{ selected.id }}/mutate" class="row endalign">
+    <input type="hidden" name="action" value="add_workload">
+    <div><label>Name</label><input name="name" placeholder="web-9" required style="width:160px;"></div>
+    <div><label>IP</label><input name="ip" placeholder="10.0.0.99" required style="width:150px;"></div>
+    <div><label>Tag <span class="muted" style="font-weight:400;">(optional)</span></label><input name="value" placeholder="{{ 'key=value' if map_tags else 'tag' }}" style="width:160px;"></div>
+    <button type="submit">Add</button>
+  </form>
+  {% endif %}
+</div>
+{% endif %}
+{% endif %}
+{% endblock %}
