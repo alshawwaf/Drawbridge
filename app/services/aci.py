@@ -51,6 +51,24 @@ def _mo(cls: str, attrs: dict, children: list | None = None) -> dict:
     return mo
 
 
+# Every real APIC managed object carries these standard attributes. ``status`` is the critical one:
+# CloudGuard's AciScannerPropertiesConverter does ``mo.getModificationStatus().ordinal()`` for the
+# tenant/AP/EPG/ESG/endpoint (cms.jar). ApicMo binds ``status`` as an @XmlEnum
+# {NONE(""), CREATED("created"), MODIFIED("modified"), DELETED("deleted")}; omit it and it unmarshals
+# to null → NullPointerException, which fails the whole scan ("Data Center is still initializing").
+# ``created`` is the enum's create path, so the object is imported. nameAlias/descr default empty so
+# their getters never return null either. (Attributes a given class doesn't define are ignored —
+# ApicMo uses @XmlAccessorType(NONE), so unknown XML attributes are dropped on unmarshal.)
+_MO_DEFAULTS = {"status": "created", "nameAlias": "", "descr": ""}
+
+
+def _attrs(d: dict) -> dict:
+    out = dict(d)
+    for k, v in _MO_DEFAULTS.items():
+        out.setdefault(k, v)
+    return out
+
+
 # --- renderers: APIC is dual-format; CloudGuard uses XML --------------------------------------
 
 def imdata(objs: list) -> dict:
@@ -84,17 +102,17 @@ def _ap_dn(dc) -> str:
 
 
 def tenants(dc) -> list[dict]:
-    return [_mo("fvTenant", {"dn": _tenant_dn(dc), "name": _tenant(dc),
-                             "descr": "DC Integration Simulator tenant"})]
+    return [_mo("fvTenant", _attrs({"dn": _tenant_dn(dc), "name": _tenant(dc),
+                                    "descr": "DC Integration Simulator tenant"}))]
 
 
 def app_profiles(dc) -> list[dict]:
-    return [_mo("fvAp", {"dn": _ap_dn(dc), "name": _ap(dc)})]
+    return [_mo("fvAp", _attrs({"dn": _ap_dn(dc), "name": _ap(dc)}))]
 
 
 def epgs(dc) -> list[dict]:
-    return [_mo("fvAEPg", {"dn": f"{_ap_dn(dc)}/epg-{g['name']}", "name": g["name"],
-                           "pcEnfPref": "unenforced"}) for g in _epgs(dc)]
+    return [_mo("fvAEPg", _attrs({"dn": f"{_ap_dn(dc)}/epg-{g['name']}", "name": g["name"],
+                                  "pcEnfPref": "unenforced"})) for g in _epgs(dc)]
 
 
 def endpoints(dc) -> list[dict]:
@@ -103,8 +121,8 @@ def endpoints(dc) -> list[dict]:
     for g in _epgs(dc):
         for ip in g.get("ips", []) or []:
             mac = _mac(ip)
-            res.append(_mo("fvCEp", {"dn": f"{_ap_dn(dc)}/epg-{g['name']}/cep-{mac}",
-                                     "name": mac, "mac": mac, "ip": ip, "encap": "vlan-100"}))
+            res.append(_mo("fvCEp", _attrs({"dn": f"{_ap_dn(dc)}/epg-{g['name']}/cep-{mac}",
+                                            "name": mac, "mac": mac, "ip": ip, "encap": "vlan-100"})))
     return res
 
 
@@ -113,9 +131,9 @@ def esgs(dc) -> list[dict]:
     group resolves to addresses rather than being an empty object."""
     res = []
     for g in _esgs(dc):
-        sel = [_mo("fvEPSelector", {"name": f"ip-{ip}", "matchExpression": f"ip=='{ip}'"})
+        sel = [_mo("fvEPSelector", _attrs({"name": f"ip-{ip}", "matchExpression": f"ip=='{ip}'"}))
                for ip in g.get("ips", []) or []]
-        res.append(_mo("fvESg", {"dn": f"{_ap_dn(dc)}/esg-{g['name']}", "name": g["name"]}, sel))
+        res.append(_mo("fvESg", _attrs({"dn": f"{_ap_dn(dc)}/esg-{g['name']}", "name": g["name"]}), sel))
     return res
 
 
@@ -124,8 +142,8 @@ def ep_selectors(dc) -> list[dict]:
     out = []
     for g in _esgs(dc):
         for ip in g.get("ips", []) or []:
-            out.append(_mo("fvEPSelector", {"dn": f"{_ap_dn(dc)}/esg-{g['name']}/epselector-ip-{ip}",
-                                            "matchExpression": f"ip=='{ip}'"}))
+            out.append(_mo("fvEPSelector", _attrs({"dn": f"{_ap_dn(dc)}/esg-{g['name']}/epselector-ip-{ip}",
+                                                   "matchExpression": f"ip=='{ip}'"})))
     return out
 
 
@@ -156,7 +174,8 @@ def _flat_mos(dc) -> list[dict]:
     """Every managed object as a flat wire-MO (ESGs without nested children here — ``_nest`` re-parents
     by DN; the class query still nests an ESG's selectors via ``esgs()``)."""
     flat = tenants(dc) + app_profiles(dc) + epgs(dc) + endpoints(dc)
-    flat += [_mo("fvESg", {"dn": f"{_ap_dn(dc)}/esg-{g['name']}", "name": g["name"]}) for g in _esgs(dc)]
+    flat += [_mo("fvESg", _attrs({"dn": f"{_ap_dn(dc)}/esg-{g['name']}", "name": g["name"]}))
+             for g in _esgs(dc)]
     return flat + ep_selectors(dc)
 
 
@@ -164,7 +183,7 @@ def _nest(dc) -> dict:
     """Assemble the APIC MO tree (root ``polUni`` 'uni') from the flat inventory, parenting each MO by
     its DN — fvCEp under its fvAEPg, fvEPSelector under its fvESg, EPGs/ESGs under the fvAp, the AP
     under the tenant, the tenant under uni. Internal node = ``{cls, attrs, children}``."""
-    root = {"cls": "polUni", "attrs": {"dn": "uni"}, "children": []}
+    root = {"cls": "polUni", "attrs": _attrs({"dn": "uni"}), "children": []}
     by_dn = {"uni": root}
     nodes = []
     for mo in _flat_mos(dc):

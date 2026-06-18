@@ -85,6 +85,20 @@ def test_mo_subtree_honors_apic_query_options():
     assert len(full) == 1 and full[0]["fvTenant"]["children"][0]["fvAp"]["attributes"]["name"] == "DCSIM-AP"
 
 
+def test_every_mo_carries_status_for_the_modification_status_enum():
+    # cms.jar AciScannerPropertiesConverter does mo.getModificationStatus().ordinal() for every
+    # tenant/AP/EPG/ESG/endpoint; ApicMo binds `status` as an @XmlEnum, so a missing status attr
+    # unmarshals to null and NPEs the whole scan ("Data Center is still initializing").
+    for mo in aci.mo_subtree(DC, "uni"):                       # whole tree, incl. polUni
+        attrs = next(iter(mo.values()))["attributes"]
+        assert attrs.get("status") == "created", f"{next(iter(mo))} missing status"
+    for cls in ("fvTenant", "fvAp", "fvAEPg", "fvCEp", "fvESg", "fvEPSelector"):
+        objs = aci.class_objects(DC, cls)
+        assert objs and all(next(iter(m.values()))["attributes"].get("status") == "created" for m in objs)
+    # status renders into the XML the controller unmarshals
+    assert 'status="created"' in aci.to_xml(aci.class_objects(DC, "fvTenant"))
+
+
 def test_to_xml_is_the_apic_imdata_format():
     # CloudGuard's APIC client unmarshals XML — JSON makes it fail ("Content is not allowed in prolog").
     xml = aci.to_xml(aci.class_objects(DC, "fvTenant.xml"))
