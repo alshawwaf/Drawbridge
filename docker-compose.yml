@@ -21,6 +21,7 @@ services:
     ports:
       - "80:80"
       - "443:443"
+      - "9440:9440"   # Nutanix: CloudGuard's Prism connector hardcodes port 9440 (same cert/app)
     environment:
       - DCSIM_DOMAIN=${DCSIM_DOMAIN:-localhost}
     volumes:
