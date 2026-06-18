@@ -28,7 +28,7 @@ def _kind(path: str) -> str:
         return "feed_poll"
     # Datacenter mocks — token-prefixed, plus the apex (bare-host) vCenter/NSX-T endpoints.
     if (path.startswith(("/openstack/", "/vcenter/", "/nsxt/", "/policy/", "/sdk", "/rest/",
-                          "/global-manager/", "/proxmox/", "/api2/json"))
+                          "/global-manager/", "/proxmox/", "/api2/json", "/aci/"))
             or path.startswith("/api/session") or path.startswith("/api/v1/")):
         return "datacenter"
     if path.startswith("/api"):

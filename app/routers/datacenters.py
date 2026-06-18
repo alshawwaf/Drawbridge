@@ -147,6 +147,66 @@ def dc_create_proxmox(request: Request, name: str = Form(...), description: str 
     return RedirectResponse(f"/datacenters/{dc.id}", status_code=303)
 
 
+DEFAULT_ACI_EPGS = "web-epg = 10.30.0.11, 10.30.0.12\napp-epg = 10.30.0.21\ndb-epg = 10.30.0.31"
+DEFAULT_ACI_ESGS = "prod-esg = 10.30.0.11, 10.30.0.21, 10.30.0.31\nweb-esg = 10.30.0.11, 10.30.0.12"
+
+
+def parse_aci_groups(text: str) -> list[dict]:
+    """ACI EPG/ESG quick-entry: 'GroupName = ip1, ip2, …' per line → {name, ips}."""
+    out = []
+    for raw in text.splitlines():
+        ln = raw.strip()
+        if not ln or ln.startswith("#"):
+            continue
+        name, _, rest = ln.partition("=")
+        name = name.strip()
+        if not name:
+            continue
+        out.append({"name": name, "ips": [p.strip() for p in rest.split(",") if p.strip()]})
+    return out
+
+
+@router.get("/datacenters/new/aci", response_class=HTMLResponse)
+def dc_new_aci(request: Request, db: Session = Depends(get_db)):
+    if get_user_or_none(request, db) is None:
+        return RedirectResponse("/login", status_code=303)
+    return templates.TemplateResponse(request, "dc_new_aci.html", {"error": None, "form": {
+        "name": "Cisco-ACI-lab", "description": "", "tenant": "DCSIM", "app_profile": "DCSIM-AP",
+        "epgs_text": DEFAULT_ACI_EPGS, "esgs_text": DEFAULT_ACI_ESGS, "aci_username": "admin",
+    }})
+
+
+@router.post("/datacenters/new/aci")
+def dc_create_aci(request: Request, name: str = Form(...), description: str = Form(""),
+                  tenant: str = Form("DCSIM"), app_profile: str = Form("DCSIM-AP"),
+                  epgs_text: str = Form(""), esgs_text: str = Form(""),
+                  aci_username: str = Form("admin"), aci_password: str = Form(""),
+                  db: Session = Depends(get_db)):
+    user = get_user_or_none(request, db)
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+    try:
+        content = {"tenant": (tenant or "DCSIM").strip(), "app_profile": (app_profile or "DCSIM-AP").strip(),
+                   "epgs": parse_aci_groups(epgs_text), "esgs": parse_aci_groups(esgs_text)}
+        if not (content["epgs"] or content["esgs"]):
+            raise ValueError("Add at least one EPG or ESG.")
+        if aci_password:  # validated at aaaLogin; stored only as a one-way hash
+            content["auth"] = {"username": aci_username or "admin",
+                               "password_hash": hash_password(aci_password)}
+    except Exception as exc:
+        return templates.TemplateResponse(request, "dc_new_aci.html", {"error": str(exc), "form": {
+            "name": name, "description": description, "tenant": tenant, "app_profile": app_profile,
+            "epgs_text": epgs_text, "esgs_text": esgs_text, "aci_username": aci_username,
+        }}, status_code=400)
+    dc = Datacenter(token=new_feed_token(), provider="aci", name=name,
+                    description=description, content=content, owner_id=user.id)
+    db.add(dc)
+    db.commit()
+    db.refresh(dc)
+    _flash(request, f"Cisco ACI datacenter “{name}” saved.")
+    return RedirectResponse(f"/datacenters/{dc.id}", status_code=303)
+
+
 @router.get("/datacenters", response_class=HTMLResponse)
 def dc_list(request: Request, db: Session = Depends(get_db)):
     user = get_user_or_none(request, db)
@@ -162,6 +222,8 @@ def dc_list(request: Request, db: Session = Depends(get_db)):
             summary = f"{len(c.get('vms', []) or [])} VM(s)"
         elif d.provider in ("nsxt", "globalnsxt"):
             summary = f"{len(c.get('vms', []) or [])} VM(s) · {len(c.get('groups', []) or [])} group(s)"
+        elif d.provider == "aci":
+            summary = f"{len(c.get('epgs', []) or [])} EPG(s) · {len(c.get('esgs', []) or [])} ESG(s)"
         else:
             summary = (f"{len(c.get('instances', []) or [])} instance(s) · "
                        f"{len(c.get('subnets', []) or [])} subnet(s) · "
@@ -359,6 +421,14 @@ def dc_detail(dc_id: int, request: Request, db: Session = Depends(get_db)):
         return templates.TemplateResponse(request, "dc_detail.html", {
             "dc": dc, "apex_host": apex_host,
             "vms": dc.content.get("vms", []) or [], "node": (dc.content or {}).get("node") or "pve",
+            "dc_auth": (dc.content or {}).get("auth") or {}, "flash": _pop_flash(request),
+        })
+    if dc.provider == "aci":
+        return templates.TemplateResponse(request, "dc_detail.html", {
+            "dc": dc, "aci_url": f"{base}/aci/{dc.token}",
+            "tenant": (dc.content or {}).get("tenant") or "DCSIM",
+            "app_profile": (dc.content or {}).get("app_profile") or "DCSIM-AP",
+            "epgs": dc.content.get("epgs", []) or [], "esgs": dc.content.get("esgs", []) or [],
             "dc_auth": (dc.content or {}).get("auth") or {}, "flash": _pop_flash(request),
         })
     keystone_url = f"{base}/openstack/{dc.token}/v3"

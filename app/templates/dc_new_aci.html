@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}New Cisco ACI datacenter{% endblock %}
+{% block content %}
+<h1>New Cisco ACI datacenter</h1>
+<p class="muted">Define the inventory the mock <b>Cisco ACI</b> (APIC REST <code>/api/...</code>) will serve. Point a SmartConsole <i>Cisco ACI</i> Data Center object at the portal to import the Tenant, Application Profile, EPGs, ESGs, and their endpoint IPs.</p>
+{% if error %}<div class="err" style="margin:12px 0;">{{ error }}</div>{% endif %}
+
+<form method="post" action="/datacenters/new/aci" class="card">
+  <label>Name</label>
+  <input name="name" value="{{ form.name }}" placeholder="Cisco-ACI-lab" required>
+
+  <label>Description (optional)</label>
+  <input name="description" value="{{ form.description }}">
+
+  <div class="row endalign" style="gap:18px;">
+    <div class="grow"><label>Tenant</label><input name="tenant" value="{{ form.tenant }}" placeholder="DCSIM"></div>
+    <div class="grow"><label>Application Profile</label><input name="app_profile" value="{{ form.app_profile }}" placeholder="DCSIM-AP"></div>
+  </div>
+  <p class="muted">All EPGs/ESGs live under this one Tenant → Application Profile (<code>uni/tn-&lt;tenant&gt;/ap-&lt;ap&gt;</code>).</p>
+
+  <label>EPGs (End-Point Groups) — one per line: <code>EPGName = ip1, ip2, …</code></label>
+  <textarea name="epgs_text" placeholder="web-epg = 10.30.0.11, 10.30.0.12">{{ form.epgs_text }}</textarea>
+  <p class="muted">Each member IP becomes a client endpoint (<code>fvCEp</code>) attached to the EPG, so CloudGuard resolves the EPG to those addresses.</p>
+
+  <label>ESGs (End-point Security Groups) — one per line: <code>ESGName = ip1, ip2, …</code></label>
+  <textarea name="esgs_text" style="min-height:80px;" placeholder="prod-esg = 10.30.0.11, 10.30.0.21">{{ form.esgs_text }}</textarea>
+  <p class="muted">Served as <code>fvESg</code> with IP endpoint selectors (<code>fvEPSelector</code>); ESGs can span EPGs. (R82.10 also imports L2 Out / L2 External EPG — not modeled yet; the mock returns them empty.)</p>
+
+  <h2 style="font-size:15px; margin:22px 0 0;">APIC credentials</h2>
+  <label>Username</label>
+  <input name="aci_username" value="{{ form.aci_username }}" placeholder="admin">
+  <label>Password <span class="muted" style="font-weight:400;">— optional</span></label>
+  <input name="aci_password" type="password" autocomplete="new-password" placeholder="Leave blank to accept any credentials (open lab)">
+  <p class="muted">If set, the mock validates them on <code>aaaLogin</code> and returns <code>401</code> on mismatch. Stored only as a one-way hash. APIC role: read on Tenant/EPG or higher.</p>
+
+  <div class="row" style="margin-top:18px;">
+    <button type="submit">Create datacenter</button>
+    <a class="btn secondary" href="/datacenters">Cancel</a>
+  </div>
+</form>
+{% endblock %}

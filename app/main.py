@@ -12,7 +12,7 @@ from .db import SessionLocal, init_db
 from .models import User
 from .middleware import ActivityLogMiddleware
 from .routers import (
-    activity, datacenters, dynamic_layers, feeds, gateways, gaia_mock, nsxt_mock,
+    aci_mock, activity, datacenters, dynamic_layers, feeds, gateways, gaia_mock, nsxt_mock,
     openstack_mock, proxmox_mock, serve, ui, vcenter_mock,
 )
 from .security import hash_password
@@ -66,6 +66,7 @@ def create_app() -> FastAPI:
     app.include_router(vcenter_mock.router)
     app.include_router(nsxt_mock.router)
     app.include_router(proxmox_mock.router)
+    app.include_router(aci_mock.router)
     app.include_router(datacenters.router)
     app.include_router(activity.router)
 
