@@ -100,6 +100,53 @@ def parse_nsxt_groups(text: str) -> list[dict]:
     return out
 
 
+# Proxmox VE tags are flat (a ';'-joined string), so 'name = ip | tag, tag' reuses parse_instances.
+DEFAULT_PROXMOX_VMS = ("web-1 = 10.20.0.11 | web, prod\nweb-2 = 10.20.0.12 | web, prod\n"
+                       "db-1 = 10.20.0.21 | db, prod")
+
+
+@router.get("/datacenters/new/proxmox", response_class=HTMLResponse)
+def dc_new_proxmox(request: Request, db: Session = Depends(get_db)):
+    if get_user_or_none(request, db) is None:
+        return RedirectResponse("/login", status_code=303)
+    return templates.TemplateResponse(request, "dc_new_proxmox.html", {"error": None, "form": {
+        "name": "Proxmox-lab", "description": "", "vms_text": DEFAULT_PROXMOX_VMS,
+        "node": "pve", "token_id": "root@pam!cloudguard",
+    }})
+
+
+@router.post("/datacenters/new/proxmox")
+def dc_create_proxmox(request: Request, name: str = Form(...), description: str = Form(""),
+                      vms_text: str = Form(""), node: str = Form("pve"),
+                      token_id: str = Form(""), token_secret: str = Form(""),
+                      db: Session = Depends(get_db)):
+    user = get_user_or_none(request, db)
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+    try:
+        vms = parse_instances(vms_text)  # 'name = ip | tag, tag' — Proxmox tags are flat
+        if not vms:
+            raise ValueError("Add at least one VM.")
+        content = {"vms": vms, "node": (node or "pve").strip()}
+        # API token is validated on every call; the secret is stored only as a one-way hash.
+        # Leave the secret blank for an open lab (the mock then accepts any/no token).
+        if token_secret:
+            content["auth"] = {"token_id": (token_id or "").strip(),
+                               "secret_hash": hash_password(token_secret)}
+    except Exception as exc:
+        return templates.TemplateResponse(request, "dc_new_proxmox.html", {"error": str(exc), "form": {
+            "name": name, "description": description, "vms_text": vms_text, "node": node,
+            "token_id": token_id,
+        }}, status_code=400)
+    dc = Datacenter(token=new_feed_token(), provider="proxmox", name=name,
+                    description=description, content=content, owner_id=user.id)
+    db.add(dc)
+    db.commit()
+    db.refresh(dc)
+    _flash(request, f"Proxmox datacenter “{name}” saved.")
+    return RedirectResponse(f"/datacenters/{dc.id}", status_code=303)
+
+
 @router.get("/datacenters", response_class=HTMLResponse)
 def dc_list(request: Request, db: Session = Depends(get_db)):
     user = get_user_or_none(request, db)
@@ -111,7 +158,7 @@ def dc_list(request: Request, db: Session = Depends(get_db)):
     rows = []
     for d in dcs:
         c = d.content or {}
-        if d.provider == "vcenter":
+        if d.provider in ("vcenter", "proxmox"):
             summary = f"{len(c.get('vms', []) or [])} VM(s)"
         elif d.provider in ("nsxt", "globalnsxt"):
             summary = f"{len(c.get('vms', []) or [])} VM(s) · {len(c.get('groups', []) or [])} group(s)"
@@ -306,6 +353,12 @@ def dc_detail(dc_id: int, request: Request, db: Session = Depends(get_db)):
         return templates.TemplateResponse(request, "dc_detail.html", {
             "dc": dc, "apex_host": apex_host,
             "vms": dc.content.get("vms", []) or [], "groups": dc.content.get("groups", []) or [],
+            "dc_auth": (dc.content or {}).get("auth") or {}, "flash": _pop_flash(request),
+        })
+    if dc.provider == "proxmox":
+        return templates.TemplateResponse(request, "dc_detail.html", {
+            "dc": dc, "apex_host": apex_host,
+            "vms": dc.content.get("vms", []) or [], "node": (dc.content or {}).get("node") or "pve",
             "dc_auth": (dc.content or {}).get("auth") or {}, "flash": _pop_flash(request),
         })
     keystone_url = f"{base}/openstack/{dc.token}/v3"
