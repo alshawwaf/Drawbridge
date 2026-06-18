@@ -88,3 +88,22 @@ Basic credentials set on the portal DC are stored only as a one-way hash and val
 - First-cut to the decompiled contract; any call beyond these is in the
   [Activity log](/activity?kind=datacenter) (filter → Data Center → Nutanix) to model next. After a
   change, **delete + re-add** the object in SmartConsole so it re-syncs.
+
+## Exposing port 9440 on a Dokploy / Traefik host
+
+The hosted `dcsim.ai.alshawwaf.ca` runs behind Dokploy's Traefik (which terminates TLS on 443 and
+ignores the repo's `docker-compose.yml`/`Caddyfile`). Nutanix needs `:9440`, so add it on the host.
+The simplest is a raw TCP passthrough — the TLS handshake + SNI flow straight to Traefik on 443, which
+serves the real Let's Encrypt cert and routes to the app:
+
+```bash
+# Run on the Dokploy host. --network host so it can reach Traefik's 443 on 127.0.0.1.
+docker run -d --name dcsim-nutanix-9440 --restart unless-stopped --network host \
+  alpine/socat TCP-LISTEN:9440,fork,reuseaddr TCP:127.0.0.1:443
+
+# Then open inbound 9440 in the host / cloud firewall (security group).
+```
+
+No cert handling, no app change — `:9440` becomes a mirror of `:443`. In SmartConsole enter the **bare**
+hostname (`dcsim.ai.alshawwaf.ca`) and CloudGuard connects on 9440. (Alternatively, a proper Traefik
+`:9440` entrypoint + a router for the domain achieves the same without an extra process.)
