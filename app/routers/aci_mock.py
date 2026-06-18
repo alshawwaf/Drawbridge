@@ -88,10 +88,23 @@ async def aci_login_apex(request: Request, fmt: str = "", db: Session = Depends(
     return _login(_apex_dc(db), await request.body())
 
 
+# aaaRefresh is a GET in APIC (keeps the session token alive); POST kept defensively. A 405 here makes
+# CloudGuard treat the session as dead → "Cannot execute request on a closed session" mid-scan.
+@router.get("/api/aaaRefresh.{fmt}")
+@router.get("/api/aaaRefresh")
 @router.post("/api/aaaRefresh.{fmt}")
 @router.post("/api/aaaRefresh")
 def aci_refresh_apex(fmt: str = "", db: Session = Depends(get_db)):
     return _refresh(_apex_dc(db))
+
+
+@router.get("/api/aaaLogout.{fmt}")
+@router.get("/api/aaaLogout")
+@router.post("/api/aaaLogout.{fmt}")
+@router.post("/api/aaaLogout")
+def aci_logout_apex(fmt: str = "", db: Session = Depends(get_db)):
+    _apex_dc(db)
+    return _xml([])                                # APIC logout → empty imdata
 
 
 @router.get("/api/node/class/{cls}")
@@ -116,10 +129,21 @@ async def aci_login_tok(token: str, request: Request, fmt: str = "", db: Session
     return _login(_dc(db, token), await request.body())
 
 
+@router.get("/aci/{token}/api/aaaRefresh.{fmt}")
+@router.get("/aci/{token}/api/aaaRefresh")
 @router.post("/aci/{token}/api/aaaRefresh.{fmt}")
 @router.post("/aci/{token}/api/aaaRefresh")
 def aci_refresh_tok(token: str, fmt: str = "", db: Session = Depends(get_db)):
     return _refresh(_dc(db, token))
+
+
+@router.get("/aci/{token}/api/aaaLogout.{fmt}")
+@router.get("/aci/{token}/api/aaaLogout")
+@router.post("/aci/{token}/api/aaaLogout.{fmt}")
+@router.post("/aci/{token}/api/aaaLogout")
+def aci_logout_tok(token: str, fmt: str = "", db: Session = Depends(get_db)):
+    _dc(db, token)
+    return _xml([])
 
 
 @router.get("/aci/{token}/api/node/class/{cls}")
