@@ -122,6 +122,16 @@ def test_sites_returns_one_location_so_the_region_is_real():
     assert s[0]["path"] == "/global-infra/sites/default" and s[0]["site_type"] == "ONPREM_LM"
 
 
+def test_global_groups_are_owned_by_the_site_so_they_nest_under_its_region():
+    # The GM Group schema has no inline span; it carries origin_site_id ("which site owns it").
+    # That must match the Site's system UUID so CloudGuard nests the group under that site's Region.
+    site_uuid = nsxt.sites(DC)["results"][0]["unique_id"]
+    gm = nsxt.groups(DC, infra="global-infra")["results"][0]
+    assert gm["origin_site_id"] == site_uuid
+    # The Local Manager has no Federation sites, so its groups must NOT carry origin_site_id.
+    assert "origin_site_id" not in nsxt.groups(DC)["results"][0]
+
+
 def test_domains_lists_the_default_domain():
     # CloudGuard enumerates /infra/domains before fetching each domain's groups (and renders each
     # global-infra domain as a Region on the Global Manager).

@@ -80,26 +80,33 @@ from the data in those responses**.
 ## Region ↔ NS Group nesting (what actually makes them appear)
 
 The R82.10 guide: *"A Region … some regions are created automatically after you onboard locations in
-Global Manager."* That `locations` clause is the key. Two things are needed, and both came from the
+Global Manager."* That `locations` clause is the key. **Three** things are needed, each from the
 trace, not a guess:
 
 1. **`parent_path` on each group** → `/global-infra/domains/default` (`app/services/nsxt.py::groups`).
    A real NSX-T policy object always has it; the Federation tooling re-parents groups purely by
-   rewriting this path. Necessary, but on its own the groups were still fetched-but-not-nested.
-2. **A real Location at `/global-infra/sites`** (`app/services/nsxt.py::sites`). The `default` Region
-   renders from the domain, but a global domain's objects only surface where the domain has **span**,
-   and span comes from onboarded Locations. With `/sites` empty the domain spanned nothing, so its
-   groups realized nowhere. We return **one** `Site` (`site_type: ONPREM_LM`,
-   `path: /global-infra/sites/default`); a single Location means everything spans it implicitly,
-   which is why CloudGuard needs no `/span` call.
+   rewriting this path. Necessary, but on its own the groups were fetched-but-not-nested.
+2. **A real Location at `/global-infra/sites`** (`app/services/nsxt.py::sites`). With `/sites` empty
+   the Region was an empty placeholder; adding **one** `Site` (`site_type: ONPREM_LM`) made CloudGuard
+   build a real, *navigable* Region — confirmed in `cloud_proxy.elg`, which went from
+   `SearchRepository(rootId: default)` to `GetDCNodeChildren(rootId: region_id)` (it now drills *into*
+   the Region for children). The Site also triggered CloudGuard to resolve each group's
+   `members/ip-addresses`.
+3. **`origin_site_id` on each global group** → the Site's `unique_id` (`groups()`, GM only). The GM
+   Group schema has **no inline `span`**; instead every federated object carries `origin_site_id`
+   ("which site owns the object"). After (1)+(2) the Region was navigable but still childless, because
+   nothing tied the groups to the site. Stamping each group's `origin_site_id` with the Site's system
+   UUID is the link CloudGuard follows to nest the group under that site's Region.
 
 ```
-GET /global-infra/sites  →  [ { "resource_type": "Site", "id": "default",
+GET /global-infra/sites  →  [ { "resource_type": "Site", "id": "default", "unique_id": "<UUID>",
                                  "path": "/global-infra/sites/default", "site_type": "ONPREM_LM", … } ]
+GET …/groups             →  [ { …, "parent_path": "/global-infra/domains/default",
+                                 "origin_site_id": "<UUID>" } ]    ← same UUID ties group → site → Region
 ```
 
-The `parent_path` is also added on the Local Manager (`/infra/domains/default`) — correct there and
-harmless to NSX-T's flat group list. The LM has no `/sites` (no Federation Locations).
+`parent_path` is also set on the Local Manager (`/infra/domains/default`) — correct and harmless to
+NSX-T's flat list. The LM has no `/sites` and no `origin_site_id` (no Federation).
 
 ## Gotchas / pending
 
