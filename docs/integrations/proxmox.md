@@ -43,6 +43,8 @@ per portal, most-recently-created wins). Plain `<host>` would hit 8006 and miss 
 - `GET /api2/json/version` — version probe
 - `GET /api2/json/cluster/resources?type=vm` — VMs (`qemu/<vmid>`, `name`, `node`, `status`, `tags`)
 - `GET /api2/json/cluster/resources` — nodes **+** VMs (no filter)
+- `GET /api2/json/cluster/status` — cluster quorum **+ the node with its IP** (anchors the Node tree;
+  CloudGuard calls this and an empty body leaves the VMs un-parented → empty Select-objects tree)
 - `GET /api2/json/nodes` — node list
 - `GET /api2/json/nodes/{node}/qemu` — VMs on a node
 - `GET /api2/json/nodes/{node}/qemu/{vmid}/agent/network-get-interfaces` — **VM IPs** (guest agent)

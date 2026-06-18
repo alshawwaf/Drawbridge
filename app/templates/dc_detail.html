@@ -92,7 +92,7 @@
   {% if dc_auth and dc_auth.token_id %}
   <p class="muted" style="margin-top:10px;">API Token ID <code>{{ dc_auth.token_id }}</code> · Secret <code>(the one you set)</code> — the mock validates the <code>PVEAPIToken</code> header and returns <b>401</b> on mismatch. Token role: <code>PVEAuditor</code> (Sys.Audit / VM.Audit / VM.Monitor). Click <i>Test Connection</i>, then import.</p>
   {% else %}
-  <p class="muted" style="margin-top:10px;">API Token <code>any</code> — the mock accepts any (or no) token (none set). Click <i>Test Connection</i>, then import.</p>
+  <p class="muted" style="margin-top:10px;">No token set — the mock accepts any token. <b>But SmartConsole still needs a real-format Token ID</b> like <code>root@pam!cloudguard</code> (any Secret will do); a bare value such as <code>any</code> makes CloudGuard fail with <i>“Data Center service problem”</i> because it can't parse the token. Click <i>Test Connection</i>, then import.</p>
   {% endif %}
   <p class="muted"><b>Heads-up:</b> Proxmox is a new R82.10 scanner and responses are tuned iteratively. Every <code>/api2/json</code> call CloudGuard makes is captured in the <a href="/activity?kind=datacenter">Activity log</a>, so the exact endpoints/shapes can be matched.</p>
 </div>

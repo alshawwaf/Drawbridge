@@ -26,6 +26,11 @@ def _node_name(dc) -> str:
     return (dc.content or {}).get("node") or _NODE
 
 
+def _node_ip(dc) -> str:
+    """The Proxmox node's management IP (imported as the Node object's IP). Configurable; defaulted."""
+    return (dc.content or {}).get("node_ip") or "10.20.0.10"
+
+
 def _indexed(dc) -> list[tuple[int, dict]]:
     """(vmid, vm) pairs. vmid is synthesized as 100+position so it's stable across calls."""
     return [(100 + i, vm) for i, vm in enumerate(_vms(dc))]
@@ -72,6 +77,19 @@ def nodes(dc) -> dict:
     """``GET /nodes`` — the node list."""
     return data([{"node": _node_name(dc), "status": "online", "type": "node",
                   "maxcpu": 8, "maxmem": 33554432000, "uptime": 86400}])
+
+
+def cluster_status(dc) -> dict:
+    """``GET /cluster/status`` — cluster quorum + the node(s) with their **IPs**. CloudGuard reads
+    this to establish the Node tree (R82.10 imports Nodes with IPs); an empty response here leaves the
+    VMs with no node to nest under, so the Select-objects tree stays empty. Confirmed from the trace:
+    CloudGuard calls this and we were returning the catch-all's empty list."""
+    node = _node_name(dc)
+    return data([
+        {"id": "cluster", "type": "cluster", "name": "dcsim", "version": 1, "quorate": 1, "nodes": 1},
+        {"id": f"node/{node}", "type": "node", "name": node, "nodeid": 1, "online": 1, "local": 1,
+         "ip": _node_ip(dc), "level": ""},
+    ])
 
 
 def node_qemu(dc, node: str) -> dict:
