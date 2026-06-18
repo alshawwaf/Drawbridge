@@ -12,6 +12,7 @@ from ..db import get_db
 from ..models import Datacenter, User
 from ..security import get_user_or_none, hash_password, new_feed_token
 from ..services import kubernetes as k8s_svc
+from ..services import nutanix as nutanix_svc
 from ..services import openstack as os_mock
 from .ui import _flash, _pop_flash, templates
 
@@ -337,6 +338,74 @@ def dc_create_kubernetes(request: Request, name: str = Form(...), description: s
     return RedirectResponse(f"/datacenters/{dc.id}", status_code=303)
 
 
+# --- Nutanix Prism --------------------------------------------------------------------------
+# VMs carry Nutanix Categories (key=value, like tags), entered as 'name = ip | key=value, key=value'.
+DEFAULT_NUTANIX_VMS = ("web-vm-1 = 10.50.0.11 | Environment=Production, AppType=Web\n"
+                       "web-vm-2 = 10.50.0.12 | Environment=Production, AppType=Web\n"
+                       "db-vm-1 = 10.50.0.21 | Environment=Production, AppType=Database")
+
+
+def parse_nutanix_vms(text: str) -> list[dict]:
+    """Nutanix VM quick-entry: 'name = ip | key=value, key=value' per line. The pipe part is the VM's
+    applied Categories (Prism key/value pairs); reuses parse_k8s_labels for the 'k=v' map."""
+    out = []
+    for raw in text.splitlines():
+        ln = raw.strip()
+        if not ln or ln.startswith("#"):
+            continue
+        cats = {}
+        if "|" in ln:
+            ln, cpart = (p.strip() for p in ln.split("|", 1))
+            cats = parse_k8s_labels(cpart)
+        if "=" not in ln:
+            raise ValueError(f"VM line must be 'name = ip': {raw.strip()!r}")
+        name, ip = (p.strip() for p in ln.split("=", 1))
+        if not name or not ip:
+            raise ValueError(f"VM needs a name and an IP: {raw.strip()!r}")
+        out.append({"name": name, "ip": ip, "categories": cats})
+    return out
+
+
+@router.get("/datacenters/new/nutanix", response_class=HTMLResponse)
+def dc_new_nutanix(request: Request, db: Session = Depends(get_db)):
+    if get_user_or_none(request, db) is None:
+        return RedirectResponse("/login", status_code=303)
+    return templates.TemplateResponse(request, "dc_new_nutanix.html", {"error": None, "form": {
+        "name": "Nutanix-lab", "description": "", "vms_text": DEFAULT_NUTANIX_VMS,
+        "nutanix_username": "admin",
+    }})
+
+
+@router.post("/datacenters/new/nutanix")
+def dc_create_nutanix(request: Request, name: str = Form(...), description: str = Form(""),
+                      vms_text: str = Form(""), nutanix_username: str = Form("admin"),
+                      nutanix_password: str = Form(""), db: Session = Depends(get_db)):
+    user = get_user_or_none(request, db)
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+    try:
+        vms = parse_nutanix_vms(vms_text)
+        if not vms:
+            raise ValueError("Add at least one VM.")
+        content = {"vms": vms}
+        # Basic-auth credentials validated on every call; stored only as a one-way hash. Blank = open.
+        if nutanix_password:
+            content["auth"] = {"username": nutanix_username or "admin",
+                               "password_hash": hash_password(nutanix_password)}
+    except Exception as exc:
+        return templates.TemplateResponse(request, "dc_new_nutanix.html", {"error": str(exc), "form": {
+            "name": name, "description": description, "vms_text": vms_text,
+            "nutanix_username": nutanix_username,
+        }}, status_code=400)
+    dc = Datacenter(token=new_feed_token(), provider="nutanix", name=name,
+                    description=description, content=content, owner_id=user.id)
+    db.add(dc)
+    db.commit()
+    db.refresh(dc)
+    _flash(request, f"Nutanix datacenter “{name}” saved.")
+    return RedirectResponse(f"/datacenters/{dc.id}", status_code=303)
+
+
 @router.get("/datacenters", response_class=HTMLResponse)
 def dc_list(request: Request, db: Session = Depends(get_db)):
     user = get_user_or_none(request, db)
@@ -357,6 +426,9 @@ def dc_list(request: Request, db: Session = Depends(get_db)):
         elif d.provider == "kubernetes":
             summary = (f"{len(c.get('pods', []) or [])} pod(s) · {len(c.get('nodes', []) or [])} node(s) · "
                        f"{len(c.get('services', []) or [])} service(s)")
+        elif d.provider == "nutanix":
+            ncats = sum(len(v.get("categories") or {}) for v in (c.get("vms", []) or []))
+            summary = f"{len(c.get('vms', []) or [])} VM(s) · {ncats} category tag(s)"
         else:
             summary = (f"{len(c.get('instances', []) or [])} instance(s) · "
                        f"{len(c.get('subnets', []) or [])} subnet(s) · "
@@ -569,6 +641,12 @@ def dc_detail(dc_id: int, request: Request, db: Session = Depends(get_db)):
             "dc": dc, "apex_host": apex_host,
             "nodes": dc.content.get("nodes", []) or [], "pods": dc.content.get("pods", []) or [],
             "services": dc.content.get("services", []) or [], "namespaces": k8s_svc.namespaces(dc),
+            "dc_auth": (dc.content or {}).get("auth") or {}, "flash": _pop_flash(request),
+        })
+    if dc.provider == "nutanix":
+        return templates.TemplateResponse(request, "dc_detail.html", {
+            "dc": dc, "apex_host": apex_host, "vms": dc.content.get("vms", []) or [],
+            "categories": nutanix_svc.categories(dc),
             "dc_auth": (dc.content or {}).get("auth") or {}, "flash": _pop_flash(request),
         })
     keystone_url = f"{base}/openstack/{dc.token}/v3"

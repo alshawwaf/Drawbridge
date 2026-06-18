@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}New Nutanix datacenter{% endblock %}
+{% block content %}
+<h1>New Nutanix datacenter</h1>
+<p class="muted">Define the inventory the mock <b>Nutanix Prism</b> (REST) will serve. Point a SmartConsole <i>Nutanix</i> Data Center object at the portal to import <b>VMs</b> (with their IPs) and the <b>Categories</b> (Prism key/value tags) applied to them. Serves both Prism <b>v3</b> and <b>v4</b> (CloudGuard probes v4, falls back to v3).</p>
+{% if error %}<div class="err" style="margin:12px 0;">{{ error }}</div>{% endif %}
+
+<form method="post" action="/datacenters/new/nutanix" class="card">
+  <label>Name</label>
+  <input name="name" value="{{ form.name }}" placeholder="Nutanix-lab" required>
+
+  <label>Description (optional)</label>
+  <input name="description" value="{{ form.description }}">
+
+  <label>Virtual machines — one per line: <code>name = ip | Category=Value, Category=Value</code></label>
+  <textarea name="vms_text" placeholder="web-vm-1 = 10.50.0.11 | Environment=Production, AppType=Web">{{ form.vms_text }}</textarea>
+  <p class="muted">Served at <code>/api/nutanix/v3/vms/list</code> (and the v4 <code>/api/vmm/v4.1/ahv/config/vms</code>); the IP comes from the VM's NIC. The pipe part is the VM's <b>Categories</b> — Prism's <code>key=value</code> tags. The <b>Category</b> tree (Key → Value → VMs) is built from these, so a category resolves to the VMs carrying it.</p>
+
+  <h2 style="font-size:15px; margin:22px 0 0;">Prism credentials (Basic auth)</h2>
+  <label>Username</label>
+  <input name="nutanix_username" value="{{ form.nutanix_username }}" placeholder="admin">
+  <label>Password <span class="muted" style="font-weight:400;">— optional</span></label>
+  <input name="nutanix_password" type="password" autocomplete="new-password" placeholder="Leave blank to accept any credentials (open lab)">
+  <p class="muted">If set, the mock validates the <code>Authorization: Basic</code> header and returns <code>401</code> on mismatch. Stored only as a one-way hash. A Prism Viewer role is enough.</p>
+
+  <div class="row" style="margin-top:18px;">
+    <button type="submit">Create datacenter</button>
+    <a class="btn secondary" href="/datacenters">Cancel</a>
+  </div>
+</form>
+{% endblock %}
