@@ -77,6 +77,21 @@ def test_parsers():
     assert svcs[0]["type"] == "LoadBalancer" and svcs[1]["type"] == "ClusterIP"
 
 
+def test_sa_token_is_a_wellformed_deterministic_jwt():
+    import base64
+    import json
+    t = k8s.sa_token(DC)
+    parts = t.split(".")
+    assert len(parts) == 3                                # header.payload.signature
+    def _dec(p):
+        return json.loads(base64.urlsafe_b64decode(p + "=" * (-len(p) % 4)))
+    assert _dec(parts[0])["typ"] == "JWT"
+    assert _dec(parts[1])["iss"] == "kubernetes/serviceaccount"
+    assert k8s.sa_token(DC) == t                          # deterministic (stable per DC)
+    other = _DC({}); other.token = "different-token"
+    assert k8s.sa_token(other) != t                       # varies per DC
+
+
 def test_middleware_classifies_k8s_as_datacenter():
     assert _kind("/api/v1/nodes") == "datacenter"
     assert _kind("/api") == "datacenter"                 # version discovery

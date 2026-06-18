@@ -33,11 +33,15 @@ Apex single-tenant (bare host) — **one Kubernetes mock per portal**.
 
 1. Portal → **Data Centers → New → Kubernetes**. Add Pods (`namespace/name = ip | labels`), Nodes, and
    Services; optionally set a bearer token.
-2. SmartConsole → **New → More → Cloud → Data Center → Kubernetes…**
+2. On the portal DC page, click **⬇ Download Service Account Token** (the portal generates a valid
+   per-DC token file — nothing to type).
+3. SmartConsole → **New → More → Cloud → Data Center → Kubernetes…**
    - **Hostname / API server:** the portal's host **with `:443`** (e.g. `dcsim.ai.alshawwaf.ca:443`).
      The kube-apiserver default is **6443**; the portal answers on 443, so the port must be 443.
-   - **Token:** the bearer token you set on the portal DC (or any token if you left it open).
-3. **Test Connection → Select objects.**
+   - **Import Service Account Token…:** pick the file you downloaded (it's a **required** field — the
+     connector takes the token as a file, not typed).
+   - **CA Certificate:** leave **unchecked** — the portal serves a public certificate CloudGuard trusts.
+4. **Test Connection → Select objects.**
 
 ## Endpoints served (apex)
 
@@ -65,9 +69,11 @@ Kubernetes **and** an NSX-T DC at the same host.
 
 ## Auth
 
-A bearer token set on the portal DC is stored only as a one-way hash and validated on every call
-(`Authorization: Bearer <token>` → `401` on mismatch). Leave it blank for an open lab (any/no token
-accepted). The kube-apiserver TLS is the portal's own cert.
+SmartConsole's Kubernetes object requires the service-account token as an **imported file** (not a
+typed field), and decodes it — so it must be a well-formed JWT. The portal generates a deterministic,
+valid per-DC token (download button on the DC page → `GET /datacenters/{id}/k8s-token`). The mock is
+the API server and accepts it (open lab). TLS uses the portal's own (public) certificate, so the
+optional **CA Certificate** import can stay unchecked.
 
 ## Gotchas / pending
 
