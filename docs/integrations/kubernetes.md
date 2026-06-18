@@ -36,8 +36,9 @@ Apex single-tenant (bare host) — **one Kubernetes mock per portal**.
 2. On the portal DC page, download **both** files (buttons there): **⬇ Service Account Token** and
    **⬇ CA Certificate** (the portal's own TLS chain).
 3. SmartConsole → **New → More → Cloud → Data Center → Kubernetes…**
-   - **Hostname / API server:** the portal's host **with `:443`** (e.g. `dcsim.ai.alshawwaf.ca:443`).
-     The kube-apiserver default is **6443**; the portal answers on 443, so the port must be 443.
+   - **Hostname / API server:** the full URL **with `https://`** (e.g. `https://dcsim.ai.alshawwaf.ca`),
+     **no port**. The connector parses this field with `new URL()`, so a bare `host:443` fails with
+     *"unknown protocol"*; `https://` connects on 443 (the portal's port, the https default).
    - **Import Service Account Token…:** pick the token file (required field — token is a file, not typed).
    - **CA Certificate:** **tick the box** and **Import CA Certificate…** → the `.pem`. **Required** —
      unlike the other connectors (which use Java's default trust store), the K8s connector builds its
@@ -80,8 +81,10 @@ optional **CA Certificate** import can stay unchecked.
 
 ## Gotchas / pending
 
-- **Port `:443`** — the API server default is 6443; the hostname field must carry `:443` or CloudGuard
-  won't reach the portal (same pattern as Proxmox's 8006).
+- **Hostname is a URL** — enter `https://<host>` (scheme required, no port). The connector runs
+  `new URL()` on the field, so `host:443` fails with `MalformedURLException: unknown protocol`; with
+  `https://` it uses the https default (443, the portal's port). This is unlike Proxmox/Nutanix, whose
+  fields take a bare `host:port`.
 - **Namespaces aren't fetched** — they're derived from pods/services. A pod with no `namespace/` prefix
   lands in `default`.
 - First-cut to the decompiled contract; if a live scan calls anything beyond the five endpoints it's in

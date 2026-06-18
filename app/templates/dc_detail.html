@@ -148,12 +148,12 @@
 <div class="card">
   <h2 style="margin-top:0;">Connect from SmartConsole</h2>
   <p class="muted">Objects → New → More → Cloud → Data Center → <i>Kubernetes…</i>, then enter:</p>
-  <label>Hostname / API server <span class="muted" style="font-weight:400;">— include <code>:443</code></span></label>
+  <label>Hostname / API server <span class="muted" style="font-weight:400;">— enter the full URL, with <code>https://</code></span></label>
   <div class="row" style="gap:8px; align-items:center; flex-wrap:nowrap;">
-    <span class="copy grow">{{ apex_host }}:443</span>
-    <button class="copybtn" type="button" data-copy="{{ apex_host }}:443">Copy</button>
+    <span class="copy grow">https://{{ apex_host }}</span>
+    <button class="copybtn" type="button" data-copy="https://{{ apex_host }}">Copy</button>
   </div>
-  <p class="muted" style="margin:6px 0 0; font-size:12px;"><b>The <code>:443</code> matters.</b> The kube-apiserver defaults to port <b>6443</b>, but the portal answers on <b>443</b> — so set the port to 443. CloudGuard then calls <code>https://{{ apex_host }}:443/api</code> then <code>…/api/v1/{nodes,pods,services,endpoints}</code>. The portal serves one Kubernetes at this host (most recently created wins).</p>
+  <p class="muted" style="margin:6px 0 0; font-size:12px;"><b>Include <code>https://</code></b> (and <b>no</b> port). The K8s connector treats this field as a URL and runs <code>new URL()</code> on it — a bare <code>host:443</code> makes it read the hostname as the protocol (<i>“unknown protocol” / connectivity error</i>). With the scheme it connects on 443 (the portal's port; https default) and calls <code>https://{{ apex_host }}/api</code> → <code>…/api/v1/{nodes,pods,services,endpoints}</code>. The portal serves one Kubernetes at this host (most recently created wins).</p>
   <h3 style="margin:14px 0 4px;">Two files to import</h3>
   <p class="muted" style="margin-top:0;">Download both, then in the <i>New Kubernetes</i> dialog:</p>
   <ol class="muted" style="margin:6px 0 0 18px;">
