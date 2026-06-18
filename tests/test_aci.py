@@ -85,3 +85,8 @@ def test_parse_aci_groups():
 
 def test_middleware_classifies_aci_as_datacenter():
     assert _kind("/aci/tok/api/node/class/fvTenant.json") == "datacenter"
+    # CloudGuard strips the path → apex /api/aaaLogin + class queries must classify as Data Center too
+    assert _kind("/api/aaaLogin.xml") == "datacenter"
+    assert _kind("/api/node/class/fvTenant.xml") == "datacenter"
+    # and must NOT steal the NSX-T family's apex paths
+    assert _kind("/api/session/create") == "datacenter"  # still datacenter (NSX-T), not mis-routed

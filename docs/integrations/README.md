@@ -15,7 +15,7 @@ PoV can be demoed end-to-end without the real thing. Two interaction models:
 | [VMware NSX-T](nsxt.md) | NSX-T Policy Mode REST (Local Manager) | Data Center → NSX-T | bare host (apex) — `<portal>` |
 | [VMware Global NSX-T](global-nsxt.md) | NSX-T Global Manager / Federation | Data Center → Global NSX-T | bare host (apex) — `<portal>` |
 | [Proxmox VE](proxmox.md) | Proxmox `/api2/json` REST | Data Center → Proxmox | bare host **+ `:443`** (apex) — `<portal>:443` |
-| [Cisco ACI](aci.md) | APIC REST (`aaaLogin` + class queries) | Data Center → Cisco ACI | full URL (path) — `https://<portal>/aci/<token>` |
+| [Cisco ACI](aci.md) | APIC REST — **XML** (`aaaLogin` + class queries) | Data Center → Cisco ACI | bare host (apex) — `https://<portal>` |
 | [Dynamic Layers](dynamic-layers.md) | Gaia API (`set-dynamic-content`) | *(push to gateway / mock)* | n/a — portal is the client |
 
 ## Routing: path-based vs apex single-tenant
@@ -24,10 +24,11 @@ The Check Point **Hostname/URL** field decides how a mock is addressed:
 
 - **Path-based (token in URL)** — OpenStack and the feeds accept a full URL, so the token lives in the
   path and you can run **many** of each per portal.
-- **Apex single-tenant** — vCenter, NSX-T, and Proxmox accept only a **bare host** (no scheme/path),
-  so those mocks are served at the portal **root** and resolve the **most-recently-created** DC of
-  that provider. Limit: **one each per portal**. (Token routes are kept for debugging.) Proxmox also
-  needs an explicit **`:443`** since its field defaults to port 8006.
+- **Apex single-tenant** — vCenter, NSX-T, Proxmox, and **Cisco ACI** are served at the portal **root**
+  and resolve the **most-recently-created** DC of that provider. Limit: **one each per portal**. (Token
+  routes are kept for debugging.) vCenter/NSX-T accept only a bare host; Proxmox also needs an explicit
+  **`:443`** (its field defaults to 8006); ACI accepts a full URL but its client **uses only the host**
+  (it discards the path), so it lands at the apex too.
 
 ## Full inventory is required
 

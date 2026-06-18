@@ -26,26 +26,29 @@ Per the [CloudGuard Controller Cisco ACI page](https://sc1.checkpoint.com/docume
 | Auth | APIC **username + password** (`POST /api/aaaLogin.json` → token used as the `APIC-cookie`); role: read on Tenant/EPG. Login-domain syntax `apic:<domain>\<user>` |
 | API | class queries `GET /api/node/class/<class>.json`; envelope `{"totalCount","imdata":[{class:{attributes,children}}]}` |
 
-## Routing — path-based
+## Routing — apex (host only)
 
-The URLs field takes a full URL, so this mock is **path-based** (token in the path) — a portal can
-host **many** ACI mocks. The admin pastes `https://<portal>/aci/<token>` into the URLs field; CloudGuard
-appends `/api/aaaLogin.json`, `/api/node/class/<class>.json`, etc. (No apex `/api/` route, so no
-collision with the NSX-T family's `/api/session` + `/api/v1`.)
+Although the URLs field takes a full URL, **CloudGuard's APIC client uses only the host** and discards
+any path (confirmed from a trace: a `/aci/<token>/...` path-based mock 404'd, and the controller
+XML-parsed the 404 JSON → "Content is not allowed in prolog"). So the admin enters the **bare host**
+and the mock is served at the **apex** — resolving the most-recently created ACI datacenter (**one ACI
+per portal**, like vCenter/NSX-T). ACI's `/api/aaaLogin`, `/api/node|class|mo` don't collide with the
+NSX-T family's `/api/session` + `/api/v1`. Token routes (`/aci/<token>/api/...`) are kept for testing.
 
 ## Configure in SmartConsole
 
 1. Portal → **Data Centers → New → Cisco ACI**. Set the Tenant + App Profile, add EPGs / ESGs
    (`Name = ip1, ip2`), and optionally a username/password (blank = open lab).
 2. SmartConsole → **New → More → Cloud → Data Center → Cisco ACI…**
-   - **URLs:** paste `https://dcsim.ai.alshawwaf.ca/aci/<token>` (shown on the DC page).
+   - **URLs:** the **bare host** `https://dcsim.ai.alshawwaf.ca` (shown on the DC page) — CloudGuard
+     ignores any path, so a `/aci/<token>` URL also works but resolves to the same apex.
    - **Username / Password:** the credentials you set (or anything, open lab).
 3. **Test Connection → Select objects.**
 
-## Endpoints served (path-based)
+## Endpoints served (apex; token routes mirror them)
 
-- `POST /aci/<token>/api/aaaLogin.json` — login → token + `APIC-cookie`; `…/aaaRefresh.json` too
-- `GET /aci/<token>/api/node/class/<class>.json` (and `/api/class/<class>.json`):
+- `POST /api/aaaLogin[.xml|.json]` — login → token + `APIC-cookie`; `/api/aaaRefresh` too
+- `GET /api/node/class/<class>[.xml]` (and `/api/class/<class>`):
   - `fvTenant` → the Tenant · `fvAp` → the Application Profile
   - `fvAEPg` → EPGs · `fvCEp` → endpoints (one per EPG member IP, `dn` under its EPG, with `ip`/`mac`)
   - `fvESg` → ESGs (each with `fvEPSelector` children carrying the member IPs) · `fvEPSelector` → flat
