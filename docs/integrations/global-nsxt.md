@@ -7,9 +7,10 @@ Groups, VMs, and Tags that span sites — the federated sibling of [NSX-T](nsxt.
 - Router: [`app/routers/nsxt_mock.py`](../../app/routers/nsxt_mock.py) (`/global-manager/…` routes)
 
 > **Status:** Regions (from the global-infra domains) and NS Groups import against live CloudGuard.
-> Making the groups **nest under their Region** required giving each group a `parent_path` pointing
-> at its domain (see [Region ↔ NS Group nesting](#region--ns-group-nesting) below) — pending a final
-> re-test. Per the
+> Making the groups **nest under their Region** required two things, both confirmed from a full GM
+> trace: a `parent_path` on each group **and** a real Federation Location at `/global-infra/sites`
+> (see [Region ↔ NS Group nesting](#region--ns-group-nesting-what-actually-makes-them-appear)) —
+> pending a final re-test. Per the
 > [R82.10 admin guide](https://sc1.checkpoint.com/documents/R82.10/WebAdminGuides/EN/CP_R82.10_CloudGuard_Controller_AdminGuide/Content/Topics-CGRDG/Supported-Data-Centers-VMware.htm),
 > the Global Manager is **NSX-T 4.1 only**; config is unified with NSX-T under the `nsxt.` prefix.
 
@@ -44,12 +45,14 @@ Apex single-tenant (bare host), like NSX-T — **one Global NSX-T mock per porta
   its domain, so it nests under the Region)
 - `GET …/global-infra/domains/default/groups/{id}/members/ip-addresses` — group → member IPs (the call
   CloudGuard actually makes to resolve a group); `…/members/virtual-machines` is also served
+- `GET /global-manager/api/v1/global-infra/sites` — the Federation **Location** (one `Site`). **Must
+  not be empty** — it's what backs the Region so the groups nest (see below)
 - `GET …/global-infra/realized-state/enforcement-points/default/vifs` — VIFs → IPs (the **IP
   expressions** that back the groups, since Global NSX-T imports VIFs rather than VM objects)
 - `GET …/global-infra/realized-state/virtual-machines` — served defensively; R82.10 does **not** list
   VMs among Global NSX-T's imported objects, so CloudGuard may not call it
-- catch-all `GET /global-manager/api/v1/{path}` → empty `ListResult` (so `/global-infra/sites` and any
-  other GM call don't 404-stall before they're modeled)
+- catch-all `GET /global-manager/api/v1/{path}` → empty `ListResult` (so any GM call we haven't
+  modeled returns a valid empty list instead of 404-stalling)
 
 Routing note: `/policy/…` resolves the **nsxt** DC and `/global-manager/…` the **globalnsxt** DC, so a
 portal can run one of each; the shared `/api/session` + `/api/v1` resolve the most-recently-created of
@@ -61,47 +64,51 @@ Identical to [NSX-T](nsxt.md): VMs (`name = ip | scope=tag, …`) and NS Groups
 (`GroupName = member_tag | grouptag,…`). Groups resolve to their **member VMs** by tag — global groups
 just carry a `/global-infra/…` path.
 
-## Confirmed GM scanner paths (from a real-CloudGuard trace)
+## Confirmed GM scanner contract (from a full real-CloudGuard trace)
 
-The Global Manager scanner calls (captured in the portal Activity log):
-- `GET /global-manager/api/v1/global-infra/domains` → CloudGuard renders each global **domain** as a
-  **Region** (the `default` domain → the `default` Region you see in the dialog).
-- `GET …/global-infra/domains/default/groups` → **NS Groups** (served ✓). In the GM dialog these are
-  nested **under the Region**, not a separate top-level list like the Local Manager.
+The Global Manager scan cycle is **exactly four calls** (captured in the portal Activity log) — no
+`/regions`, no `/span`, no `…/domain-deployment-maps`:
+- `GET /global-manager/api/v1/global-infra/domains` → the `default` domain.
+- `GET …/global-infra/domains/default/groups` → the **NS Groups**.
 - `GET …/global-infra/domains/default/groups/{id}/members/ip-addresses` → group → member IPs.
-- `GET /global-manager/api/v1/global-infra/sites` → the Federation **Locations** probe; we return an
-  empty list (fine for a single-site lab — Regions come from the domains, not sites).
+- `GET /global-manager/api/v1/global-infra/sites` (called twice) → the Federation **Locations**.
 
-## Region ↔ NS Group nesting
+CloudGuard builds the entire Region tree from just those three response bodies (domains, groups,
+sites). It never asks for span or deployment-maps, so any cross-object association must be **inferred
+from the data in those responses**.
 
-The R82.10 guide calls a Region *"A group for security and networking policies. Some regions are
-created automatically after you onboard locations in Global Manager."* In practice, for a
-single-site lab, **CloudGuard maps the `global-infra` `default` domain to the `default` Region** —
-confirmed by a real GM trace where CloudGuard, after fetching the domain, runs an internal
-`SearchRepository(rootId: default)` (the `default` is the domain id) looking for that region's
-children.
+## Region ↔ NS Group nesting (what actually makes them appear)
 
-For an NS Group to show up *under* that Region, the group must declare the domain as its parent.
-Every real NSX-T policy object carries a **`parent_path`** (verified against the NSX-T policy Group
-schema; the Federation tooling even re-parents groups purely by rewriting this path). Our mock
-originally omitted it, so the groups were fetched but never associated with the Region. The fix:
-each group now returns
+The R82.10 guide: *"A Region … some regions are created automatically after you onboard locations in
+Global Manager."* That `locations` clause is the key. Two things are needed, and both came from the
+trace, not a guess:
+
+1. **`parent_path` on each group** → `/global-infra/domains/default` (`app/services/nsxt.py::groups`).
+   A real NSX-T policy object always has it; the Federation tooling re-parents groups purely by
+   rewriting this path. Necessary, but on its own the groups were still fetched-but-not-nested.
+2. **A real Location at `/global-infra/sites`** (`app/services/nsxt.py::sites`). The `default` Region
+   renders from the domain, but a global domain's objects only surface where the domain has **span**,
+   and span comes from onboarded Locations. With `/sites` empty the domain spanned nothing, so its
+   groups realized nowhere. We return **one** `Site` (`site_type: ONPREM_LM`,
+   `path: /global-infra/sites/default`); a single Location means everything spans it implicitly,
+   which is why CloudGuard needs no `/span` call.
 
 ```
-"path":        "/global-infra/domains/default/groups/<id>",
-"parent_path": "/global-infra/domains/default",     ← ties the group to the Region
-"relative_path": "<id>"
+GET /global-infra/sites  →  [ { "resource_type": "Site", "id": "default",
+                                 "path": "/global-infra/sites/default", "site_type": "ONPREM_LM", … } ]
 ```
 
-(`app/services/nsxt.py::groups`). The same `parent_path` is added on the Local Manager
-(`/infra/domains/default`) — it's correct there too and harmless to NSX-T's flat group list.
+The `parent_path` is also added on the Local Manager (`/infra/domains/default`) — correct there and
+harmless to NSX-T's flat group list. The LM has no `/sites` (no Federation Locations).
 
 ## Gotchas / pending
 
-- **Regions = the global-infra domains** (confirmed by trace): each domain → a Region. No separate
-  region modeling needed for a single-domain demo. Multi-region would mean multiple domains (or
-  modeling Federation Locations under `/global-infra/sites`, which we currently return empty —
-  harmless for one site).
+- **`/global-infra/sites` must return a Location.** An empty list renders the Region as an empty
+  placeholder (the domain has no span → its groups realize nowhere). This was the actual cause of
+  "Region shows, but no NS Groups under it" — `parent_path` alone didn't fix it.
+- **Single Location only.** We return one `Site` (`default`); everything spans it implicitly, so no
+  `/span` or `/domain-deployment-maps` is needed. Multi-region would mean multiple Sites + per-group
+  span — not modeled (not needed for a single-site PoV).
 - After redeploying this change, **delete + re-add** the Global NSX-T object in SmartConsole so it
-  re-syncs (it caches the broken topology where the groups didn't nest).
+  re-syncs (it caches the previous topology where the groups didn't nest).
 - Apex single-tenant; same diagnostics as [NSX-T](nsxt.md).

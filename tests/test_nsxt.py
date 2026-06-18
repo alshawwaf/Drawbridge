@@ -113,6 +113,15 @@ def test_middleware_classifies_global_manager_as_datacenter():
     assert _kind("/global-manager/api/v1/global-infra/domains/default/groups") == "datacenter"
 
 
+def test_sites_returns_one_location_so_the_region_is_real():
+    # /global-infra/sites must return a Location (not empty) or CloudGuard's Region stays an empty
+    # placeholder and the global NS Groups never nest under it.
+    s = nsxt.sites(DC)["results"]
+    assert len(s) == 1
+    assert s[0]["resource_type"] == "Site" and s[0]["display_name"] == "default"
+    assert s[0]["path"] == "/global-infra/sites/default" and s[0]["site_type"] == "ONPREM_LM"
+
+
 def test_domains_lists_the_default_domain():
     # CloudGuard enumerates /infra/domains before fetching each domain's groups (and renders each
     # global-infra domain as a Region on the Global Manager).

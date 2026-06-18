@@ -93,6 +93,25 @@ def domains(infra: str = "infra") -> dict:
     }])
 
 
+def sites(dc, infra: str = "global-infra") -> dict:
+    """Federation **Locations** (Global Manager only — ``/global-infra/sites``).
+
+    The GM lists onboarded NSX sites here, and CloudGuard turns each into a **Region** (R82.10:
+    *"regions are created automatically after you onboard locations in Global Manager"*). We return
+    **one** Location so the Region is backed by a real site instead of an empty placeholder — which
+    is what lets the global NS Groups nest under it: a global domain's objects only surface where the
+    domain has *span*, and span comes from onboarded Locations. With a single Location everything
+    spans it implicitly (CloudGuard makes no `/span` or `/domain-deployment-maps` call — confirmed
+    from a full GM scan trace, whose entire cycle is domains + groups + sites). Shape follows the
+    NSX-T policy Site object (``site_type`` ``ONPREM_LM``, path ``/{infra}/sites/<id>``)."""
+    return list_result([{
+        "resource_type": "Site", "id": "default", "display_name": "default",
+        "path": f"/{infra}/sites/default", "parent_path": f"/{infra}", "relative_path": "default",
+        "site_type": "ONPREM_LM", "site_index": 0, "unique_id": _uuid(dc.token, "site", "default"),
+        "marked_for_delete": False, "_protection": "NOT_PROTECTED", "_revision": 0,
+    }])
+
+
 def groups(dc, infra: str = "infra") -> dict:
     """NS Groups. ``infra`` is the policy path segment: ``infra`` for a Local Manager (NSX-T) or
     ``global-infra`` for the Global Manager (Global NSX-T).

@@ -217,6 +217,14 @@ def manager_other_apex(rest: str, request: Request, db: Session = Depends(get_db
 _GM = "/global-manager/api/v1/global-infra"
 
 
+@router.get(_GM + "/sites")
+def gm_sites_apex(request: Request, db: Session = Depends(get_db)):
+    """Federation Locations → CloudGuard Regions. Must return a real site (not the catch-all's empty
+    list) or the Region stays an empty placeholder and the global NS Groups never nest under it."""
+    dc = _global_dc(db)
+    return _guard(dc, request) or nsxt.sites(dc)
+
+
 @router.get(_GM + "/domains")
 def gm_domains_apex(request: Request, db: Session = Depends(get_db)):
     dc = _global_dc(db)
