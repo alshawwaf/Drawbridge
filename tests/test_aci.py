@@ -55,6 +55,18 @@ def test_unknown_class_is_empty_imdata():
     assert aci.class_query(DC, "fvWhatever")["imdata"] == []
 
 
+def test_mo_subtree_returns_objects_under_the_dn():
+    # CloudGuard's scanner uses queryByDn (/api/mo/<dn>); empty there = blank Select-objects list.
+    root = aci.mo_subtree(DC, "uni.xml")                              # whole tree
+    classes = [next(iter(m)) for m in root]
+    assert "fvTenant" in classes and "fvAEPg" in classes and "fvCEp" in classes and "fvESg" in classes
+    tenant_sub = aci.mo_subtree(DC, "uni/tn-DCSIM")                   # tenant + descendants
+    assert any(aci._dn(m) == "uni/tn-DCSIM" for m in tenant_sub)
+    assert all(aci._dn(m) == "uni/tn-DCSIM" or aci._dn(m).startswith("uni/tn-DCSIM/") for m in tenant_sub)
+    epg_sub = aci.mo_subtree(DC, "uni/tn-DCSIM/ap-DCSIM-AP/epg-web-epg")   # EPG + its endpoints
+    assert any(next(iter(m)) == "fvCEp" for m in epg_sub)
+
+
 def test_to_xml_is_the_apic_imdata_format():
     # CloudGuard's APIC client unmarshals XML — JSON makes it fail ("Content is not allowed in prolog").
     xml = aci.to_xml(aci.class_objects(DC, "fvTenant.xml"))

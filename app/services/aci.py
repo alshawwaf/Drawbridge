@@ -148,6 +148,28 @@ def class_query(dc, class_name: str) -> dict:
     return imdata(class_objects(dc, class_name))
 
 
+def _dn(mo: dict) -> str:
+    return next(iter(mo.values()))["attributes"].get("dn", "")
+
+
+def _all_flat(dc) -> list[dict]:
+    """Every managed object, flat (ESGs without nested children — selectors are listed separately)."""
+    flat = tenants(dc) + app_profiles(dc) + epgs(dc) + endpoints(dc)
+    flat += [_mo("fvESg", {"dn": f"{_ap_dn(dc)}/esg-{g['name']}", "name": g["name"]}) for g in _esgs(dc)]
+    return flat + ep_selectors(dc)
+
+
+def mo_subtree(dc, dn_path: str) -> list[dict]:
+    """``GET /api/mo/<dn>`` (the controller's ``queryByDn``) — every MO at or under <dn>, the ACI
+    subtree semantics. ``uni`` returns the whole tree; ``uni/tn-<t>`` returns the tenant + descendants.
+    Empty here is why the Select-objects 'Tenants' list came back blank."""
+    dn = dn_path.rsplit(".", 1)[0] if dn_path.endswith((".json", ".xml")) else dn_path
+    dn = dn.strip("/")
+    if not dn or dn == "uni":
+        return _all_flat(dc)
+    return [m for m in _all_flat(dc) if _dn(m) == dn or _dn(m).startswith(dn + "/")]
+
+
 # --- auth (APIC login → APIC-cookie) --------------------------------------------------------
 
 def auth_ok(dc, username: str, password: str) -> bool:
