@@ -33,18 +33,16 @@ Apex single-tenant (bare host) — **one Kubernetes mock per portal**.
 
 1. Portal → **Data Centers → New → Kubernetes**. Add Pods (`namespace/name = ip | labels`), Nodes, and
    Services; optionally set a bearer token.
-2. On the portal DC page, download **both** files (buttons there): **⬇ Service Account Token** and
-   **⬇ CA Certificate** (the portal's own TLS chain).
+2. On the portal DC page, download the **Service Account Token** (required) — and optionally the
+   **CA Certificate** (the portal's own TLS chain) if you want to demo the real-cluster CA-import step.
 3. SmartConsole → **New → More → Cloud → Data Center → Kubernetes…**
    - **Hostname / API server:** the full URL **with `https://`** (e.g. `https://dcsim.ai.alshawwaf.ca`),
      **no port**. The connector parses this field with `new URL()`, so a bare `host:443` fails with
      *"unknown protocol"*; `https://` connects on 443 (the portal's port, the https default).
    - **Import Service Account Token…:** pick the token file (required field — token is a file, not typed).
-   - **CA Certificate:** **tick the box** and **Import CA Certificate…** → the `.pem`. **Required** —
-     unlike the other connectors (which use Java's default trust store), the K8s connector builds its
-     own (`DomainKeyStore`) and won't trust the portal's cert without it; the TLS handshake fails
-     before any HTTP (a *"connection has failed / make sure the server is running"* error, even though
-     `curl` to the same host works).
+   - **CA Certificate:** **optional** — Test Connection works without it (the portal serves a public
+     cert Java already trusts). Tick the box and **Import CA Certificate…** → the `.pem` only to mirror
+     a real cluster, whose API server uses a private CA the admin imports here.
 4. **Test Connection → Select objects.**
 
 ## Endpoints served (apex)
