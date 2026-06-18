@@ -6,7 +6,8 @@ Groups, VMs, and Tags that span sites — the federated sibling of [NSX-T](nsxt.
 - Service: [`app/services/nsxt.py`](../../app/services/nsxt.py) (shared with NSX-T)
 - Router: [`app/routers/nsxt_mock.py`](../../app/routers/nsxt_mock.py) (`/global-manager/…` routes)
 
-> **Status:** built and unit-tested; pending first validation against a live CloudGuard. Per the
+> **Status:** validated against live CloudGuard — Regions (from the global-infra domains) and NS
+> Groups import; the `default` Region renders with its NS Groups nested beneath it. Per the
 > [R82.10 admin guide](https://sc1.checkpoint.com/documents/R82.10/WebAdminGuides/EN/CP_R82.10_CloudGuard_Controller_AdminGuide/Content/Topics-CGRDG/Supported-Data-Centers-VMware.htm),
 > the Global Manager is **NSX-T 4.1 only**; config is unified with NSX-T under the `nsxt.` prefix.
 
@@ -54,10 +55,21 @@ Identical to [NSX-T](nsxt.md): VMs (`name = ip | scope=tag, …`) and NS Groups
 (`GroupName = member_tag | grouptag,…`). Groups resolve to their **member VMs** by tag — global groups
 just carry a `/global-infra/…` path.
 
+## Confirmed GM scanner paths (from a real-CloudGuard trace)
+
+The Global Manager scanner calls (captured in the portal Activity log):
+- `GET /global-manager/api/v1/global-infra/domains` → CloudGuard renders each global **domain** as a
+  **Region** (the `default` domain → the `default` Region you see in the dialog).
+- `GET …/global-infra/domains/default/groups` → **NS Groups** (served ✓). In the GM dialog these are
+  nested **under the Region**, not a separate top-level list like the Local Manager.
+- `GET …/global-infra/domains/default/groups/{id}/members/ip-addresses` → group → member IPs.
+- `GET /global-manager/api/v1/global-infra/sites` → the Federation **Locations** probe; we return an
+  empty list (fine for a single-site lab — Regions come from the domains, not sites).
+
 ## Gotchas / pending
 
-- **Regions** are listed first among Global NSX-T's imported types, but the exact GM API path/shape
-  isn't documented — they currently return empty via the catch-all and will be modeled from the
-  **first real-CloudGuard trace** in the [Activity log](nsxt.md) (the proven iterate-from-the-log
-  approach). NS Groups → VMs (the policy-relevant objects) work today.
+- **Regions = the global-infra domains** (confirmed): CloudGuard maps each domain to a Region; no
+  separate region modeling needed for a single-domain demo.
+- **Sites/Locations** (`/global-infra/sites`) return empty. Harmless for one site; modeling a real
+  `Site` would require the exact response shape from the NSX-T API reference first (not guessed).
 - Apex single-tenant; same diagnostics as [NSX-T](nsxt.md).
