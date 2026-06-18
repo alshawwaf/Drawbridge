@@ -2,14 +2,16 @@
 
 CloudGuard Controller R82.10 (Cisco ACI scanner) imports **Tenant → Application Profile → EPG**,
 **ESG**, L2 Out / L2 External EPG, and the **endpoints** (with IPs) behind each group. It logs in at
-``POST /api/aaaLogin.json`` (returns a token used as the ``APIC-cookie``), then runs APIC **class
-queries** ``GET /api/node/class/<class>.json``. Every APIC response is the
-``{"totalCount": "N", "imdata": [ { "<class>": {"attributes": {...}, "children": [...]} } ]}`` shape.
+``POST /api/aaaLogin.xml`` (token returned + set as the ``APIC-cookie``), then runs APIC **class
+queries** ``GET /api/node/class/<class>.xml``.
 
-First cut — built to the R82.10 admin guide + the public APIC API. The exact classes CloudGuard
-queries are confirmed from the portal Activity log and the responses tuned to match.
+**CloudGuard's APIC client is XML-only** (it JAXB-unmarshals every response — JSON makes it fail with
+"Content is not allowed in prolog"), so the default render here is **XML**:
+``<imdata totalCount="N"><fvTenant dn="…" name="…"/>…</imdata>``. We also render JSON for ``.json``
+(real APIC is dual-format; handy for shell/`curl` testing).
 """
 import uuid
+import xml.sax.saxutils as _su
 
 from ..security import verify_password
 
@@ -42,16 +44,33 @@ def _mac(ip: str) -> str:
     return "00:50:56:%02X:%02X:%02X" % (o[0], o[1], o[2])
 
 
-def imdata(objs: list) -> dict:
-    """The APIC response envelope (also the safe empty-collection response)."""
-    return {"totalCount": str(len(objs)), "imdata": objs}
-
-
 def _mo(cls: str, attrs: dict, children: list | None = None) -> dict:
     mo = {cls: {"attributes": attrs}}
     if children is not None:
         mo[cls]["children"] = children
     return mo
+
+
+# --- renderers: APIC is dual-format; CloudGuard uses XML --------------------------------------
+
+def imdata(objs: list) -> dict:
+    """JSON envelope (also the safe empty-collection response for the .json path / tests)."""
+    return {"totalCount": str(len(objs)), "imdata": objs}
+
+
+def _mo_xml(mo: dict) -> str:
+    (cls, body), = mo.items()
+    attrs = "".join(f" {k}={_su.quoteattr(str(v))}" for k, v in (body.get("attributes") or {}).items())
+    children = body.get("children") or []
+    if children:
+        return f"<{cls}{attrs}>" + "".join(_mo_xml(c) for c in children) + f"</{cls}>"
+    return f"<{cls}{attrs}/>"
+
+
+def to_xml(objs: list) -> str:
+    """APIC XML envelope — the format CloudGuard's APIC client unmarshals."""
+    inner = "".join(_mo_xml(m) for m in objs)
+    return f'<?xml version="1.0" encoding="UTF-8"?><imdata totalCount="{len(objs)}">{inner}</imdata>'
 
 
 # --- class-query object builders ------------------------------------------------------------
@@ -118,10 +137,15 @@ _CLASSES = {
 }
 
 
-def class_query(dc, class_name: str) -> dict:
-    """Answer ``GET /api/node/class/<class_name>.json``. Strips a trailing ``.json``/``.xml``."""
+def class_objects(dc, class_name: str) -> list[dict]:
+    """The managed objects for ``GET /api/node/class/<class_name>`` (strips a trailing format ext)."""
     cls = class_name.rsplit(".", 1)[0] if class_name.endswith((".json", ".xml")) else class_name
-    return imdata(_CLASSES.get(cls, lambda dc: [])(dc))
+    return _CLASSES.get(cls, lambda dc: [])(dc)
+
+
+def class_query(dc, class_name: str) -> dict:
+    """JSON form of a class query (used by the .json path and the tests)."""
+    return imdata(class_objects(dc, class_name))
 
 
 # --- auth (APIC login → APIC-cookie) --------------------------------------------------------
@@ -141,14 +165,24 @@ def authorized(dc, *, apic_cookie: str = "") -> bool:
     return bool(apic_cookie)
 
 
-def login_response(username: str) -> dict:
-    """``POST /api/aaaLogin.json`` success — the token CloudGuard then sends as the APIC-cookie."""
+def login_objects(username: str):
+    """``aaaLogin`` managed object — the token CloudGuard reads (and echoes as the APIC-cookie)."""
     token = uuid.uuid4().hex
-    return token, imdata([_mo("aaaLogin", {
+    return token, [_mo("aaaLogin", {
         "token": token, "refreshTimeoutSeconds": "600", "maximumLifetimeSeconds": "86400",
-        "userName": username or "admin", "restTimeoutSeconds": "90"})])
+        "userName": username or "admin", "restTimeoutSeconds": "90"})]
+
+
+def login_response(username: str):
+    """JSON form of the login response (used by the .json path and the tests)."""
+    token, objs = login_objects(username)
+    return token, imdata(objs)
+
+
+def forbidden_objs() -> list[dict]:
+    return [_mo("error", {"code": "401", "text": "Authentication failed."})]
 
 
 def forbidden() -> dict:
-    """APIC error envelope for a rejected request / bad credentials."""
-    return imdata([_mo("error", {"code": "401", "text": "Authentication failed."})])
+    """APIC error envelope (JSON) for a rejected request / bad credentials."""
+    return imdata(forbidden_objs())
