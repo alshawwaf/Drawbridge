@@ -84,17 +84,26 @@ def vifs(dc) -> dict:
 
 def domains(infra: str = "infra") -> dict:
     """The policy domains list. CloudGuard enumerates domains (`…/infra/domains`) before fetching
-    each domain's groups, so the 'default' domain must be present or no groups are ever discovered."""
+    each domain's groups, so the 'default' domain must be present or no groups are ever discovered.
+    On the Global Manager (``infra='global-infra'``) CloudGuard renders each domain as a **Region**."""
     return list_result([{
         "resource_type": "Domain", "id": "default", "display_name": "default",
-        "path": f"/{infra}/domains/default",
+        "path": f"/{infra}/domains/default", "parent_path": f"/{infra}", "relative_path": "default",
+        "marked_for_delete": False, "_protection": "NOT_PROTECTED", "_revision": 0,
     }])
 
 
 def groups(dc, infra: str = "infra") -> dict:
     """NS Groups. ``infra`` is the policy path segment: ``infra`` for a Local Manager (NSX-T) or
-    ``global-infra`` for the Global Manager (Global NSX-T) — it only changes the object ``path``."""
+    ``global-infra`` for the Global Manager (Global NSX-T).
+
+    Each group carries a **``parent_path``** pointing at its domain (``/{infra}/domains/default``).
+    A real NSX-T policy object always has this, and it's what makes the group nest under its domain:
+    on the Global Manager CloudGuard maps the domain to a **Region** and searches that region for its
+    children (``rootId: default``), so without ``parent_path`` the groups are fetched but never
+    associated with the Region. (Confirmed from the NSX-T policy Group schema + a real GM trace.)"""
     res = []
+    domain_path = f"/{infra}/domains/default"
     for g in (dc.content or {}).get("groups", []) or []:
         expr = []
         if g.get("member_tag"):
@@ -103,8 +112,9 @@ def groups(dc, infra: str = "infra") -> dict:
         gid = _gid(g.get("name", ""))
         res.append({
             "id": gid, "display_name": g.get("name"), "resource_type": "Group",
-            "path": f"/{infra}/domains/default/groups/{gid}", "expression": expr,
-            "tags": [_tag(t) for t in (g.get("tags") or [])],
+            "path": f"{domain_path}/groups/{gid}", "parent_path": domain_path, "relative_path": gid,
+            "expression": expr, "tags": [_tag(t) for t in (g.get("tags") or [])],
+            "marked_for_delete": False, "_protection": "NOT_PROTECTED", "_revision": 0,
         })
     return list_result(res)
 
