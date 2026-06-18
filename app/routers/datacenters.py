@@ -425,7 +425,7 @@ def dc_detail(dc_id: int, request: Request, db: Session = Depends(get_db)):
         })
     if dc.provider == "aci":
         return templates.TemplateResponse(request, "dc_detail.html", {
-            "dc": dc, "aci_url": f"{base}/aci/{dc.token}",
+            "dc": dc, "aci_url": base, "apex_host": apex_host,
             "tenant": (dc.content or {}).get("tenant") or "DCSIM",
             "app_profile": (dc.content or {}).get("app_profile") or "DCSIM-AP",
             "epgs": dc.content.get("epgs", []) or [], "esgs": dc.content.get("esgs", []) or [],

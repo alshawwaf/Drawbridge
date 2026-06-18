@@ -113,12 +113,12 @@
 
 <div class="card">
   <h2 style="margin-top:0;">Connect from SmartConsole</h2>
-  <p class="muted">Objects → New → More → Cloud → Data Center → <i>Cisco ACI…</i>, then in the <b>URLs</b> field paste:</p>
+  <p class="muted">Objects → New → More → Cloud → Data Center → <i>Cisco ACI…</i>, then in the <b>URLs</b> field enter:</p>
   <div class="row" style="gap:8px; align-items:center; flex-wrap:nowrap;">
     <span class="copy grow">{{ aci_url }}</span>
     <button class="copybtn" type="button" data-copy="{{ aci_url }}">Copy</button>
   </div>
-  <p class="muted" style="margin:6px 0 0; font-size:12px;">The APIC <b>URLs</b> field takes a full URL (scheme required), so paste this whole thing. The controller calls <code>{{ aci_url }}/api/aaaLogin.json</code> then <code>…/api/node/class/&lt;class&gt;.json</code>. Path-based — you can host several ACI mocks.</p>
+  <p class="muted" style="margin:6px 0 0; font-size:12px;"><b>Just the host</b> (scheme required) — CloudGuard's APIC client uses only the host and calls <code>{{ aci_url }}/api/aaaLogin.xml</code> then <code>…/api/node/class/&lt;class&gt;.xml</code> at the root. It <i>ignores any path</i>, so this mock is served at the apex: the portal answers one ACI here (most recently created). Responses are APIC <b>XML</b> (the client unmarshals XML, not JSON).</p>
   {% if dc_auth and dc_auth.username %}
   <p class="muted" style="margin-top:10px;">Username <code>{{ dc_auth.username }}</code> · Password <code>(the one you set)</code> — validated on <code>aaaLogin</code>, returns <b>401</b> on mismatch. APIC role: read on Tenant/EPG. Click <i>Test Connection</i>, then import.</p>
   {% else %}

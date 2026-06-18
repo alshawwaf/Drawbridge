@@ -1,14 +1,16 @@
 """Mock Cisco ACI / APIC (REST) that CloudGuard Controller R82.10 connects to.
 
-The SmartConsole ACI object's *URLs* field takes a full URL, so the admin enters
-``https://<portal>/aci/<token>`` and the controller appends ``/api/aaaLogin`` and
-``/api/node/class/<class>`` (with or without a ``.xml``/``.json`` extension) — served here under the
-token path (path-based, many ACI mocks per portal).
+**CloudGuard's APIC client uses only the HOST from the *URLs* field** (it discards any path), then
+calls ``/api/aaaLogin.xml`` and ``/api/node/class/<class>.xml`` at the root — confirmed from a trace
+(a path-based ``/aci/<token>/...`` mock 404'd, and the controller XML-parsed the 404 JSON → "Content
+is not allowed in prolog"). So ACI is served at the **apex** (resolving the most-recently created ACI
+datacenter — one ACI per portal), exactly like vCenter/NSX-T. ``/api/aaaLogin``, ``/api/node|class|mo``
+don't collide with the NSX-T family's ``/api/session`` + ``/api/v1``. Token routes
+(``/aci/<token>/api/...``) are kept for direct testing.
 
-**CloudGuard's APIC client unmarshals XML unconditionally** (`apic_service.jar` → JAXB/SAX; JSON makes
-it fail with "Content is not allowed in prolog"), so this mock answers **APIC XML for every
-extension** — ``<imdata totalCount="N"><fvTenant .../>…</imdata>``. Login returns a token echoed back
-as the ``APIC-cookie``. Every call is captured in the Activity log (``/aci/*``).
+**The client unmarshals XML unconditionally** (`apic_service.jar` → JAXB; JSON → prolog error), so the
+mock answers APIC XML — ``<imdata totalCount="N"><fvTenant .../>…</imdata>``. Login returns a token
+echoed back as the ``APIC-cookie``. Every call is in the Activity log.
 """
 import json
 
@@ -22,6 +24,16 @@ from ..models import Datacenter
 from ..services import aci
 
 router = APIRouter(tags=["aci-mock"])
+
+
+def _apex_dc(db: Session) -> Datacenter:
+    """The single ACI datacenter served at the root (most-recently created), since the controller
+    strips the URL to the bare host."""
+    dc = db.scalar(select(Datacenter).where(Datacenter.provider == "aci")
+                   .order_by(Datacenter.created_at.desc()))
+    if dc is None:
+        raise HTTPException(status_code=404, detail="No ACI datacenter configured")
+    return dc
 
 
 def _dc(db: Session, token: str) -> Datacenter:
@@ -51,12 +63,8 @@ def _guard(dc, request: Request):
     return None
 
 
-# aaaLogin / aaaRefresh — matched with or without a .xml/.json extension; always answered in XML.
-@router.post("/aci/{token}/api/aaaLogin.{fmt}")
-@router.post("/aci/{token}/api/aaaLogin")
-async def aci_login(token: str, request: Request, fmt: str = "", db: Session = Depends(get_db)):
-    dc = _dc(db, token)
-    name, pwd = _creds(await request.body())
+def _login(dc, raw: bytes) -> Response:
+    name, pwd = _creds(raw)
     if not aci.auth_ok(dc, name, pwd):
         return _xml(aci.forbidden_objs(), status=401)
     tok, objs = aci.login_objects(name)
@@ -65,28 +73,65 @@ async def aci_login(token: str, request: Request, fmt: str = "", db: Session = D
     return resp
 
 
-@router.post("/aci/{token}/api/aaaRefresh.{fmt}")
-@router.post("/aci/{token}/api/aaaRefresh")
-def aci_refresh(token: str, fmt: str = "", db: Session = Depends(get_db)):
-    _dc(db, token)
+def _refresh(dc) -> Response:
     tok, objs = aci.login_objects("")
     resp = _xml(objs)
     resp.set_cookie("APIC-cookie", tok)
     return resp
 
 
+# --- apex routes (the path the controller actually hits — bare host + /api/...) -------------
+
+@router.post("/api/aaaLogin.{fmt}")
+@router.post("/api/aaaLogin")
+async def aci_login_apex(request: Request, fmt: str = "", db: Session = Depends(get_db)):
+    return _login(_apex_dc(db), await request.body())
+
+
+@router.post("/api/aaaRefresh.{fmt}")
+@router.post("/api/aaaRefresh")
+def aci_refresh_apex(fmt: str = "", db: Session = Depends(get_db)):
+    return _refresh(_apex_dc(db))
+
+
+@router.get("/api/node/class/{cls}")
+@router.get("/api/class/{cls}")
+def aci_class_apex(cls: str, request: Request, db: Session = Depends(get_db)):
+    dc = _apex_dc(db)
+    return _guard(dc, request) or _xml(aci.class_objects(dc, cls))
+
+
+@router.get("/api/node/mo/{rest:path}")
+@router.get("/api/mo/{rest:path}")
+def aci_mo_apex(rest: str, request: Request, db: Session = Depends(get_db)):
+    dc = _apex_dc(db)
+    return _guard(dc, request) or _xml([])
+
+
+# --- token-path routes (direct testing of a specific datacenter) ----------------------------
+
+@router.post("/aci/{token}/api/aaaLogin.{fmt}")
+@router.post("/aci/{token}/api/aaaLogin")
+async def aci_login_tok(token: str, request: Request, fmt: str = "", db: Session = Depends(get_db)):
+    return _login(_dc(db, token), await request.body())
+
+
+@router.post("/aci/{token}/api/aaaRefresh.{fmt}")
+@router.post("/aci/{token}/api/aaaRefresh")
+def aci_refresh_tok(token: str, fmt: str = "", db: Session = Depends(get_db)):
+    return _refresh(_dc(db, token))
+
+
 @router.get("/aci/{token}/api/node/class/{cls}")
 @router.get("/aci/{token}/api/class/{cls}")
-def aci_class(token: str, cls: str, request: Request, db: Session = Depends(get_db)):
+def aci_class_tok(token: str, cls: str, request: Request, db: Session = Depends(get_db)):
     dc = _dc(db, token)
     return _guard(dc, request) or _xml(aci.class_objects(dc, cls))
 
 
-# MO (managed-object) queries by DN and any other /api/... path → empty imdata (so enumeration
-# completes); each is still logged so an unmodeled query can be implemented after the first trace.
 @router.get("/aci/{token}/api/node/mo/{rest:path}")
 @router.get("/aci/{token}/api/mo/{rest:path}")
 @router.get("/aci/{token}/api/{rest:path}")
-def aci_other(token: str, rest: str, request: Request, db: Session = Depends(get_db)):
+def aci_other_tok(token: str, rest: str, request: Request, db: Session = Depends(get_db)):
     dc = _dc(db, token)
     return _guard(dc, request) or _xml([])

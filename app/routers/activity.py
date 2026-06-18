@@ -26,6 +26,7 @@ PROVIDER_PATHS = {
     "globalnsxt": ["/global-manager/"],
     "openstack": ["/openstack/"],
     "proxmox": ["/api2/json", "/proxmox/"],
+    "aci": ["/aci/", "/api/aaaLogin", "/api/aaaRefresh", "/api/node/", "/api/class/", "/api/mo/"],
 }
 PROVIDER_LABELS = {"vcenter": "vCenter", "nsxt": "NSX-T", "globalnsxt": "Global NSX-T",
                    "openstack": "OpenStack", "proxmox": "Proxmox"}
