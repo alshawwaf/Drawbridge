@@ -7,7 +7,7 @@ from sqlalchemy.orm import sessionmaker
 from app import models  # noqa: F401  (register tables on the metadata)
 from app.db import Base
 from app.models import ActivityLog
-from app.routers.activity import KIND_LABELS, PAGE_SIZES
+from app.routers.activity import KIND_LABELS, PAGE_SIZES, PROVIDER_LABELS, _filter_conds
 from app.routers.ui import templates
 from app.services.activity import redact_body, redact_headers
 
@@ -50,7 +50,8 @@ def test_redact_body_handles_lists():
 def test_shell_renders_checkbox_filters_page_size_and_modal():
     counts = {"all": 4445, "feed_poll": 4077, "layer_apply": 19}
     html = _render("activity.html", counts=counts, kind_labels=KIND_LABELS, selected=["feed_poll"],
-                   page_size=10, page_sizes=PAGE_SIZES, flash=None)
+                   page_size=10, page_sizes=PAGE_SIZES, provider_labels=PROVIDER_LABELS,
+                   dc_counts={"vcenter": 3, "proxmox": 5}, q="", dc="", flash=None)
     # filters are checkboxes on the left; the selected one is checked
     assert 'name="kinds" value="feed_poll" class="kind-cb" checked' in html
     assert 'name="kinds" value="layer_apply" class="kind-cb" ' in html
@@ -61,6 +62,19 @@ def test_shell_renders_checkbox_filters_page_size_and_modal():
     # the page opts into the wide container, and checkboxes are never full-width (left-aligned)
     assert '<main class="wide">' in html
     assert 'input[type="checkbox"], input[type="radio"]' in html
+    # new: search bar, auto-refresh control, and the Data Center sub-filter (vCenter, Proxmox…)
+    assert 'id="q-input"' in html and 'id="refresh-rate"' in html
+    assert 'name="dcfilter" value="vcenter"' in html and 'name="dcfilter" value="proxmox"' in html
+
+
+def test_filter_conds_dc_type_overrides_kinds_and_search_ands():
+    # A specific dc provider narrows to its paths (overriding kinds); q adds an AND text match.
+    assert len(_filter_conds([], "", "")) == 0                       # nothing selected = no filter
+    assert len(_filter_conds(["feed_poll"], "", "")) == 1            # kinds only
+    assert len(_filter_conds([], "proxmox", "")) == 1                # dc only
+    assert len(_filter_conds(["feed_poll"], "proxmox", "")) == 1     # dc overrides kinds (still 1)
+    assert len(_filter_conds(["datacenter"], "", "403")) == 2        # kinds + search
+    assert len(_filter_conds([], "vcenter", "sdk")) == 2             # dc + search
 
 
 def test_pager_and_rows_render_selectable_clickable():
