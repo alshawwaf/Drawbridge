@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}New Kubernetes datacenter{% endblock %}
+{% block content %}
+<h1>New Kubernetes datacenter</h1>
+<p class="muted">Define the inventory the mock <b>Kubernetes</b> API server (<code>kube-apiserver</code> REST) will serve. Point a SmartConsole <i>Kubernetes</i> Data Center object at the portal to import <b>Nodes, Pods, Services, Endpoints</b> and the <b>Namespaces</b> + <b>Labels</b> derived from them.</p>
+{% if error %}<div class="err" style="margin:12px 0;">{{ error }}</div>{% endif %}
+
+<form method="post" action="/datacenters/new/kubernetes" class="card">
+  <label>Name</label>
+  <input name="name" value="{{ form.name }}" placeholder="Kubernetes-lab" required>
+
+  <label>Description (optional)</label>
+  <input name="description" value="{{ form.description }}">
+
+  <label>Pods — one per line: <code>namespace/name = podIP | label=val, label=val</code></label>
+  <textarea name="pods_text" placeholder="production/web-7f9c = 10.40.1.11 | app=web, tier=frontend">{{ form.pods_text }}</textarea>
+  <p class="muted">Served at <code>/api/v1/pods</code>. The <b>Namespace</b> tree and the <b>Label</b> view are built from these — a Namespace object resolves to all its pods' IPs, and labels let you select by <code>app</code>/<code>tier</code>. A bare <code>name</code> (no <code>namespace/</code>) goes in <code>default</code>.</p>
+
+  <label>Nodes — one per line: <code>name = ip</code> <span class="muted" style="font-weight:400;">(optional <code>| label=val</code>)</span></label>
+  <textarea name="nodes_text" placeholder="node-1 = 10.40.0.11">{{ form.nodes_text }}</textarea>
+  <p class="muted">Served at <code>/api/v1/nodes</code>; the IP is the node's <code>InternalIP</code>.</p>
+
+  <label>Services — one per line: <code>namespace/name = clusterIP | type</code></label>
+  <textarea name="services_text" placeholder="production/web-svc = 10.40.10.1 | LoadBalancer">{{ form.services_text }}</textarea>
+  <p class="muted">Served at <code>/api/v1/services</code>; <code>type</code> defaults to <code>ClusterIP</code>. Each service's <code>/api/v1/endpoints</code> resolves to the pod IPs in its namespace.</p>
+
+  <h2 style="font-size:15px; margin:22px 0 0;">Service-account token</h2>
+  <label>Bearer token <span class="muted" style="font-weight:400;">— optional</span></label>
+  <input name="k8s_token" type="password" autocomplete="new-password" placeholder="Leave blank to accept any token (open lab)">
+  <p class="muted">If set, the mock validates the <code>Authorization: Bearer &lt;token&gt;</code> header and returns <code>401</code> on mismatch. Stored only as a one-way hash. In SmartConsole, paste the same token (a ServiceAccount token with read on nodes/pods/services/endpoints).</p>
+
+  <div class="row" style="margin-top:18px;">
+    <button type="submit">Create datacenter</button>
+    <a class="btn secondary" href="/datacenters">Cancel</a>
+  </div>
+</form>
+{% endblock %}

@@ -11,6 +11,7 @@ from ..config import get_settings
 from ..db import get_db
 from ..models import Datacenter, User
 from ..security import get_user_or_none, hash_password, new_feed_token
+from ..services import kubernetes as k8s_svc
 from ..services import openstack as os_mock
 from .ui import _flash, _pop_flash, templates
 
@@ -207,6 +208,135 @@ def dc_create_aci(request: Request, name: str = Form(...), description: str = Fo
     return RedirectResponse(f"/datacenters/{dc.id}", status_code=303)
 
 
+# --- Kubernetes (kube-apiserver) ------------------------------------------------------------
+# Pods/Services are namespaced ('namespace/name'); Nodes are cluster-scoped. Labels are a K8s map,
+# entered as 'k=v, k=v'. Namespaces + the Label view are derived by CloudGuard from these.
+DEFAULT_K8S_NODES = "node-1 = 10.40.0.11\nnode-2 = 10.40.0.12"
+DEFAULT_K8S_PODS = ("production/web-7f9c = 10.40.1.11 | app=web, tier=frontend\n"
+                    "production/web-8a2d = 10.40.1.12 | app=web, tier=frontend\n"
+                    "production/api-5c3e = 10.40.1.21 | app=api, tier=backend\n"
+                    "default/db-0 = 10.40.2.11 | app=postgres, tier=data")
+DEFAULT_K8S_SERVICES = ("production/web-svc = 10.40.10.1 | LoadBalancer\n"
+                        "production/api-svc = 10.40.10.2 | ClusterIP\n"
+                        "default/db-svc = 10.40.10.11 | ClusterIP")
+
+
+def parse_k8s_labels(text: str) -> dict:
+    out = {}
+    for kv in (text or "").split(","):
+        kv = kv.strip()
+        if not kv:
+            continue
+        k, _, v = kv.partition("=")
+        out[k.strip()] = v.strip()
+    return out
+
+
+def _split_ref(ref: str) -> tuple[str, str]:
+    """'namespace/name' → (namespace, name); a bare 'name' → ('default', name)."""
+    ns, sep, name = ref.strip().partition("/")
+    return (ns.strip(), name.strip()) if sep else ("default", ns.strip())
+
+
+def parse_k8s_pods(text: str) -> list[dict]:
+    out = []
+    for raw in text.splitlines():
+        ln = raw.strip()
+        if not ln or ln.startswith("#"):
+            continue
+        labels = {}
+        if "|" in ln:
+            ln, lab = (p.strip() for p in ln.split("|", 1))
+            labels = parse_k8s_labels(lab)
+        if "=" not in ln:
+            raise ValueError(f"Pod line must be 'namespace/name = ip': {raw.strip()!r}")
+        ref, ip = (p.strip() for p in ln.split("=", 1))
+        ns, name = _split_ref(ref)
+        if not name or not ip:
+            raise ValueError(f"Pod needs a name and an IP: {raw.strip()!r}")
+        out.append({"namespace": ns, "name": name, "ip": ip, "labels": labels})
+    return out
+
+
+def parse_k8s_nodes(text: str) -> list[dict]:
+    out = []
+    for raw in text.splitlines():
+        ln = raw.strip()
+        if not ln or ln.startswith("#"):
+            continue
+        labels = {}
+        if "|" in ln:
+            ln, lab = (p.strip() for p in ln.split("|", 1))
+            labels = parse_k8s_labels(lab)
+        if "=" not in ln:
+            raise ValueError(f"Node line must be 'name = ip': {raw.strip()!r}")
+        name, ip = (p.strip() for p in ln.split("=", 1))
+        if not name or not ip:
+            raise ValueError(f"Node needs a name and an IP: {raw.strip()!r}")
+        out.append({"name": name, "ip": ip, "labels": labels})
+    return out
+
+
+def parse_k8s_services(text: str) -> list[dict]:
+    out = []
+    for raw in text.splitlines():
+        ln = raw.strip()
+        if not ln or ln.startswith("#"):
+            continue
+        svc_type = "ClusterIP"
+        if "|" in ln:
+            ln, t = (p.strip() for p in ln.split("|", 1))
+            svc_type = t or "ClusterIP"
+        if "=" not in ln:
+            raise ValueError(f"Service line must be 'namespace/name = clusterIP': {raw.strip()!r}")
+        ref, cip = (p.strip() for p in ln.split("=", 1))
+        ns, name = _split_ref(ref)
+        if not name:
+            raise ValueError(f"Service needs a name: {raw.strip()!r}")
+        out.append({"namespace": ns, "name": name, "cluster_ip": cip, "type": svc_type})
+    return out
+
+
+@router.get("/datacenters/new/kubernetes", response_class=HTMLResponse)
+def dc_new_kubernetes(request: Request, db: Session = Depends(get_db)):
+    if get_user_or_none(request, db) is None:
+        return RedirectResponse("/login", status_code=303)
+    return templates.TemplateResponse(request, "dc_new_kubernetes.html", {"error": None, "form": {
+        "name": "Kubernetes-lab", "description": "", "nodes_text": DEFAULT_K8S_NODES,
+        "pods_text": DEFAULT_K8S_PODS, "services_text": DEFAULT_K8S_SERVICES,
+    }})
+
+
+@router.post("/datacenters/new/kubernetes")
+def dc_create_kubernetes(request: Request, name: str = Form(...), description: str = Form(""),
+                         nodes_text: str = Form(""), pods_text: str = Form(""),
+                         services_text: str = Form(""), k8s_token: str = Form(""),
+                         db: Session = Depends(get_db)):
+    user = get_user_or_none(request, db)
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+    try:
+        content = {"nodes": parse_k8s_nodes(nodes_text), "pods": parse_k8s_pods(pods_text),
+                   "services": parse_k8s_services(services_text)}
+        if not (content["nodes"] or content["pods"] or content["services"]):
+            raise ValueError("Add at least one node, pod, or service.")
+        # Bearer token validated on every call; stored only as a one-way hash. Blank = open lab.
+        if k8s_token:
+            content["auth"] = {"token_hash": hash_password(k8s_token)}
+    except Exception as exc:
+        return templates.TemplateResponse(request, "dc_new_kubernetes.html", {"error": str(exc), "form": {
+            "name": name, "description": description, "nodes_text": nodes_text,
+            "pods_text": pods_text, "services_text": services_text,
+        }}, status_code=400)
+    dc = Datacenter(token=new_feed_token(), provider="kubernetes", name=name,
+                    description=description, content=content, owner_id=user.id)
+    db.add(dc)
+    db.commit()
+    db.refresh(dc)
+    _flash(request, f"Kubernetes datacenter “{name}” saved.")
+    return RedirectResponse(f"/datacenters/{dc.id}", status_code=303)
+
+
 @router.get("/datacenters", response_class=HTMLResponse)
 def dc_list(request: Request, db: Session = Depends(get_db)):
     user = get_user_or_none(request, db)
@@ -224,6 +354,9 @@ def dc_list(request: Request, db: Session = Depends(get_db)):
             summary = f"{len(c.get('vms', []) or [])} VM(s) · {len(c.get('groups', []) or [])} group(s)"
         elif d.provider == "aci":
             summary = f"{len(c.get('epgs', []) or [])} EPG(s) · {len(c.get('esgs', []) or [])} ESG(s)"
+        elif d.provider == "kubernetes":
+            summary = (f"{len(c.get('pods', []) or [])} pod(s) · {len(c.get('nodes', []) or [])} node(s) · "
+                       f"{len(c.get('services', []) or [])} service(s)")
         else:
             summary = (f"{len(c.get('instances', []) or [])} instance(s) · "
                        f"{len(c.get('subnets', []) or [])} subnet(s) · "
@@ -429,6 +562,13 @@ def dc_detail(dc_id: int, request: Request, db: Session = Depends(get_db)):
             "tenant": (dc.content or {}).get("tenant") or "DCSIM",
             "app_profile": (dc.content or {}).get("app_profile") or "DCSIM-AP",
             "epgs": dc.content.get("epgs", []) or [], "esgs": dc.content.get("esgs", []) or [],
+            "dc_auth": (dc.content or {}).get("auth") or {}, "flash": _pop_flash(request),
+        })
+    if dc.provider == "kubernetes":
+        return templates.TemplateResponse(request, "dc_detail.html", {
+            "dc": dc, "apex_host": apex_host,
+            "nodes": dc.content.get("nodes", []) or [], "pods": dc.content.get("pods", []) or [],
+            "services": dc.content.get("services", []) or [], "namespaces": k8s_svc.namespaces(dc),
             "dc_auth": (dc.content or {}).get("auth") or {}, "flash": _pop_flash(request),
         })
     keystone_url = f"{base}/openstack/{dc.token}/v3"

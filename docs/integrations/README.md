@@ -16,6 +16,7 @@ PoV can be demoed end-to-end without the real thing. Two interaction models:
 | [VMware Global NSX-T](global-nsxt.md) | NSX-T Global Manager / Federation | Data Center → Global NSX-T | bare host (apex) — `<portal>` |
 | [Proxmox VE](proxmox.md) | Proxmox `/api2/json` REST | Data Center → Proxmox | bare host **+ `:443`** (apex) — `<portal>:443` |
 | [Cisco ACI](aci.md) | APIC REST — **XML** (`aaaLogin` + class queries) | Data Center → Cisco ACI | bare host (apex) — `https://<portal>` |
+| [Kubernetes](kubernetes.md) | kube-apiserver REST (bearer token) | Data Center → Kubernetes | bare host **+ `:443`** (apex) — `<portal>:443` |
 | [Dynamic Layers](dynamic-layers.md) | Gaia API (`set-dynamic-content`) | *(push to gateway / mock)* | n/a — portal is the client |
 
 ## Routing: path-based vs apex single-tenant
