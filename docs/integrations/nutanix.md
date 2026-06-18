@@ -79,31 +79,54 @@ Basic credentials set on the portal DC are stored only as a one-way hash and val
 - **Port 9440 (the one real gotcha)** — the connector hardcodes Prism Central's **9440** for the cert
   fetch + API (`Failed to get certificate from <host>:9440 … Connection timed out`), and the Hostname
   field rejects any `:port` or scheme, so you **cannot** point it at 443 like the others. The portal
-  must listen on 9440 with the same cert: the bundled `docker-compose.yml`/`Caddyfile` publish 9440;
-  on a Dokploy/Traefik host add a 9440 TLS entrypoint routing the domain → the app, **or** run a raw
-  passthrough `socat TCP-LISTEN:9440,fork,reuseaddr TCP:127.0.0.1:443` (the TLS+SNI flows to Traefik
-  on 443). Then enter the bare hostname.
+  must be reachable on 9440 with the same cert — that's **three layers** (host listener + host firewall
+  + the cloud/CloudShare edge); see *Exposing port 9440 end-to-end* below. The **edge** is the one that
+  bites: 443 is published there but 9440 isn't, so the SMS's connection dies at the perimeter even when
+  the host is perfect.
 - **v4 vs v3** — both are served, so it works whichever CloudGuard picks; the v4 probe is
   `…/ahv/config/vms?$limit=1`.
 - First-cut to the decompiled contract; any call beyond these is in the
   [Activity log](/activity?kind=datacenter) (filter → Data Center → Nutanix) to model next. After a
   change, **delete + re-add** the object in SmartConsole so it re-syncs.
 
-## Exposing port 9440 on a Dokploy / Traefik host
+## Exposing port 9440 end-to-end (Dokploy/Traefik + cloud edge)
 
-The hosted `dcsim.ai.alshawwaf.ca` runs behind Dokploy's Traefik (which terminates TLS on 443 and
-ignores the repo's `docker-compose.yml`/`Caddyfile`). Nutanix needs `:9440`, so add it on the host.
-The simplest is a raw TCP passthrough — the TLS handshake + SNI flow straight to Traefik on 443, which
-serves the real Let's Encrypt cert and routes to the app:
+The hosted `dcsim.ai.alshawwaf.ca` runs behind Dokploy's Traefik (TLS on 443 → the app; it ignores the
+repo's `docker-compose.yml`/`Caddyfile`). Nutanix needs `:9440` reachable **all the way from the SMS**,
+which is **three layers** — and every one must be open (confirmed the hard way against a live SMS):
 
+**1. A listener for 9440 on the host.** A raw TCP passthrough is simplest — the TLS + SNI flow straight
+to Traefik on 443, which serves the real cert and routes to the app (no cert handling, no app change):
 ```bash
-# Run on the Dokploy host. --network host so it can reach Traefik's 443 on 127.0.0.1.
 docker run -d --name dcsim-nutanix-9440 --restart unless-stopped --network host \
   alpine/socat TCP-LISTEN:9440,fork,reuseaddr TCP:127.0.0.1:443
+sudo ss -tlnp 'sport = :9440'      # confirm: socat LISTEN 0.0.0.0:9440
+```
+(Alternatively a proper Traefik `:9440` entrypoint + a router for the domain.)
 
-# Then open inbound 9440 in the host / cloud firewall (security group).
+**2. The host firewall.**
+```bash
+sudo ufw allow 9440/tcp
+sudo ufw status | grep 9440        # confirm: 9440/tcp ALLOW
 ```
 
-No cert handling, no app change — `:9440` becomes a mirror of `:443`. In SmartConsole enter the **bare**
-hostname (`dcsim.ai.alshawwaf.ca`) and CloudGuard connects on 9440. (Alternatively, a proper Traefik
-`:9440` entrypoint + a router for the domain achieves the same without an extra process.)
+**3. The cloud / hosting edge — the layer people miss.** Whatever publishes `:443` to the internet must
+also pass `:9440`. 443 works only because the edge forwards it; 9440 stays dropped until you add it.
+- **Generic cloud (AWS/Azure/GCP/OCI):** add inbound **TCP 9440** to the VM's security group / NSG /
+  firewall rule, same source as the existing 443 rule.
+- **CloudShare** (this lab's host): the environment edge publishes standard ports (80/443) only — open
+  9440 in the environment's networking/policy (often needs the CloudShare account admin). If that's not
+  possible, point the Nutanix DC at the portal VM's **internal** address so 9440 stays inside the
+  CloudShare environment and never hits the public edge. (The TLS cert is issued for the public FQDN, so
+  the internal name must resolve to / match it — Nutanix fetches the cert before anything else.)
+
+**Verify from a public host** (not the VM's own LAN, or the host firewall masks the result):
+```bash
+curl -skI https://dcsim.ai.alshawwaf.ca:9440/healthz   # a response (not a timeout) = all 3 layers open
+```
+Then in SmartConsole enter the **bare** hostname (`dcsim.ai.alshawwaf.ca`) → Test Connection.
+
+> **Status (2026-06-18):** layers 1 + 2 confirmed open on `YUL-SKUNK`; **layer 3 (the CloudShare edge
+> for 9440) is the remaining gate** — a public SYN to `:9440` still times out while `:443` returns 200,
+> and the SMS reaches the portal via its public IP, so Nutanix is blocked until the edge passes 9440.
+> Every other DC type + both feeds + dynamic layers work on 443, so this gates **only** Nutanix.
