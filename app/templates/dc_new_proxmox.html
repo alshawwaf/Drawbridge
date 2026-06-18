@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}New Proxmox datacenter{% endblock %}
+{% block content %}
+<h1>New Proxmox datacenter</h1>
+<p class="muted">Define the inventory the mock <b>Proxmox VE</b> (REST <code>/api2/json</code>) will serve. Point a SmartConsole <i>Proxmox</i> Data Center object at the portal to import VMs (with their IPs), the node, and tags. New CloudGuard scanner in <b>R82.10</b>.</p>
+{% if error %}<div class="err" style="margin:12px 0;">{{ error }}</div>{% endif %}
+
+<form method="post" action="/datacenters/new/proxmox" class="card">
+  <label>Name</label>
+  <input name="name" value="{{ form.name }}" placeholder="Proxmox-lab" required>
+
+  <label>Description (optional)</label>
+  <input name="description" value="{{ form.description }}">
+
+  <label>Virtual machines — one per line: <code>name = ip | tag, tag</code></label>
+  <textarea name="vms_text" placeholder="web-1 = 10.20.0.11 | web, prod">{{ form.vms_text }}</textarea>
+  <p class="muted">Served as QEMU VMs (<code>cluster/resources?type=vm</code>); the IP is returned via the <code>qemu-guest-agent</code> interface call (CloudGuard's only IP source). Proxmox tags are flat strings (no <code>scope=value</code>) joined with <code>;</code>.</p>
+
+  <label>Node name</label>
+  <input name="node" value="{{ form.node }}" placeholder="pve">
+  <p class="muted">Single-node cluster — all VMs run on this node (Clusters are optional for single-node setups).</p>
+
+  <h2 style="font-size:15px; margin:22px 0 0;">Proxmox API token</h2>
+  <label>Token ID <span class="muted" style="font-weight:400;">— <code>&lt;user&gt;@&lt;realm&gt;!&lt;token-name&gt;</code></span></label>
+  <input name="token_id" value="{{ form.token_id }}" placeholder="root@pam!cloudguard">
+  <label>Token secret <span class="muted" style="font-weight:400;">— optional</span></label>
+  <input name="token_secret" type="password" autocomplete="new-password" placeholder="Leave blank to accept any token (open lab)">
+  <p class="muted">If set, the mock validates the <code>Authorization: PVEAPIToken=&lt;id&gt;=&lt;secret&gt;</code> header and returns <code>401</code> on mismatch. Stored only as a one-way hash. In Proxmox the token's user needs <code>Sys.Audit</code>, <code>VM.Audit</code>, <code>VM.Monitor</code> (e.g. the <code>PVEAuditor</code> role).</p>
+
+  <div class="row" style="margin-top:18px;">
+    <button type="submit">Create datacenter</button>
+    <a class="btn secondary" href="/datacenters">Cancel</a>
+  </div>
+</form>
+{% endblock %}

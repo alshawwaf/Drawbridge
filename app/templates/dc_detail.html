@@ -71,6 +71,37 @@
   <h2 style="margin-top:0;">VMs Check Point will import ({{ vms|length }})</h2>
   {% for v in vms %}<div class="itemrow"><span class="pill">VM</span> <b>{{ v.name }}</b> <code>{{ v.ip }}</code> {% for t in v.tags %}<span class="pill ok">{{ t }}</span>{% endfor %}</div>{% else %}<p class="muted">none</p>{% endfor %}
 </div>
+{% elif dc.provider == 'proxmox' %}
+<div class="row">
+  <div class="grow"><h1>{{ dc.name }} <span class="pill">{{ dc.provider }}</span></h1>
+    <p class="muted">{{ dc.description or "Mock Proxmox VE (/api2/json REST)" }}</p></div>
+  <form method="post" action="/datacenters/{{ dc.id }}/delete">
+    <button class="danger" type="submit" data-confirm="Delete “{{ dc.name }}”? This removes the mock datacenter.">Delete</button>
+  </form>
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0;">Connect from SmartConsole</h2>
+  <p class="muted">Objects → New → More → Cloud → Data Center → <i>Proxmox…</i>, then enter:</p>
+  <label>Hostname <span class="muted" style="font-weight:400;">— include <code>:443</code></span></label>
+  <div class="row" style="gap:8px; align-items:center; flex-wrap:nowrap;">
+    <span class="copy grow">{{ apex_host }}:443</span>
+    <button class="copybtn" type="button" data-copy="{{ apex_host }}:443">Copy</button>
+  </div>
+  <p class="muted" style="margin:6px 0 0; font-size:12px;"><b>The <code>:443</code> matters.</b> Proxmox defaults to port <b>8006</b>, but the portal answers on <b>443</b> — so set the port to 443 or CloudGuard won't reach it. It then calls <code>https://{{ apex_host }}:443/api2/json/...</code>. The portal serves one Proxmox at this host (most recently created wins).</p>
+  {% if dc_auth and dc_auth.token_id %}
+  <p class="muted" style="margin-top:10px;">API Token ID <code>{{ dc_auth.token_id }}</code> · Secret <code>(the one you set)</code> — the mock validates the <code>PVEAPIToken</code> header and returns <b>401</b> on mismatch. Token role: <code>PVEAuditor</code> (Sys.Audit / VM.Audit / VM.Monitor). Click <i>Test Connection</i>, then import.</p>
+  {% else %}
+  <p class="muted" style="margin-top:10px;">API Token <code>any</code> — the mock accepts any (or no) token (none set). Click <i>Test Connection</i>, then import.</p>
+  {% endif %}
+  <p class="muted"><b>Heads-up:</b> Proxmox is a new R82.10 scanner and responses are tuned iteratively. Every <code>/api2/json</code> call CloudGuard makes is captured in the <a href="/activity?kind=datacenter">Activity log</a>, so the exact endpoints/shapes can be matched.</p>
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0;">VMs Check Point will import ({{ vms|length }}) <span class="muted" style="font-weight:400;">· node {{ node }}</span></h2>
+  {% for v in vms %}<div class="itemrow"><span class="pill">VM</span> <b>{{ v.name }}</b> <code>{{ v.ip }}</code> {% for t in v.tags %}<span class="pill ok">{{ t }}</span>{% endfor %}</div>{% else %}<p class="muted">none</p>{% endfor %}
+  <p class="muted" style="margin-top:8px; font-size:12px;">IPs are returned via the <code>qemu-guest-agent</code> interface call — a VM that's off or agent-less imports without an IP (matches real Proxmox).</p>
+</div>
 {% else %}
 <div class="row">
   <div class="grow"><h1>{{ dc.name }} <span class="pill">{{ dc.provider }}</span></h1>
