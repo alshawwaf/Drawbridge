@@ -152,22 +152,81 @@ def _dn(mo: dict) -> str:
     return next(iter(mo.values()))["attributes"].get("dn", "")
 
 
-def _all_flat(dc) -> list[dict]:
-    """Every managed object, flat (ESGs without nested children — selectors are listed separately)."""
+def _flat_mos(dc) -> list[dict]:
+    """Every managed object as a flat wire-MO (ESGs without nested children here — ``_nest`` re-parents
+    by DN; the class query still nests an ESG's selectors via ``esgs()``)."""
     flat = tenants(dc) + app_profiles(dc) + epgs(dc) + endpoints(dc)
     flat += [_mo("fvESg", {"dn": f"{_ap_dn(dc)}/esg-{g['name']}", "name": g["name"]}) for g in _esgs(dc)]
     return flat + ep_selectors(dc)
 
 
-def mo_subtree(dc, dn_path: str) -> list[dict]:
-    """``GET /api/mo/<dn>`` (the controller's ``queryByDn``) — every MO at or under <dn>, the ACI
-    subtree semantics. ``uni`` returns the whole tree; ``uni/tn-<t>`` returns the tenant + descendants.
-    Empty here is why the Select-objects 'Tenants' list came back blank."""
+def _nest(dc) -> dict:
+    """Assemble the APIC MO tree (root ``polUni`` 'uni') from the flat inventory, parenting each MO by
+    its DN — fvCEp under its fvAEPg, fvEPSelector under its fvESg, EPGs/ESGs under the fvAp, the AP
+    under the tenant, the tenant under uni. Internal node = ``{cls, attrs, children}``."""
+    root = {"cls": "polUni", "attrs": {"dn": "uni"}, "children": []}
+    by_dn = {"uni": root}
+    nodes = []
+    for mo in _flat_mos(dc):
+        cls = next(iter(mo))
+        node = {"cls": cls, "attrs": dict(mo[cls]["attributes"]), "children": []}
+        by_dn[node["attrs"].get("dn", "")] = node
+        nodes.append(node)
+    for node in nodes:
+        parent_dn = node["attrs"].get("dn", "").rsplit("/", 1)[0]
+        by_dn.get(parent_dn, root)["children"].append(node)
+    return root
+
+
+def _walk(node: dict):
+    yield node
+    for c in node["children"]:
+        yield from _walk(c)
+
+
+def _find(root: dict, dn: str):
+    return next((n for n in _walk(root) if n["attrs"].get("dn") == dn), None)
+
+
+def _render(node: dict, rsp: str) -> dict:
+    """Internal node → wire MO. ``rsp-subtree`` controls nesting: ``no`` (default) → flat,
+    ``children`` → direct children, ``full`` → the whole subtree nested."""
+    if rsp == "children":
+        kids = [_render(c, "no") for c in node["children"]]
+    elif rsp == "full":
+        kids = [_render(c, "full") for c in node["children"]]
+    else:
+        kids = None
+    return _mo(node["cls"], node["attrs"], kids or None)
+
+
+def mo_subtree(dc, dn_path: str, params: dict | None = None) -> list[dict]:
+    """``GET /api/mo/<dn>`` — the controller's ``queryByDn`` — honoring the APIC query options the
+    scanner actually sends: ``query-target`` (self|children|subtree), ``target-subtree-class`` (class
+    filter), ``rsp-subtree`` (nesting). The scanner lists tenants with
+    ``queryByDn('uni', query-target=children, target-subtree-class=fvTenant)``; returning the *whole*
+    flat tree there (ignoring the filter) is why the Select-objects 'Tenants' list unmarshalled empty —
+    CloudGuard expects only ``fvTenant`` back. A bare query (no options) stays permissive and returns
+    the full subtree, so direct ``curl`` testing still sees everything."""
+    params = params or {}
     dn = dn_path.rsplit(".", 1)[0] if dn_path.endswith((".json", ".xml")) else dn_path
-    dn = dn.strip("/")
-    if not dn or dn == "uni":
-        return _all_flat(dc)
-    return [m for m in _all_flat(dc) if _dn(m) == dn or _dn(m).startswith(dn + "/")]
+    dn = dn.strip("/") or "uni"
+    target = _find(_nest(dc), dn)
+    if target is None:
+        return []
+    qt = (params.get("query-target") or "").lower()
+    rsp = (params.get("rsp-subtree") or "no").lower()
+    tsc = params.get("target-subtree-class")
+    classes = {c.strip() for c in tsc.split(",")} if tsc else None
+    if qt == "self":
+        sel = [target]
+    elif qt == "children":
+        sel = list(target["children"])
+    else:                                    # 'subtree' or a bare query → permissive full subtree
+        sel = list(_walk(target))
+    if classes is not None:
+        sel = [n for n in sel if n["cls"] in classes]
+    return [_render(n, rsp) for n in sel]
 
 
 # --- auth (APIC login → APIC-cookie) --------------------------------------------------------
