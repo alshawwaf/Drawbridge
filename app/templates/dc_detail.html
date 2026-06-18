@@ -154,11 +154,10 @@
     <button class="copybtn" type="button" data-copy="https://{{ apex_host }}">Copy</button>
   </div>
   <p class="muted" style="margin:6px 0 0; font-size:12px;"><b>Include <code>https://</code></b> (and <b>no</b> port). The K8s connector treats this field as a URL and runs <code>new URL()</code> on it — a bare <code>host:443</code> makes it read the hostname as the protocol (<i>“unknown protocol” / connectivity error</i>). With the scheme it connects on 443 (the portal's port; https default) and calls <code>https://{{ apex_host }}/api</code> → <code>…/api/v1/{nodes,pods,services,endpoints}</code>. The portal serves one Kubernetes at this host (most recently created wins).</p>
-  <h3 style="margin:14px 0 4px;">Two files to import</h3>
-  <p class="muted" style="margin-top:0;">Download both, then in the <i>New Kubernetes</i> dialog:</p>
+  <h3 style="margin:14px 0 4px;">Files to import</h3>
   <ol class="muted" style="margin:6px 0 0 18px;">
-    <li><b>Import Service Account Token…</b> → the token file (the required <code>*</code> field).</li>
-    <li>Tick <b>CA Certificate</b>, then <b>Import CA Certificate…</b> → the <code>.pem</code>. <b>This is required for Kubernetes</b> — its connector uses its own trust store and won't trust the portal's cert without it, so the TLS handshake fails before any request (the <i>"connection has failed / make sure the server is running"</i> you hit; note your <code>curl</code> reached the API fine).</li>
+    <li><b>Service Account Token</b> <span class="pill faint">required</span> — download below, then <b>Import Service Account Token…</b> and pick the file (the connector takes the token as a file, and decodes it as a JWT).</li>
+    <li><b>CA Certificate</b> <span class="pill">optional here</span> — Test Connection works <b>without</b> it (the portal serves a public cert Java already trusts). Tick <b>CA Certificate</b> → <b>Import CA Certificate…</b> → the <code>.pem</code> to mirror a <b>real cluster</b>, whose API server uses a private CA you'd import here. Realistic-demo step, not needed for the mock.</li>
   </ol>
   <div class="row" style="gap:8px; margin-top:10px;">
     <a class="btn" href="/datacenters/{{ dc.id }}/k8s-token" download>⬇ Download Service Account Token</a>
