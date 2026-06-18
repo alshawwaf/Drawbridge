@@ -6,17 +6,20 @@
     <h1>Data Centers</h1>
     <p class="muted">Mock cloud/datacenter providers Check Point connects to. Point a SmartConsole Data Center object at the portal — it serves the inventory in the provider's own API.</p>
   </div>
-  <div class="row" style="gap:8px;">
-    <a class="btn" href="/datacenters/new">+ OpenStack</a>
-    <a class="btn" href="/datacenters/new/vcenter">+ vCenter</a>
-    <a class="btn" href="/datacenters/new/nsxt">+ NSX-T</a>
-    <a class="btn" href="/datacenters/new/globalnsxt">+ Global NSX-T</a>
-    <a class="btn" href="/datacenters/new/proxmox">+ Proxmox</a>
+  <div class="menu">
+    <a href="#" class="btn menu-trigger">+ New Data Center ▾</a>
+    <div class="menu-items">
+      <a href="/datacenters/new">OpenStack</a>
+      <a href="/datacenters/new/vcenter">vCenter</a>
+      <a href="/datacenters/new/nsxt">NSX-T</a>
+      <a href="/datacenters/new/globalnsxt">Global NSX-T</a>
+      <a href="/datacenters/new/proxmox">Proxmox</a>
+    </div>
   </div>
 </div>
 
 {% if not rows %}
-<div class="card"><p class="muted">No datacenters yet. Create an OpenStack or vCenter mock to connect a SmartConsole Data Center object without a real cloud.</p></div>
+<div class="card"><p class="muted">No datacenters yet. Use <b>+ New Data Center</b> to create an OpenStack, vCenter, NSX-T, Global NSX-T, or Proxmox mock and connect a SmartConsole Data Center object without a real cloud.</p></div>
 {% else %}
 <div class="card" style="padding:6px 6px 2px;">
 <div class="tablewrap">
@@ -28,7 +31,13 @@
       <td><a class="feedname" href="/datacenters/{{ r.dc.id }}">{{ r.dc.name }}</a>{% if r.dc.description %}<div class="subsel">{{ r.dc.description }}</div>{% endif %}</td>
       <td><span class="pill">{{ r.dc.provider }}</span></td>
       <td class="muted">{{ r.summary }}</td>
-      <td class="nowrap"><a class="copybtn" href="/datacenters/{{ r.dc.id }}">Open</a></td>
+      <td class="nowrap" style="text-align:right;">
+        <a class="copybtn" href="/datacenters/{{ r.dc.id }}">Open</a>
+        <form method="post" action="/datacenters/{{ r.dc.id }}/delete" style="display:inline;">
+          <button class="minibtn" type="submit" style="margin-left:6px;"
+                  data-confirm="Delete “{{ r.dc.name }}”? This removes the mock datacenter.">Delete</button>
+        </form>
+      </td>
     </tr>
   {% endfor %}
   </tbody>

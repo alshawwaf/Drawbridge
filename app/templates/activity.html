@@ -9,28 +9,62 @@
   </div>
 </div>
 
+<div class="card" style="padding:12px 14px; margin:14px 0;">
+  <input type="search" id="q-input" value="{{ q }}" autocomplete="off"
+         placeholder="Search the log — path, method, status, source IP… (e.g. /global-infra/sites, 403, 38.104.95.242)">
+</div>
+
 <form method="post" action="/activity/delete" id="act-form">
   <input type="hidden" name="page_size" id="ps-hidden" value="{{ page_size }}">
+  <input type="hidden" name="q" id="q-hidden" value="{{ q }}">
+  <input type="hidden" name="dc" id="dc-hidden" value="{{ dc }}">
   <div style="display:flex; gap:18px; align-items:flex-start; flex-wrap:wrap;">
-    <aside class="card" style="width:240px; flex:0 0 240px;">
+    <aside class="card" style="width:248px; flex:0 0 248px;">
       <div class="trace-lbl">Filter by type</div>
-      <div style="margin:8px 0 12px;">
+      <div style="margin:8px 0 10px;">
         {% for k, label in kind_labels.items() %}
         <label class="check" style="display:flex; align-items:center; gap:8px; margin:6px 0;">
           <input type="checkbox" name="kinds" value="{{ k }}" class="kind-cb" {{ 'checked' if k in selected else '' }}>
           <span class="grow">{{ label }}</span><span class="chipcount">{{ counts.get(k, 0) }}</span>
         </label>
+        {% if k == 'datacenter' %}
+        <details class="dc-sub" {{ 'open' if dc else '' }} style="margin:1px 0 4px 24px;">
+          <summary style="font-size:11.5px; color:var(--accent); font-weight:600; padding:3px 0;">by data center type</summary>
+          <div style="margin:4px 0 2px;">
+            <label class="check" style="display:flex; align-items:center; gap:8px; margin:5px 0; font-size:12.5px;">
+              <input type="radio" name="dcfilter" value="" class="dc-rb" {{ 'checked' if not dc else '' }}>
+              <span class="grow">Any type</span>
+            </label>
+            {% for prov, plabel in provider_labels.items() %}
+            <label class="check" style="display:flex; align-items:center; gap:8px; margin:5px 0; font-size:12.5px;">
+              <input type="radio" name="dcfilter" value="{{ prov }}" class="dc-rb" {{ 'checked' if dc == prov else '' }}>
+              <span class="grow">{{ plabel }}</span><span class="chipcount">{{ dc_counts.get(prov, 0) }}</span>
+            </label>
+            {% endfor %}
+          </div>
+        </details>
+        {% endif %}
         {% endfor %}
       </div>
-      <p class="muted" style="font-size:11.5px; margin:0 0 16px;">No type checked = show all ({{ counts.get('all', 0) }}).</p>
+      <p class="muted" style="font-size:11.5px; margin:0 0 16px;">No type checked = show all ({{ counts.get('all', 0) }}). Picking a data center type overrides the checkboxes.</p>
 
       <div class="trace-lbl">Rows per page</div>
       <select id="page-size" style="margin:8px 0 16px; width:100%;">
         {% for n in page_sizes %}<option value="{{ n }}" {{ 'selected' if n == page_size else '' }}>{{ n }}</option>{% endfor %}
       </select>
 
+      <div class="trace-lbl">Auto-refresh</div>
+      <select id="refresh-rate" style="margin:8px 0 16px; width:100%;">
+        <option value="0">Off (paused)</option>
+        <option value="2000">Every 2s</option>
+        <option value="5000" selected>Every 5s</option>
+        <option value="10000">Every 10s</option>
+        <option value="30000">Every 30s</option>
+      </select>
+      <p class="muted" style="font-size:11.5px; margin:-8px 0 16px;">Only the newest page auto-refreshes — page back or pause to read without rows shifting.</p>
+
       <button class="danger" type="submit" formaction="/activity/clear" id="clear-btn" style="width:100%;"
-              data-confirm="Clear all log entries matching the current filter? This cannot be undone.">Clear all</button>
+              data-confirm="Clear all log entries matching the current view? This cannot be undone.">Clear all</button>
     </aside>
 
     <div style="flex:1; min-width:0;">
@@ -57,11 +91,12 @@
   (function () {
     var $ = function (id) { return document.getElementById(id); };
     var form = $('act-form'), rowsEl = $('rows'), psSel = $('page-size'), psHidden = $('ps-hidden');
+    var qInput = $('q-input'), qHidden = $('q-hidden'), dcHidden = $('dc-hidden');
+    var refreshSel = $('refresh-rate');
     var selAll = $('sel-all'), delBtn = $('del-btn'), clearBtn = $('clear-btn');
     var modal = $('rec-modal'), recBody = $('rec-body');
-    var page = 1;
+    var page = 1, timer = null;
 
-    // Inject server-rendered (Jinja-escaped) fragments without using innerHTML.
     function setHTML(el, html) {
       el.replaceChildren(document.createRange().createContextualFragment(html));
     }
@@ -69,20 +104,29 @@
       return Array.prototype.slice.call(form.querySelectorAll('.kind-cb'))
         .filter(function (c) { return c.checked; }).map(function (c) { return c.value; });
     }
+    function selectedDc() {
+      var r = form.querySelector('input[name="dcfilter"]:checked');
+      return r ? r.value : '';
+    }
+    function searchText() { return (qInput.value || '').trim(); }
     function rowCbs() { return Array.prototype.slice.call(rowsEl.querySelectorAll('.row-cb')); }
     function syncDel() { delBtn.disabled = !rowCbs().some(function (c) { return c.checked; }); }
     function query(extra) {
       var p = new URLSearchParams();
       selectedKinds().forEach(function (k) { p.append('kinds', k); });
       p.set('page_size', psSel.value);
+      if (searchText()) p.set('q', searchText());
+      if (selectedDc()) p.set('dc', selectedDc());
       if (extra) Object.keys(extra).forEach(function (k) { p.set(k, extra[k]); });
       return p;
     }
     function syncState() {
       var p = query();
       history.replaceState(null, '', '/activity' + (p.toString() ? '?' + p.toString() : ''));
-      psHidden.value = psSel.value;  // keep the delete/clear form in sync with the picker
-      clearBtn.textContent = selectedKinds().length ? 'Clear filtered' : 'Clear all';
+      psHidden.value = psSel.value;            // keep the delete/clear form in sync with the view
+      qHidden.value = searchText();
+      dcHidden.value = selectedDc();
+      clearBtn.textContent = (selectedKinds().length || selectedDc() || searchText()) ? 'Clear filtered' : 'Clear all';
     }
     function load() {
       fetch('/activity/rows?' + query({ page: page }).toString())
@@ -90,12 +134,13 @@
         .then(function (html) { setHTML(rowsEl, html); selAll.checked = false; syncDel(); })
         .catch(function () {});
     }
+    function reload() { page = 1; syncState(); load(); }
     window.gotoPage = function (n) { page = Math.max(1, n); load(); window.scrollTo({ top: 0, behavior: 'smooth' }); };
 
     rowsEl.addEventListener('click', function (e) {
       var pg = e.target.closest ? e.target.closest('[data-page]') : null;
       if (pg) { e.preventDefault(); window.gotoPage(parseInt(pg.getAttribute('data-page'), 10) || 1); return; }
-      if (e.target.classList.contains('row-cb')) { syncDel(); return; }  // selecting, not opening
+      if (e.target.classList.contains('row-cb')) { syncDel(); return; }
       var row = e.target.closest('.act-row');
       if (row) openRecord(row.getAttribute('data-id'));
     });
@@ -103,9 +148,16 @@
     selAll.addEventListener('change', function () { rowCbs().forEach(function (c) { c.checked = selAll.checked; }); syncDel(); });
 
     form.addEventListener('change', function (e) {
-      if (e.target.classList.contains('kind-cb')) { page = 1; syncState(); load(); }
+      if (e.target.classList.contains('kind-cb') || e.target.classList.contains('dc-rb')) reload();
     });
-    psSel.addEventListener('change', function () { page = 1; syncState(); load(); });
+    psSel.addEventListener('change', reload);
+
+    // Debounced live search.
+    var qTimer = null;
+    qInput.addEventListener('input', function () {
+      clearTimeout(qTimer);
+      qTimer = setTimeout(reload, 300);
+    });
 
     function openRecord(id) {
       setHTML(recBody, '<p class="muted">Loading…</p>');
@@ -118,10 +170,17 @@
     modal.addEventListener('click', function (e) { if (e.target === modal) modal.hidden = true; });
     document.addEventListener('keydown', function (e) { if (e.key === 'Escape') modal.hidden = true; });
 
+    // Auto-refresh at the configured rate (Off = paused). Newest page only, never while reading.
+    function applyRefresh() {
+      if (timer) { clearInterval(timer); timer = null; }
+      var ms = parseInt(refreshSel.value, 10) || 0;
+      if (ms > 0) timer = setInterval(function () { if (page === 1 && modal.hidden) load(); }, ms);
+    }
+    refreshSel.addEventListener('change', applyRefresh);
+
     syncState();
     load();
-    // Live tail: refresh the newest page only, and not while reading a record.
-    setInterval(function () { if (page === 1 && modal.hidden) load(); }, 4000);
+    applyRefresh();
   })();
 </script>
 {% endblock %}
