@@ -6,10 +6,12 @@ Mocks a **Proxmox VE** server (`/api2/json` REST) so CloudGuard Controller **R82
 - Service: [`app/services/proxmox.py`](../../app/services/proxmox.py)
 - Router: [`app/routers/proxmox_mock.py`](../../app/routers/proxmox_mock.py)
 
-> **Status:** first cut — built to the R82.10 admin guide + the public Proxmox API shape, verified
-> end-to-end (routes, service output, auth, UI). **Pending the first real-CloudGuard trace** to
-> confirm the exact endpoints/shapes CloudGuard calls (every `/api2/json` call is captured in the
-> Activity log, and unmodeled paths return a safe empty list so enumeration never 404-stalls).
+> **Status:** ✅ validated against live CloudGuard R82.10 — connects and imports the full tree:
+> **Cluster → Node (with IP) → VMs (with IPs)** in Select-objects. Two things the first trace taught
+> us: SmartConsole needs a **real-format Token ID** (`user@realm!name`) even open-lab, and CloudGuard
+> anchors the Node tree on **`/cluster/status`** (see below). **Tags** import is **off by default** in
+> CloudGuard's Proxmox scanner (the mock serves them regardless), so the Tags column is empty until
+> that's enabled.
 
 ## R82.10 contract (from the admin guide)
 
