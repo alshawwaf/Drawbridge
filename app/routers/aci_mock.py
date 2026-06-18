@@ -118,7 +118,7 @@ def aci_class_apex(cls: str, request: Request, db: Session = Depends(get_db)):
 @router.get("/api/mo/{rest:path}")
 def aci_mo_apex(rest: str, request: Request, db: Session = Depends(get_db)):
     dc = _apex_dc(db)
-    return _guard(dc, request) or _xml(aci.mo_subtree(dc, rest))
+    return _guard(dc, request) or _xml(aci.mo_subtree(dc, rest, dict(request.query_params)))
 
 
 # --- token-path routes (direct testing of a specific datacenter) ----------------------------
@@ -157,7 +157,7 @@ def aci_class_tok(token: str, cls: str, request: Request, db: Session = Depends(
 @router.get("/aci/{token}/api/mo/{rest:path}")
 def aci_mo_tok(token: str, rest: str, request: Request, db: Session = Depends(get_db)):
     dc = _dc(db, token)
-    return _guard(dc, request) or _xml(aci.mo_subtree(dc, rest))
+    return _guard(dc, request) or _xml(aci.mo_subtree(dc, rest, dict(request.query_params)))
 
 
 @router.get("/aci/{token}/api/{rest:path}")

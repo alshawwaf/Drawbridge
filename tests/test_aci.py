@@ -56,7 +56,7 @@ def test_unknown_class_is_empty_imdata():
 
 
 def test_mo_subtree_returns_objects_under_the_dn():
-    # CloudGuard's scanner uses queryByDn (/api/mo/<dn>); empty there = blank Select-objects list.
+    # CloudGuard's scanner uses queryByDn (/api/mo/<dn>); a bare query stays permissive (whole subtree).
     root = aci.mo_subtree(DC, "uni.xml")                              # whole tree
     classes = [next(iter(m)) for m in root]
     assert "fvTenant" in classes and "fvAEPg" in classes and "fvCEp" in classes and "fvESg" in classes
@@ -65,6 +65,24 @@ def test_mo_subtree_returns_objects_under_the_dn():
     assert all(aci._dn(m) == "uni/tn-DCSIM" or aci._dn(m).startswith("uni/tn-DCSIM/") for m in tenant_sub)
     epg_sub = aci.mo_subtree(DC, "uni/tn-DCSIM/ap-DCSIM-AP/epg-web-epg")   # EPG + its endpoints
     assert any(next(iter(m)) == "fvCEp" for m in epg_sub)
+
+
+def test_mo_subtree_honors_apic_query_options():
+    # The tenant list is queryByDn('uni', query-target=children, target-subtree-class=fvTenant) — it
+    # must return ONLY the tenant, not the whole mixed-class tree (that unmarshalled to an empty list,
+    # so the Select-objects 'Tenants' folder rendered but stayed empty).
+    tlist = aci.mo_subtree(DC, "uni", {"query-target": "children", "target-subtree-class": "fvTenant"})
+    assert [next(iter(m)) for m in tlist] == ["fvTenant"] and aci._dn(tlist[0]) == "uni/tn-DCSIM"
+    # query-target=self → just that MO, no descendants
+    self_only = aci.mo_subtree(DC, "uni/tn-DCSIM", {"query-target": "self"})
+    assert len(self_only) == 1 and next(iter(self_only[0])) == "fvTenant"
+    # query-target=subtree + class filter → only that class, flat
+    epgs_only = aci.mo_subtree(DC, "uni/tn-DCSIM",
+                               {"query-target": "subtree", "target-subtree-class": "fvAEPg"})
+    assert {next(iter(m)) for m in epgs_only} == {"fvAEPg"} and len(epgs_only) == 2
+    # rsp-subtree=full → one top-level fvTenant with its subtree nested inside
+    full = aci.mo_subtree(DC, "uni/tn-DCSIM", {"query-target": "self", "rsp-subtree": "full"})
+    assert len(full) == 1 and full[0]["fvTenant"]["children"][0]["fvAp"]["attributes"]["name"] == "DCSIM-AP"
 
 
 def test_to_xml_is_the_apic_imdata_format():
