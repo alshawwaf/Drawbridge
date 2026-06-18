@@ -1,16 +1,19 @@
 """Mock Cisco ACI / APIC (REST) that CloudGuard Controller R82.10 connects to.
 
 The SmartConsole ACI object's *URLs* field takes a full URL, so the admin enters
-``https://<portal>/aci/<token>`` and the controller appends ``/api/aaaLogin.xml`` and
-``/api/node/class/<class>.xml`` — served here under the token path (path-based, many ACI mocks per
-portal). **CloudGuard's APIC client unmarshals XML**, so responses default to APIC XML
-(``<imdata><fvTenant .../></imdata>``); the ``.json`` form is also served for shell testing. Login
-returns a token echoed back as the ``APIC-cookie``. Every call is in the Activity log (``/aci/*``).
+``https://<portal>/aci/<token>`` and the controller appends ``/api/aaaLogin`` and
+``/api/node/class/<class>`` (with or without a ``.xml``/``.json`` extension) — served here under the
+token path (path-based, many ACI mocks per portal).
+
+**CloudGuard's APIC client unmarshals XML unconditionally** (`apic_service.jar` → JAXB/SAX; JSON makes
+it fail with "Content is not allowed in prolog"), so this mock answers **APIC XML for every
+extension** — ``<imdata totalCount="N"><fvTenant .../>…</imdata>``. Login returns a token echoed back
+as the ``APIC-cookie``. Every call is captured in the Activity log (``/aci/*``).
 """
 import json
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -37,43 +40,37 @@ def _creds(raw: bytes):
         return "", ""
 
 
-def _fmt(s: str) -> str:
-    """Response format from the request's extension — XML is the default (CloudGuard's APIC client)."""
-    return "json" if (s or "").endswith(".json") else "xml"
-
-
-def _render(objs: list, fmt: str, status: int = 200) -> Response:
-    if fmt == "json":
-        return JSONResponse(aci.imdata(objs), status_code=status)
+def _xml(objs: list, status: int = 200) -> Response:
+    """APIC XML response — the format CloudGuard's client unmarshals (regardless of the URL ext)."""
     return Response(aci.to_xml(objs), media_type="application/xml", status_code=status)
 
 
-def _guard(dc, request: Request, fmt: str):
-    """APIC error envelope (in the requested format) unless the request carries our APIC-cookie."""
+def _guard(dc, request: Request):
     if not aci.authorized(dc, apic_cookie=request.cookies.get("APIC-cookie", "")):
-        return _render(aci.forbidden_objs(), fmt, status=403)
+        return _xml(aci.forbidden_objs(), status=403)
     return None
 
 
+# aaaLogin / aaaRefresh — matched with or without a .xml/.json extension; always answered in XML.
 @router.post("/aci/{token}/api/aaaLogin.{fmt}")
 @router.post("/aci/{token}/api/aaaLogin")
-async def aci_login(token: str, request: Request, fmt: str = "xml", db: Session = Depends(get_db)):
+async def aci_login(token: str, request: Request, fmt: str = "", db: Session = Depends(get_db)):
     dc = _dc(db, token)
     name, pwd = _creds(await request.body())
     if not aci.auth_ok(dc, name, pwd):
-        return _render(aci.forbidden_objs(), fmt, status=401)
+        return _xml(aci.forbidden_objs(), status=401)
     tok, objs = aci.login_objects(name)
-    resp = _render(objs, fmt)
+    resp = _xml(objs)
     resp.set_cookie("APIC-cookie", tok)            # the controller echoes this back on every query
     return resp
 
 
 @router.post("/aci/{token}/api/aaaRefresh.{fmt}")
 @router.post("/aci/{token}/api/aaaRefresh")
-def aci_refresh(token: str, fmt: str = "xml", db: Session = Depends(get_db)):
+def aci_refresh(token: str, fmt: str = "", db: Session = Depends(get_db)):
     _dc(db, token)
     tok, objs = aci.login_objects("")
-    resp = _render(objs, fmt)
+    resp = _xml(objs)
     resp.set_cookie("APIC-cookie", tok)
     return resp
 
@@ -82,7 +79,7 @@ def aci_refresh(token: str, fmt: str = "xml", db: Session = Depends(get_db)):
 @router.get("/aci/{token}/api/class/{cls}")
 def aci_class(token: str, cls: str, request: Request, db: Session = Depends(get_db)):
     dc = _dc(db, token)
-    return _guard(dc, request, _fmt(cls)) or _render(aci.class_objects(dc, cls), _fmt(cls))
+    return _guard(dc, request) or _xml(aci.class_objects(dc, cls))
 
 
 # MO (managed-object) queries by DN and any other /api/... path → empty imdata (so enumeration
@@ -92,4 +89,4 @@ def aci_class(token: str, cls: str, request: Request, db: Session = Depends(get_
 @router.get("/aci/{token}/api/{rest:path}")
 def aci_other(token: str, rest: str, request: Request, db: Session = Depends(get_db)):
     dc = _dc(db, token)
-    return _guard(dc, request, _fmt(rest)) or _render([], _fmt(rest))
+    return _guard(dc, request) or _xml([])
