@@ -352,6 +352,26 @@ def dc_k8s_token(dc_id: int, request: Request, db: Session = Depends(get_db)):
                     headers={"Content-Disposition": f'attachment; filename="{filename}"'})
 
 
+@router.get("/datacenters/{dc_id}/k8s-ca")
+def dc_k8s_ca(dc_id: int, request: Request, db: Session = Depends(get_db)):
+    """Download the portal's TLS certificate chain (PEM), to import into SmartConsole's 'CA Certificate'
+    field — the Kubernetes connector uses a custom trust store and won't trust the portal's cert
+    otherwise (the TLS handshake fails before any HTTP)."""
+    user = get_user_or_none(request, db)
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+    dc = _owned(db, dc_id, user)
+    if dc.provider != "kubernetes":
+        raise HTTPException(status_code=404, detail="Not a Kubernetes datacenter")
+    host = get_settings().base_url.split("://", 1)[-1].split("/")[0].split(":")[0]
+    try:
+        pem = k8s_svc.portal_tls_chain_pem(host)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Could not fetch the portal TLS chain: {exc}")
+    return Response(pem, media_type="application/x-pem-file",
+                    headers={"Content-Disposition": f'attachment; filename="{host}-ca.pem"'})
+
+
 # --- Nutanix Prism --------------------------------------------------------------------------
 # VMs carry Nutanix Categories (key=value, like tags), entered as 'name = ip | key=value, key=value'.
 DEFAULT_NUTANIX_VMS = ("web-vm-1 = 10.50.0.11 | Environment=Production, AppType=Web\n"
