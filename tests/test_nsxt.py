@@ -49,6 +49,14 @@ def test_groups_expose_membership_condition_and_tags():
     assert {"scope": "env", "tag": "production"} in g["tags"]
 
 
+def test_groups_carry_parent_path_to_their_domain():
+    # parent_path is what makes a group nest under its domain (= Region on the Global Manager).
+    g = nsxt.groups(DC)["results"][0]
+    assert g["parent_path"] == "/infra/domains/default" and g["relative_path"] == "web-servers"
+    gg = nsxt.groups(DC, infra="global-infra")["results"][0]
+    assert gg["parent_path"] == "/global-infra/domains/default"
+
+
 def test_group_members_resolve_by_tag():
     members = nsxt.group_members(DC, "web-servers")["results"]
     assert [m["display_name"] for m in members] == ["web-vm-01"]   # db-vm-01 excluded (tier=db)
@@ -106,7 +114,10 @@ def test_middleware_classifies_global_manager_as_datacenter():
 
 
 def test_domains_lists_the_default_domain():
-    # CloudGuard enumerates /infra/domains before fetching each domain's groups.
-    assert nsxt.domains()["results"] == [{"resource_type": "Domain", "id": "default",
-                                          "display_name": "default", "path": "/infra/domains/default"}]
-    assert nsxt.domains(infra="global-infra")["results"][0]["path"] == "/global-infra/domains/default"
+    # CloudGuard enumerates /infra/domains before fetching each domain's groups (and renders each
+    # global-infra domain as a Region on the Global Manager).
+    d = nsxt.domains()["results"][0]
+    assert d["resource_type"] == "Domain" and d["id"] == "default" and d["display_name"] == "default"
+    assert d["path"] == "/infra/domains/default" and d["parent_path"] == "/infra"
+    gd = nsxt.domains(infra="global-infra")["results"][0]
+    assert gd["path"] == "/global-infra/domains/default" and gd["parent_path"] == "/global-infra"
