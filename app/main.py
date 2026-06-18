@@ -13,7 +13,7 @@ from .models import User
 from .middleware import ActivityLogMiddleware
 from .routers import (
     aci_mock, activity, datacenters, dynamic_layers, feeds, gateways, gaia_mock, kubernetes_mock,
-    nsxt_mock, nutanix_mock, openstack_mock, proxmox_mock, serve, ui, vcenter_mock,
+    nsxt_mock, nutanix_mock, openstack_mock, proxmox_mock, scenarios, serve, ui, vcenter_mock,
 )
 from .security import hash_password
 
@@ -71,6 +71,7 @@ def create_app() -> FastAPI:
     app.include_router(aci_mock.router)
     app.include_router(nutanix_mock.router)
     app.include_router(datacenters.router)
+    app.include_router(scenarios.router)
     app.include_router(activity.router)
 
     @app.get("/healthz", include_in_schema=False)

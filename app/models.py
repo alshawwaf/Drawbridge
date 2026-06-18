@@ -229,3 +229,22 @@ class Datacenter(Base):
     updated_at: Mapped[dt.datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow
     )
+
+    baseline: Mapped["DatacenterBaseline"] = relationship(
+        back_populates="datacenter", cascade="all, delete-orphan", uselist=False)
+
+
+class DatacenterBaseline(Base):
+    """The inventory snapshot a datacenter resets to after a demo. Captured automatically before the
+    first live mutation (and re-settable), so 'Reset to baseline' restores the pre-demo state."""
+
+    __tablename__ = "datacenter_baselines"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    datacenter_id: Mapped[int] = mapped_column(ForeignKey("datacenters.id"), unique=True, index=True)
+    content: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    datacenter: Mapped["Datacenter"] = relationship(back_populates="baseline")
