@@ -29,10 +29,11 @@ PROVIDER_PATHS = {
     "aci": ["/aci/", "/api/aaaLogin", "/api/aaaRefresh", "/api/aaaLogout",
             "/api/node/", "/api/class/", "/api/mo/"],
     "kubernetes": ["/k8s/", "/api/v1/nodes", "/api/v1/pods", "/api/v1/services", "/api/v1/endpoints"],
+    "nutanix": ["/nutanix/", "/api/nutanix/", "/api/vmm/", "/api/prism/"],
 }
 PROVIDER_LABELS = {"vcenter": "vCenter", "nsxt": "NSX-T", "globalnsxt": "Global NSX-T",
                    "openstack": "OpenStack", "proxmox": "Proxmox", "aci": "Cisco ACI",
-                   "kubernetes": "Kubernetes"}
+                   "kubernetes": "Kubernetes", "nutanix": "Nutanix"}
 
 PAGE_SIZES = [10, 25, 50, 100]
 DEFAULT_PAGE_SIZE = 10
