@@ -6,11 +6,16 @@ Groups, VMs, and Tags that span sites — the federated sibling of [NSX-T](nsxt.
 - Service: [`app/services/nsxt.py`](../../app/services/nsxt.py) (shared with NSX-T)
 - Router: [`app/routers/nsxt_mock.py`](../../app/routers/nsxt_mock.py) (`/global-manager/…` routes)
 
-> **Status:** Regions (from the global-infra domains) and NS Groups import against live CloudGuard.
-> Making the groups **nest under their Region** required two things, both confirmed from a full GM
-> trace: a `parent_path` on each group **and** a real Federation Location at `/global-infra/sites`
-> (see [Region ↔ NS Group nesting](#region--ns-group-nesting-what-actually-makes-them-appear)) —
-> pending a final re-test. Per the
+> **Status:** Connects against live CloudGuard and imports the **Region** (navigable in the tree),
+> and CloudGuard resolves both NS Groups' member IPs. **Known limitation (parked):** the NS Groups do
+> **not** visually nest *under* the Region in Select-objects. Three schema-grounded fixes were tried
+> live — `parent_path`, a Federation **Location** at `/global-infra/sites`, and `origin_site_id` on
+> the groups (see [Region ↔ NS Group nesting](#region--ns-group-nesting-what-actually-makes-them-appear))
+> — none produced the nesting; CloudGuard's internal GlobalNSXT tree-mapping isn't documented. The PoV
+> demos NS-Group import via the working [NSX-T (Local Manager)](nsxt.md) object instead. To finish the
+> nesting without guessing, match a **real NSX-T 4.1 Global Manager**'s `/global-infra` responses
+> byte-for-byte. (Also seen: a transient **Test Connection 403** that recovers to a clean scan — see
+> Gotchas.) Per the
 > [R82.10 admin guide](https://sc1.checkpoint.com/documents/R82.10/WebAdminGuides/EN/CP_R82.10_CloudGuard_Controller_AdminGuide/Content/Topics-CGRDG/Supported-Data-Centers-VMware.htm),
 > the Global Manager is **NSX-T 4.1 only**; config is unified with NSX-T under the `nsxt.` prefix.
 
@@ -94,16 +99,22 @@ trace, not a guess:
    `members/ip-addresses`.
 3. **`origin_site_id` on each global group** → the Site's `unique_id` (`groups()`, GM only). The GM
    Group schema has **no inline `span`**; instead every federated object carries `origin_site_id`
-   ("which site owns the object"). After (1)+(2) the Region was navigable but still childless, because
-   nothing tied the groups to the site. Stamping each group's `origin_site_id` with the Site's system
-   UUID is the link CloudGuard follows to nest the group under that site's Region.
+   ("which site owns the object"). After (1)+(2) the Region was navigable but still childless, so we
+   stamped each group's `origin_site_id` with the Site's system UUID as the would-be link.
 
 ```
 GET /global-infra/sites  →  [ { "resource_type": "Site", "id": "default", "unique_id": "<UUID>",
                                  "path": "/global-infra/sites/default", "site_type": "ONPREM_LM", … } ]
 GET …/groups             →  [ { …, "parent_path": "/global-infra/domains/default",
-                                 "origin_site_id": "<UUID>" } ]    ← same UUID ties group → site → Region
+                                 "origin_site_id": "<UUID>" } ]    ← intended group → site → Region link
 ```
+
+> **Outcome: this did NOT produce the nesting.** All three changes are live and (1)+(2) made the
+> Region navigable, but the NS Groups still don't render under it. The actual mapping lives in
+> CloudGuard's `NsxTScanner` and isn't derivable from public schemas — **parked** rather than keep
+> guessing. The three fields are retained (harmless, partially correct). The only non-guessing way to
+> finish: capture a **real NSX-T 4.1 Global Manager**'s `/global-infra/domains|groups|sites` and match
+> them exactly.
 
 `parent_path` is also set on the Local Manager (`/infra/domains/default`) — correct and harmless to
 NSX-T's flat list. The LM has no `/sites` and no `origin_site_id` (no Federation).
@@ -116,6 +127,12 @@ NSX-T's flat list. The LM has no `/sites` and no `origin_site_id` (no Federation
 - **Single Location only.** We return one `Site` (`default`); everything spans it implicitly, so no
   `/span` or `/domain-deployment-maps` is needed. Multi-region would mean multiple Sites + per-group
   span — not modeled (not needed for a single-site PoV).
-- After redeploying this change, **delete + re-add** the Global NSX-T object in SmartConsole so it
-  re-syncs (it caches the previous topology where the groups didn't nest).
+- **NS Groups don't nest under the Region (parked).** See the box above — the integration connects,
+  imports the Region, and resolves group IPs, but the visual nesting is unsolved without a real-GM
+  capture. Demo NS Groups via the [NSX-T (LM)](nsxt.md) object.
+- **Transient Test Connection 403 (deferred).** `cloud_proxy.elg` showed `getAllDomainsGlobal` failing
+  5× with 403 during `connectionMode TestConnection`, then a clean `StandardConnection` scan. Likely
+  the GM `/global-infra/domains` call landing before the session cookie is honored during Test
+  Connection. The background scan works; revisit only if Test Connection shows red in a demo.
+- After a change, **delete + re-add** the object in SmartConsole so it re-syncs (it caches topology).
 - Apex single-tenant; same diagnostics as [NSX-T](nsxt.md).
