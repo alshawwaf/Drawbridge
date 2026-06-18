@@ -24,10 +24,7 @@
   <textarea name="services_text" placeholder="production/web-svc = 10.40.10.1 | LoadBalancer">{{ form.services_text }}</textarea>
   <p class="muted">Served at <code>/api/v1/services</code>; <code>type</code> defaults to <code>ClusterIP</code>. Each service's <code>/api/v1/endpoints</code> resolves to the pod IPs in its namespace.</p>
 
-  <h2 style="font-size:15px; margin:22px 0 0;">Service-account token</h2>
-  <label>Bearer token <span class="muted" style="font-weight:400;">— optional</span></label>
-  <input name="k8s_token" type="password" autocomplete="new-password" placeholder="Leave blank to accept any token (open lab)">
-  <p class="muted">If set, the mock validates the <code>Authorization: Bearer &lt;token&gt;</code> header and returns <code>401</code> on mismatch. Stored only as a one-way hash. In SmartConsole, paste the same token (a ServiceAccount token with read on nodes/pods/services/endpoints).</p>
+  <p class="muted" style="margin-top:18px;"><b>Service-account token:</b> nothing to enter — after you save, the DC page has a <b>“Download Service Account Token”</b> button. SmartConsole's Kubernetes object requires the token as an imported <i>file</i>, so download it from there and import it (the mock is the API server and accepts it).</p>
 
   <div class="row" style="margin-top:18px;">
     <button type="submit">Create datacenter</button>

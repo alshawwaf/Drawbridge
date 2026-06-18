@@ -3,7 +3,7 @@ Currently OpenStack (Keystone + Nova + Neutron); other providers follow the same
 import json
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -311,8 +311,7 @@ def dc_new_kubernetes(request: Request, db: Session = Depends(get_db)):
 @router.post("/datacenters/new/kubernetes")
 def dc_create_kubernetes(request: Request, name: str = Form(...), description: str = Form(""),
                          nodes_text: str = Form(""), pods_text: str = Form(""),
-                         services_text: str = Form(""), k8s_token: str = Form(""),
-                         db: Session = Depends(get_db)):
+                         services_text: str = Form(""), db: Session = Depends(get_db)):
     user = get_user_or_none(request, db)
     if user is None:
         return RedirectResponse("/login", status_code=303)
@@ -321,14 +320,14 @@ def dc_create_kubernetes(request: Request, name: str = Form(...), description: s
                    "services": parse_k8s_services(services_text)}
         if not (content["nodes"] or content["pods"] or content["services"]):
             raise ValueError("Add at least one node, pod, or service.")
-        # Bearer token validated on every call; stored only as a one-way hash. Blank = open lab.
-        if k8s_token:
-            content["auth"] = {"token_hash": hash_password(k8s_token)}
     except Exception as exc:
         return templates.TemplateResponse(request, "dc_new_kubernetes.html", {"error": str(exc), "form": {
             "name": name, "description": description, "nodes_text": nodes_text,
             "pods_text": pods_text, "services_text": services_text,
         }}, status_code=400)
+    # The service-account token isn't entered here — the portal generates a downloadable one per DC
+    # (see /datacenters/{id}/k8s-token) for SmartConsole's required token-file field; the mock is the
+    # API server and accepts it.
     dc = Datacenter(token=new_feed_token(), provider="kubernetes", name=name,
                     description=description, content=content, owner_id=user.id)
     db.add(dc)
@@ -336,6 +335,21 @@ def dc_create_kubernetes(request: Request, name: str = Form(...), description: s
     db.refresh(dc)
     _flash(request, f"Kubernetes datacenter “{name}” saved.")
     return RedirectResponse(f"/datacenters/{dc.id}", status_code=303)
+
+
+@router.get("/datacenters/{dc_id}/k8s-token")
+def dc_k8s_token(dc_id: int, request: Request, db: Session = Depends(get_db)):
+    """Download the datacenter's service-account token as a file, to import into SmartConsole's
+    'Import Service Account Token…' field."""
+    user = get_user_or_none(request, db)
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+    dc = _owned(db, dc_id, user)
+    if dc.provider != "kubernetes":
+        raise HTTPException(status_code=404, detail="Not a Kubernetes datacenter")
+    filename = f"{dc.name.replace(' ', '_')}-sa-token.txt"
+    return Response(k8s_svc.sa_token(dc) + "\n", media_type="text/plain",
+                    headers={"Content-Disposition": f'attachment; filename="{filename}"'})
 
 
 # --- Nutanix Prism --------------------------------------------------------------------------

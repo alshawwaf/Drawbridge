@@ -17,11 +17,33 @@ Metadata{name,namespace,uid,labels}, Node{metadata,status}, NodeAddress{type,add
 Pod{metadata,status}, Service{metadata,spec,status}, ServiceSpec{type,clusterIP}, Endpoint{metadata,
 subsets}, Subset{addresses}, EndpointAddress{ip}.
 """
+import base64
+import json
 import uuid
 
 from ..security import verify_password
 
 _NS_DEFAULT = "default"
+
+
+def _b64u(b: bytes) -> str:
+    return base64.urlsafe_b64encode(b).decode().rstrip("=")
+
+
+def sa_token(dc) -> str:
+    """A deterministic, well-formed Kubernetes **service-account JWT** for this datacenter — the portal
+    serves it for download so the user imports it into SmartConsole's required 'Service Account Token'
+    field (the connector takes the token as a FILE, and ``decodeToken``s it, so it must be a valid JWT).
+    The mock IS the API server, so the signature isn't cryptographically verified — it only needs valid
+    JWT structure; the signature is derived from the DC token so it's stable and unique per DC."""
+    header = {"alg": "RS256", "kid": "dcsim", "typ": "JWT"}
+    payload = {"iss": "kubernetes/serviceaccount",
+               "kubernetes.io/serviceaccount/namespace": "kube-system",
+               "kubernetes.io/serviceaccount/secret.name": "cloudguard-token",
+               "kubernetes.io/serviceaccount/service-account.name": "cloudguard",
+               "sub": "system:serviceaccount:kube-system:cloudguard"}
+    sig = _b64u(f"dcsim-mock-{getattr(dc, 'token', '') or 'open'}".encode())
+    return f"{_b64u(json.dumps(header).encode())}.{_b64u(json.dumps(payload).encode())}.{sig}"
 _UID_NS = uuid.UUID("00000000-0000-0000-0000-00000000babe")   # stable uids across calls
 
 
