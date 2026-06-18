@@ -34,11 +34,17 @@ From `NutanixScanner` + `NutanixApi` + `NutanixDeployment` and the `objects`/`v4
 
 Apex single-tenant (bare host) — **one Nutanix mock per portal**.
 
+> ⚠️ **Nutanix needs the portal reachable on port 9440** (see Gotchas). Its Hostname field takes a
+> **bare** host/IP only (a scheme or `:port` is rejected with *"must be a valid IP address or DNS
+> name"*), and the connector hardcodes **Prism Central's 9440**. So unlike every other DC type, 443
+> alone isn't enough — expose the portal on 9440 first (the bundled `docker-compose.yml` + `Caddyfile`
+> now do this; for a Dokploy/Traefik host add a 9440 TLS entrypoint, or a `socat` 9440→443 passthrough).
+
 1. Portal → **Data Centers → New → Nutanix**. Add VMs (`name = ip | Category=Value, …`); optionally set
    Prism credentials.
 2. SmartConsole → **New → More → Cloud → Data Center → Nutanix…**
-   - **Prism address:** the portal's host **with `:443`** (e.g. `dcsim.ai.alshawwaf.ca:443`). Prism
-     Central defaults to **9440**; the portal answers on 443, so the port must be 443.
+   - **Hostname:** the **bare** host — `dcsim.ai.alshawwaf.ca` (no `https://`, no port; CloudGuard hits
+     `:9440` itself).
    - **Username / Password:** the Basic-auth credentials you set on the portal DC (Viewer role is enough).
 3. **Test Connection → Select objects.**
 
@@ -70,8 +76,13 @@ Basic credentials set on the portal DC are stored only as a one-way hash and val
 
 ## Gotchas / pending
 
-- **Port `:443`** — Prism Central defaults to 9440; the address field must carry `:443` (same pattern
-  as Proxmox 8006 / Kubernetes 6443).
+- **Port 9440 (the one real gotcha)** — the connector hardcodes Prism Central's **9440** for the cert
+  fetch + API (`Failed to get certificate from <host>:9440 … Connection timed out`), and the Hostname
+  field rejects any `:port` or scheme, so you **cannot** point it at 443 like the others. The portal
+  must listen on 9440 with the same cert: the bundled `docker-compose.yml`/`Caddyfile` publish 9440;
+  on a Dokploy/Traefik host add a 9440 TLS entrypoint routing the domain → the app, **or** run a raw
+  passthrough `socat TCP-LISTEN:9440,fork,reuseaddr TCP:127.0.0.1:443` (the TLS+SNI flows to Traefik
+  on 443). Then enter the bare hostname.
 - **v4 vs v3** — both are served, so it works whichever CloudGuard picks; the v4 probe is
   `…/ahv/config/vms?$limit=1`.
 - First-cut to the decompiled contract; any call beyond these is in the

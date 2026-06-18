@@ -189,12 +189,12 @@
 <div class="card">
   <h2 style="margin-top:0;">Connect from SmartConsole</h2>
   <p class="muted">Objects → New → More → Cloud → Data Center → <i>Nutanix…</i>, then enter:</p>
-  <label>Prism address <span class="muted" style="font-weight:400;">— include <code>:443</code></span></label>
+  <label>Hostname <span class="muted" style="font-weight:400;">— bare host, no scheme or port</span></label>
   <div class="row" style="gap:8px; align-items:center; flex-wrap:nowrap;">
-    <span class="copy grow">{{ apex_host }}:443</span>
-    <button class="copybtn" type="button" data-copy="{{ apex_host }}:443">Copy</button>
+    <span class="copy grow">{{ apex_host }}</span>
+    <button class="copybtn" type="button" data-copy="{{ apex_host }}">Copy</button>
   </div>
-  <p class="muted" style="margin:6px 0 0; font-size:12px;"><b>The <code>:443</code> matters.</b> Prism Central defaults to port <b>9440</b>, but the portal answers on <b>443</b> — so set the port to 443. CloudGuard probes v4 (<code>/api/vmm/v4.1/ahv/config/vms</code>) then falls back to v3 (<code>/api/nutanix/v3/vms/list</code>). The portal serves one Nutanix at this host (most recently created wins).</p>
+  <p class="muted" style="margin:6px 0 0; font-size:12px;"><b>Bare host only.</b> Nutanix's field rejects a scheme or <code>:port</code> (<i>"must be a valid IP address or DNS name"</i>), and the connector <b>hardcodes Prism Central's port 9440</b>. So the portal must be reachable at <code>{{ apex_host }}:9440</code> — the bundled <code>docker-compose.yml</code>/<code>Caddyfile</code> publish 9440; on a Dokploy/Traefik host add a 9440 TLS entrypoint (or a <code>socat 9440→443</code> passthrough). CloudGuard then probes v4 (<code>/api/vmm/v4.1/…</code>) and falls back to v3 (<code>/api/nutanix/v3/…</code>). One Nutanix per host (most recent wins).</p>
   {% if dc_auth and dc_auth.username %}
   <p class="muted" style="margin-top:10px;">Username <code>{{ dc_auth.username }}</code> · Password <code>(the one you set)</code> — Basic auth, validated on every call (<b>401</b> on mismatch). Prism <i>Viewer</i> role is enough. Click <i>Test Connection</i>, then import.</p>
   {% else %}
