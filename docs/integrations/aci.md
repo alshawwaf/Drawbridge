@@ -7,10 +7,11 @@ real ACI fabric.
 - Service: [`app/services/aci.py`](../../app/services/aci.py)
 - Router: [`app/routers/aci_mock.py`](../../app/routers/aci_mock.py)
 
-> **Status:** first cut — built to the R82.10 admin guide + the public APIC REST API, verified
-> end-to-end (login, class queries, auth, UI). **Pending the first real-CloudGuard trace** to confirm
-> the exact classes CloudGuard queries (every `/api/...` call is in the Activity log; unmodeled
-> classes return an empty `imdata` so enumeration never stalls).
+> **Status:** first real trace taught us **CloudGuard's APIC client is XML-only** — it JAXB-unmarshals
+> every response, so the JSON first cut failed with `InvalidServerException … Content is not allowed in
+> prolog`. Now serves **APIC XML** (`<imdata><fvTenant …/></imdata>`) by default; `.json` still works
+> for shell testing. **Pending re-test** of Test Connection. (Every `/api/...` call is in the Activity
+> log; unmodeled classes return an empty `imdata` so enumeration never stalls.)
 
 ## R82.10 contract
 

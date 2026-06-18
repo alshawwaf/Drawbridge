@@ -55,6 +55,16 @@ def test_unknown_class_is_empty_imdata():
     assert aci.class_query(DC, "fvWhatever")["imdata"] == []
 
 
+def test_to_xml_is_the_apic_imdata_format():
+    # CloudGuard's APIC client unmarshals XML — JSON makes it fail ("Content is not allowed in prolog").
+    xml = aci.to_xml(aci.class_objects(DC, "fvTenant.xml"))
+    assert xml.startswith("<?xml") and '<imdata totalCount="1">' in xml
+    assert '<fvTenant dn="uni/tn-DCSIM" name="DCSIM"' in xml and xml.rstrip().endswith("</imdata>")
+    # nested children (ESG → fvEPSelector) render as nested elements
+    esg_xml = aci.to_xml(aci.class_objects(DC, "fvESg"))
+    assert "<fvESg " in esg_xml and "<fvEPSelector " in esg_xml
+
+
 def test_login_returns_token_and_auth_validates_when_configured():
     tok, body = aci.login_response("admin")
     assert body["imdata"][0]["aaaLogin"]["attributes"]["token"] == tok
