@@ -47,6 +47,15 @@ def test_agent_interfaces_returns_the_vm_ip_on_eth0():
     assert eth0["ip-addresses"][0]["ip-address"] == "10.20.0.11"  # web-1 (vmid 100)
 
 
+def test_cluster_status_returns_cluster_and_node_with_ip():
+    # CloudGuard anchors the Node tree on /cluster/status; an empty body left the VMs un-parented.
+    res = proxmox.cluster_status(DC)["data"]
+    cluster = next(r for r in res if r["type"] == "cluster")
+    node = next(r for r in res if r["type"] == "node")
+    assert cluster["quorate"] == 1
+    assert node["name"] == "pve" and node["online"] == 1 and node["ip"] == "10.20.0.10"
+
+
 def test_node_qemu_lists_the_nodes_vms():
     vms = proxmox.node_qemu(DC, "pve")["data"]
     assert {v["name"] for v in vms} == {"web-1", "db-1"}

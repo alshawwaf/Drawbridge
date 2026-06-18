@@ -63,6 +63,13 @@ def cluster_resources_apex(request: Request, type: str = "", db: Session = Depen
     return _guard(dc, request) or proxmox.cluster_resources(dc, type)
 
 
+@router.get("/api2/json/cluster/status")
+def cluster_status_apex(request: Request, db: Session = Depends(get_db)):
+    """Cluster + node(s) with IPs — anchors the Node tree so the imported VMs have a parent."""
+    dc = _proxmox_dc(db)
+    return _guard(dc, request) or proxmox.cluster_status(dc)
+
+
 @router.get("/api2/json/nodes")
 def nodes_apex(request: Request, db: Session = Depends(get_db)):
     dc = _proxmox_dc(db)
