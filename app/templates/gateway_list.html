@@ -22,7 +22,7 @@
       <td><a class="feedname" href="/gateways/{{ r.gw.id }}">{{ r.gw.name }}</a></td>
       <td class="nowrap"><code>{{ r.gw.host }}:{{ r.gw.port }}</code></td>
       <td class="nowrap">{{ r.gw.username or '—' }}</td>
-      <td class="nowrap">{% if r.gw.cert_pem %}<span class="pill ok">pinned cert</span>{% else %}<span class="pill faint">system trust</span>{% endif %}</td>
+      <td class="nowrap">{% if r.gw.cert_pem %}<span class="pill ok">pinned cert</span>{% elif r.gw.auto_trust %}<span class="pill">auto-trust</span>{% else %}<span class="pill faint">system trust</span>{% endif %}</td>
       <td class="nowrap">{{ r.layers }}</td>
       <td class="nowrap" style="text-align:right;">
         <a class="copybtn" href="/gateways/{{ r.gw.id }}/edit">Edit</a>

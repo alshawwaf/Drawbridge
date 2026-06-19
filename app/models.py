@@ -3,7 +3,7 @@ import datetime as dt
 import enum
 import uuid
 
-from sqlalchemy import JSON, DateTime, Enum, ForeignKey, Integer, String, Text
+from sqlalchemy import JSON, Boolean, DateTime, Enum, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
@@ -167,6 +167,9 @@ class Gateway(Base):
     port: Mapped[int] = mapped_column(Integer, default=443)
     username: Mapped[str] = mapped_column(String(120), default="")
     cert_pem: Mapped[str] = mapped_column(Text, default="")
+    # Trust-on-first-use: when set and no cert is pinned yet, the next connect fetches the gateway's
+    # presented cert and pins it here (TLS verification then validates against it — never disabled).
+    auto_trust: Mapped[bool] = mapped_column(Boolean, default=True)
     owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
     created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 

@@ -2,7 +2,7 @@
 import os
 from collections.abc import Iterator
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from .config import get_settings
@@ -38,3 +38,22 @@ def init_db() -> None:
     from . import models  # noqa: F401
 
     Base.metadata.create_all(engine)
+    _ensure_columns()
+
+
+# Additive, idempotent column migrations for SQLite (no Alembic): create_all won't add a column to an
+# already-existing table, so columns introduced later are added here on boot.
+_ADDED_COLUMNS = {"gateways": {"auto_trust": "BOOLEAN DEFAULT 1"}}
+
+
+def _ensure_columns() -> None:
+    insp = inspect(engine)
+    names = set(insp.get_table_names())
+    for table, cols in _ADDED_COLUMNS.items():
+        if table not in names:
+            continue
+        existing = {c["name"] for c in insp.get_columns(table)}
+        for col, ddl in cols.items():
+            if col not in existing:
+                with engine.begin() as conn:
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}"))

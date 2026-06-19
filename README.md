@@ -91,6 +91,9 @@ Caddy obtains the cert for `DCSIM_DOMAIN` (use `localhost` for an internal cert)
   **gateway & datacenter credentials are AES-256-GCM encrypted at rest** (`DCSIM_ENCRYPTION_KEY`,
   falls back to the session secret); parameterized queries via SQLAlchemy; feed input validated
   against the CP schema.
+- **Gateway TLS is always verified.** Self-signed lab gateways are handled by pinning the
+  certificate — either trust-on-first-use (auto-pinned on the first connect, the default) or a
+  manually fetched/pasted cert. Verification is never disabled.
 - **Use demo/synthetic data only.** Do not upload real customer threat-intel; if anything
   sensitive is ever involved it must stay on Check Point-controlled infrastructure.
 
