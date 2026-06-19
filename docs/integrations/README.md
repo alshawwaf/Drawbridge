@@ -13,6 +13,7 @@ inventory (flip a tag, scale out, run a timed preset) and the next ~30s scan re-
 |---|---|---|---|
 | [Generic Data Center](generic-datacenter.md) | sk167210 JSON server | Generic Data Center | `https://<portal>/gdc/<token>.json` |
 | [Network Feed](network-feed.md) | feed server (list / JSON+JQ) | Network Feed | `https://<portal>/netfeed/<token>` |
+| [IoC Feed](ioc-feed.md) | Custom Intelligence CSV (Check Point format) | Threat Prevention (Anti-Bot / AV) | `https://<portal>/ioc/<token>.csv` |
 | [OpenStack](openstack.md) | Keystone + Nova + Neutron | Data Center → OpenStack | `https://<portal>/openstack/<token>/v3` |
 | [VMware vCenter](vcenter.md) | vSphere SOAP + REST | Data Center → vCenter | bare host (apex) — `<portal>` |
 | [VMware NSX-T](nsxt.md) | NSX-T Policy Mode REST (Local Manager) | Data Center → NSX-T | bare host (apex) — `<portal>` |
