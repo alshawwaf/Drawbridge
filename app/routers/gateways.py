@@ -1,5 +1,6 @@
-"""Saved gateway connection profiles (name, host, port, username, pinned cert). No password
-is ever stored — it's entered per apply. Each Dynamic Layer can be associated with a gateway."""
+"""Saved gateway connection profiles (name, host, port, username, pinned cert). The password is
+optional — stored AES-256-GCM encrypted or entered per apply. Self-signed gateways are trusted by
+pinning the cert (auto trust-on-first-use, or manual). Each Dynamic Layer can target a gateway."""
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from sqlalchemy import select
@@ -10,7 +11,7 @@ from ..models import DynamicLayer, Gateway, GatewayLayerSnapshot, User
 from ..security import get_user_or_none, new_feed_token
 from ..services import gateway_creds
 from ..services.apply_runner import fetch_dynamic_content
-from ..services.gaia_client import fetch_gateway_cert
+from ..services.gaia_client import ensure_pinned, fetch_gateway_cert
 from .ui import _flash, _pop_flash, templates
 
 router = APIRouter(include_in_schema=False)
@@ -60,12 +61,13 @@ def gateways_new(request: Request, db: Session = Depends(get_db)):
 @router.post("/gateways/new")
 def gateways_create(request: Request, name: str = Form(...), host: str = Form(...),
                     port: str = Form("443"), username: str = Form(""), cert_pem: str = Form(""),
-                    password: str = Form(""), db: Session = Depends(get_db)):
+                    password: str = Form(""), auto_trust: str = Form(""),
+                    db: Session = Depends(get_db)):
     user = get_user_or_none(request, db)
     if user is None:
         return RedirectResponse("/login", status_code=303)
     gw = Gateway(token=new_feed_token(), name=name, host=host, port=_port(port),
-                 username=username, cert_pem=cert_pem, owner_id=user.id)
+                 username=username, cert_pem=cert_pem, auto_trust=bool(auto_trust), owner_id=user.id)
     db.add(gw)
     db.commit()
     stored = False
@@ -77,7 +79,12 @@ def gateways_create(request: Request, name: str = Form(...), host: str = Form(..
         _flash(request, f"Gateway “{name}” saved, but the password was not stored — "
                         "encryption is unavailable in this environment.", "error")
     else:
-        _flash(request, f"Gateway “{name}” saved.")
+        msg = f"Gateway “{name}” saved."
+        if gw.auto_trust and not gw.cert_pem:
+            # Trust-on-first-use: the cert is pinned on the first apply/fetch (ensure_pinned), so the
+            # save stays instant even if the gateway isn't reachable yet.
+            msg += " Its certificate will be pinned automatically on first connect."
+        _flash(request, msg)
     return RedirectResponse("/gateways", status_code=303)
 
 
@@ -130,6 +137,7 @@ def gateways_fetch(gid: int, request: Request, password: str = Form(""),
     if user is None:
         return RedirectResponse("/login", status_code=303)
     gw = _owned(db, gid, user)
+    ensure_pinned(db, gw)  # trust-on-first-use: pin the gateway's cert before this fetch if needed
     pw = password or gateway_creds.get_password(db, gw)
     if not gw.username:
         _flash(request, f"Gateway “{gw.name}” has no username — set it on this gateway first.", "error")
@@ -162,12 +170,13 @@ def gateways_edit(gid: int, request: Request, db: Session = Depends(get_db)):
 def gateways_update(gid: int, request: Request, name: str = Form(...), host: str = Form(...),
                     port: str = Form("443"), username: str = Form(""), cert_pem: str = Form(""),
                     password: str = Form(""), clear_password: str = Form(""),
-                    db: Session = Depends(get_db)):
+                    auto_trust: str = Form(""), db: Session = Depends(get_db)):
     user = get_user_or_none(request, db)
     if user is None:
         return RedirectResponse("/login", status_code=303)
     gw = _owned(db, gid, user)
     gw.name, gw.host, gw.port, gw.username, gw.cert_pem = name, host, _port(port), username, cert_pem
+    gw.auto_trust = bool(auto_trust)
     note = ""
     if clear_password:
         gateway_creds.clear_password(db, gw)
@@ -177,7 +186,10 @@ def gateways_update(gid: int, request: Request, name: str = Form(...), host: str
         else:
             note = " (the new password was not stored — encryption is unavailable in this environment)"
     db.commit()
-    _flash(request, f"Gateway “{name}” updated.{note}", "error" if note else "success")
+    msg = f"Gateway “{name}” updated.{note}"
+    if gw.auto_trust and not gw.cert_pem:
+        msg += " Its certificate will be pinned automatically on first connect."
+    _flash(request, msg, "error" if note else "success")
     return RedirectResponse("/gateways", status_code=303)
 
 

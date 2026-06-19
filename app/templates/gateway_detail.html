@@ -16,7 +16,7 @@
 <div class="card">
   <h2 style="margin-top:0;">Connection</h2>
   <p class="muted">Address <code>{{ gw.host }}:{{ gw.port }}</code> · Username <code>{{ gw.username or '—' }}</code> ·
-    TLS {% if gw.cert_pem %}<span class="pill ok">pinned certificate</span>{% else %}<span class="pill faint">system trust</span>{% endif %} ·
+    TLS {% if gw.cert_pem %}<span class="pill ok">pinned certificate</span>{% elif gw.auto_trust %}<span class="pill">auto-trust · pins on first connect</span>{% else %}<span class="pill faint">system trust</span>{% endif %} ·
     Password {% if has_password %}<span class="pill ok">saved (encrypted)</span>{% else %}<span class="pill faint">entered per apply</span>{% endif %}</p>
   <p class="muted">Edit these on the <a href="/gateways/{{ gw.id }}/edit">gateway profile</a>.{% if not has_password %} The password is entered per fetch/apply; save one on the profile to skip retyping.{% endif %}</p>
 </div>

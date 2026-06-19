@@ -23,7 +23,7 @@ from ..schemas.dynamic_layer import (
 from ..security import get_user_or_none, new_feed_token
 from ..services import gateway_creds
 from ..services.apply_runner import STAGES, fetch_dynamic_content, get_progress, start_apply
-from ..services.gaia_client import fetch_gateway_cert
+from ..services.gaia_client import ensure_pinned, fetch_gateway_cert
 from .ui import _flash, _pop_flash, templates
 
 router = APIRouter(include_in_schema=False)
@@ -336,6 +336,8 @@ def apply_start(
         pid = start_apply(layer_id=layer.id, target="mock", dry_run=dry)
     else:
         gw = _gateway(db, gateway_id, user)
+        if gw:
+            ensure_pinned(db, gw)  # trust-on-first-use: pin the cert before applying if auto-trust is on
         # Typed password wins; otherwise fall back to the one saved (encrypted) on the gateway.
         pw = gw_pass or (gateway_creds.get_password(db, gw) if gw else None)
         err = _gateway_error(gw, pw)
@@ -379,6 +381,8 @@ def fetch_content(
         data = fetch_dynamic_content(target="mock", db=db, owner_id=user.id)
     else:
         gw = _gateway(db, gateway_id, user)
+        if gw:
+            ensure_pinned(db, gw)  # trust-on-first-use: pin the cert before fetching if auto-trust is on
         pw = gw_pass or (gateway_creds.get_password(db, gw) if gw else None)
         err = _gateway_error(gw, pw)
         if err:

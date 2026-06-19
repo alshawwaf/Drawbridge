@@ -26,8 +26,15 @@ no-hardware demo with a realistic async task + change summary.
 `gaia_client` uses `httpx` against the gateway's Gaia API:
 
 - `login` → session id (sid) → `set-dynamic-content` → `show-task` (poll until done) → `logout`.
-- **TLS is verified by default.** You can fetch + pin the gateway's certificate first
-  (`fetch-cert`) for a self-signed lab gateway — TLS verification is never silently disabled.
+- **TLS is verified by default.** For a self-signed lab gateway you have two policy-safe options,
+  both of which keep verification **on** (it is never silently disabled):
+  - **Trust-on-first-use (default).** Leave the cert field blank and keep *"Trust this gateway's
+    certificate automatically"* ticked. On the first connect (`ensure_pinned`) the portal fetches the
+    certificate the gateway presents, pins it to the profile, and verifies against that pinned PEM on
+    every connect after — the SSH `known_hosts` model. This is the default for new gateways so the SE
+    isn't forced to fetch a cert manually.
+  - **Manual pin.** Untick auto-trust and fetch (`fetch-cert`) or paste a specific certificate to pin,
+    so you can review the SHA-256 fingerprint before saving.
 - **No credentials are persisted** by default. A gateway's password may optionally be **stored
   encrypted** (AES-256-GCM, `app/services/gateway_creds.py`); set `DCSIM_ENCRYPTION_KEY` in prod.
 

@@ -36,18 +36,23 @@
   {% endif %}
 
   <hr>
+  {% set auto_on = gw.auto_trust if gw else True %}
   <div class="form-sec">TLS certificate <span class="muted" style="font-weight:600; text-transform:none; letter-spacing:0;">· optional</span></div>
-  <p class="muted">Pin a self-signed gateway's certificate so apply &amp; fetch trust it — TLS verification stays on. Fetch it once (review the fingerprint) or paste the PEM.</p>
+  <div class="check" style="margin:2px 0 6px;">
+    <input type="checkbox" id="auto_trust" name="auto_trust" value="1" {{ 'checked' if auto_on else '' }}>
+    <label for="auto_trust">Trust this gateway's certificate automatically <span class="muted" style="font-weight:400;">— pin it on first connect</span></label>
+  </div>
+  <p class="muted">Recommended for self-signed lab gateways. On the first apply or fetch the portal pins whatever certificate the gateway presents, then verifies against that pinned certificate on every connect after — TLS verification is never turned off. Untick to pin a specific certificate yourself below instead.</p>
   <div class="subpanel">
     <div class="row" style="align-items:center; gap:10px;">
       <button type="button" class="secondary" id="fetch-cert">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/></svg>
-        <span id="fetch-label">Fetch &amp; trust certificate</span>
+        <span id="fetch-label">Fetch &amp; review certificate now</span>
       </button>
-      <span class="muted" style="font-size:12px;">from the address above</span>
+      <span class="muted" style="font-size:12px;">optional — review the fingerprint before saving</span>
     </div>
     <div id="cert-fp" class="fp" style="margin-top:11px;{{ '' if (gw and gw.cert_pem) else ' display:none;' }}">{% if gw and gw.cert_pem %}<b>Pinned</b> certificate saved with this gateway.{% endif %}</div>
-    <textarea name="cert_pem" id="gw_cert" style="min-height:88px; margin-top:11px;" placeholder="-----BEGIN CERTIFICATE-----  (or click Fetch above)">{{ gw.cert_pem if gw else '' }}</textarea>
+    <textarea name="cert_pem" id="gw_cert" style="min-height:88px; margin-top:11px;" placeholder="-----BEGIN CERTIFICATE-----  (leave blank to auto-pin on first connect)">{{ gw.cert_pem if gw else '' }}</textarea>
   </div>
 
   <hr>
@@ -72,14 +77,14 @@
       fetch('/gateways/fetch-cert', { method: 'POST', body: body })
         .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
         .then(function (res) {
-          label.textContent = 'Fetch & trust certificate'; btn.disabled = false;
+          label.textContent = 'Fetch & review certificate now'; btn.disabled = false;
           fp.style.display = '';
           if (!res.ok) { fp.textContent = res.j.error || 'Failed to fetch certificate.'; return; }
           document.getElementById('gw_cert').value = res.j.pem;
           fp.innerHTML = '<b>Pinned</b> · SHA-256 ' + res.j.fingerprint + ' — saved when you ' +
             ({{ 'true' if gw else 'false' }} ? 'save changes.' : 'add the gateway.');
         })
-        .catch(function () { label.textContent = 'Fetch & trust certificate'; btn.disabled = false; });
+        .catch(function () { label.textContent = 'Fetch & review certificate now'; btn.disabled = false; });
     });
   })();
 </script>

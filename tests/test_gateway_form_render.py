@@ -6,6 +6,7 @@ from app.routers.ui import templates
 class _GW:
     id, name, host, port = 7, "GW", "10.0.0.1", 443
     username, cert_pem = "admin", ""
+    auto_trust = True
 
 
 def _render(name, **ctx):
@@ -24,6 +25,23 @@ def test_form_enabled_edit_offers_clear_when_saved():
     html = _render("gateway_form.html", gw=_GW(), error=None, action="/gateways/7/edit",
                    crypto_ok=True, has_password=True)
     assert 'name="clear_password"' in html and "Clear the saved password" in html
+
+
+def test_form_offers_auto_trust_on_by_default_for_new():
+    html = _render("gateway_form.html", gw=None, error=None, action="/gateways/new",
+                   crypto_ok=True, has_password=False)
+    assert 'name="auto_trust"' in html
+    assert 'name="auto_trust" value="1" checked' in html  # default on for new gateways
+    assert "pin it on first connect" in html
+
+
+def test_form_auto_trust_reflects_disabled_state_on_edit():
+    gw = _GW()
+    gw.auto_trust = False
+    html = _render("gateway_form.html", gw=gw, error=None, action="/gateways/7/edit",
+                   crypto_ok=True, has_password=False)
+    assert 'name="auto_trust"' in html
+    assert 'name="auto_trust" value="1" checked' not in html  # unticked, so not auto-trusting
 
 
 def test_form_degraded_disables_field():
