@@ -58,7 +58,6 @@
       </div>
       <button type="button" class="linkbtn" id="reset-filters" hidden>↺ Reset</button>
       <span class="grow"></span>
-      <label class="check" style="margin:0;"><input type="checkbox" id="sel-all"> <span class="muted">Select all</span></label>
       <button class="secondary" type="submit" formaction="/activity/clear" id="clear-btn" style="padding:8px 13px;"
               data-confirm="Clear all log entries matching the current view? This cannot be undone.">Clear all</button>
       <button class="danger" type="submit" id="del-btn" disabled style="padding:8px 11px;"
@@ -86,7 +85,7 @@
     var form = $('act-form'), rowsEl = $('rows'), psSel = $('page-size'), psHidden = $('ps-hidden');
     var qInput = $('q-input'), qHidden = $('q-hidden');
     var refreshSel = $('refresh-rate'), liveDot = $('livedot'), liveText = $('livetext');
-    var selAll = $('sel-all'), delBtn = $('del-btn'), clearBtn = $('clear-btn');
+    var delBtn = $('del-btn'), clearBtn = $('clear-btn');
     var modal = $('rec-modal'), recBody = $('rec-body');
     var page = 1, timer = null;
 
@@ -99,7 +98,12 @@
     function selectedStatus() { return checkedVals('status-cb'); }
     function searchText() { return (qInput.value || '').trim(); }
     function rowCbs() { return Array.prototype.slice.call(rowsEl.querySelectorAll('.row-cb')); }
-    function syncDel() { delBtn.disabled = !rowCbs().some(function (c) { return c.checked; }); }
+    function syncDel() {
+      var all = rowCbs(), n = all.filter(function (c) { return c.checked; }).length;
+      delBtn.disabled = n === 0;
+      var sa = rowsEl.querySelector('.sel-all');  // header checkbox lives in the (reloaded) fragment
+      if (sa) { sa.checked = n > 0 && n === all.length; sa.indeterminate = n > 0 && n < all.length; }
+    }
     function query(extra) {
       var p = new URLSearchParams();
       selectedKinds().forEach(function (k) { p.append('kinds', k); });
@@ -141,7 +145,7 @@
     function load() {
       fetch('/activity/rows?' + query({ page: page }).toString())
         .then(function (r) { return r.text(); })
-        .then(function (html) { setHTML(rowsEl, html); selAll.checked = false; syncDel(); updateTimes(); })
+        .then(function (html) { setHTML(rowsEl, html); syncDel(); updateTimes(); })
         .catch(function () {});
     }
     function reload() { page = 1; syncState(); load(); }
@@ -154,8 +158,15 @@
       var row = e.target.closest('.act-row');
       if (row) openRecord(row.getAttribute('data-id'));
     });
-    rowsEl.addEventListener('change', function (e) { if (e.target.classList.contains('row-cb')) syncDel(); });
-    selAll.addEventListener('change', function () { rowCbs().forEach(function (c) { c.checked = selAll.checked; }); syncDel(); });
+    rowsEl.addEventListener('change', function (e) {
+      if (e.target.classList.contains('sel-all')) {  // header checkbox toggles every row on the page
+        var on = e.target.checked;
+        rowCbs().forEach(function (c) { c.checked = on; });
+        syncDel();
+      } else if (e.target.classList.contains('row-cb')) {
+        syncDel();
+      }
+    });
 
     // Any filter checkbox (Status / Type / Data center) re-queries.
     form.addEventListener('change', function (e) {
