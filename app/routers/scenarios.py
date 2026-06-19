@@ -54,6 +54,7 @@ def scenarios_page(request: Request, dc: int = 0, db: Session = Depends(get_db))
             "tag_field": scenarios.tag_field(selected.provider),
             "has_baseline": selected.baseline is not None,
             "presets": scenarios.list_presets(selected.provider, selected.content),
+            "guides": scenarios.preset_guides(),
         })
     return templates.TemplateResponse(request, "scenarios.html", ctx)
 

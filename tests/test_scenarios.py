@@ -74,6 +74,14 @@ def test_tag_field_and_map_flags():
     assert scenarios.tag_field("aci") is None and not scenarios.is_map_tags("aci")
 
 
+def test_every_preset_has_a_talk_track_guide():
+    guides = scenarios.preset_guides()
+    # Every preset must ship a talk-track so the Scenarios demo guide never renders empty.
+    for key in scenarios._PRESET_LABELS:
+        assert key in guides, f"preset {key!r} has no talk-track guide"
+        assert guides[key].get("story") and guides[key].get("watch"), key
+
+
 def test_workloads_reads_provider_specific_key():
     content = {"vms": [{"name": "v"}], "instances": [{"name": "i"}], "pods": [{"name": "p"}]}
     assert scenarios.workloads("vcenter", content) == [{"name": "v"}]
