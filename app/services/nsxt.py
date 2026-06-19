@@ -13,7 +13,7 @@ envelope, so any unmodeled collection can safely return an empty list.
 import base64
 import uuid
 
-from ..security import verify_password
+from . import dc_creds
 
 _NS = uuid.UUID("00000000-0000-0000-0000-00000000c0d2")
 
@@ -189,16 +189,16 @@ def group_members(dc, group_id: str) -> dict:
 def auth_ok(dc, username: str, password: str) -> bool:
     """Validate credentials against the datacenter's configured ones; permissive if none set."""
     cfg = (dc.content or {}).get("auth") or {}
-    if not cfg.get("password_hash"):
+    if not dc_creds.configured(cfg):
         return True
-    return username == cfg.get("username") and verify_password(password, cfg["password_hash"])
+    return username == cfg.get("username") and bool(dc_creds.matches(cfg, password))
 
 
 def authorized(dc, *, authorization: str = "", jsessionid: str = "") -> bool:
     """A request is authorized when no creds are configured (open lab), or it carries valid
     Basic auth, or a session cookie we issued after a validated /api/session/create."""
     cfg = (dc.content or {}).get("auth") or {}
-    if not cfg.get("password_hash"):
+    if not dc_creds.configured(cfg):
         return True
     if authorization.lower().startswith("basic "):
         try:

@@ -10,7 +10,8 @@ from sqlalchemy.orm import Session
 from ..config import get_settings
 from ..db import get_db
 from ..models import Datacenter, User
-from ..security import get_user_or_none, hash_password, new_feed_token
+from ..security import get_user_or_none, new_feed_token
+from ..services import dc_creds
 from ..services import kubernetes as k8s_svc
 from ..services import nutanix as nutanix_svc
 from ..services import openstack as os_mock
@@ -130,11 +131,11 @@ def dc_create_proxmox(request: Request, name: str = Form(...), description: str 
         if not vms:
             raise ValueError("Add at least one VM.")
         content = {"vms": vms, "node": (node or "pve").strip()}
-        # API token is validated on every call; the secret is stored only as a one-way hash.
-        # Leave the secret blank for an open lab (the mock then accepts any/no token).
+        # API token is validated on every call; the secret is encrypted at rest (AES-GCM), or hashed
+        # if encryption is unavailable. Leave it blank for an open lab (mock accepts any/no token).
         if token_secret:
             content["auth"] = {"token_id": (token_id or "").strip(),
-                               "secret_hash": hash_password(token_secret)}
+                               **dc_creds.store("secret", token_secret)}
     except Exception as exc:
         return templates.TemplateResponse(request, "dc_new_proxmox.html", {"error": str(exc), "form": {
             "name": name, "description": description, "vms_text": vms_text, "node": node,
@@ -192,9 +193,9 @@ def dc_create_aci(request: Request, name: str = Form(...), description: str = Fo
                    "epgs": parse_aci_groups(epgs_text), "esgs": parse_aci_groups(esgs_text)}
         if not (content["epgs"] or content["esgs"]):
             raise ValueError("Add at least one EPG or ESG.")
-        if aci_password:  # validated at aaaLogin; stored only as a one-way hash
+        if aci_password:  # validated at aaaLogin; encrypted at rest (AES-GCM), hashed if unavailable
             content["auth"] = {"username": aci_username or "admin",
-                               "password_hash": hash_password(aci_password)}
+                               **dc_creds.store("password", aci_password)}
     except Exception as exc:
         return templates.TemplateResponse(request, "dc_new_aci.html", {"error": str(exc), "form": {
             "name": name, "description": description, "tenant": tenant, "app_profile": app_profile,
@@ -422,10 +423,10 @@ def dc_create_nutanix(request: Request, name: str = Form(...), description: str 
         if not vms:
             raise ValueError("Add at least one VM.")
         content = {"vms": vms}
-        # Basic-auth credentials validated on every call; stored only as a one-way hash. Blank = open.
+        # Basic-auth credentials validated on every call; encrypted at rest (AES-GCM). Blank = open.
         if nutanix_password:
             content["auth"] = {"username": nutanix_username or "admin",
-                               "password_hash": hash_password(nutanix_password)}
+                               **dc_creds.store("password", nutanix_password)}
     except Exception as exc:
         return templates.TemplateResponse(request, "dc_new_nutanix.html", {"error": str(exc), "form": {
             "name": name, "description": description, "vms_text": vms_text,
@@ -499,11 +500,11 @@ def dc_create(request: Request, name: str = Form(...), description: str = Form("
         if not (content["instances"] or content["subnets"] or content["security_groups"]):
             raise ValueError("Add at least one instance, subnet, or security group.")
         # When a password is set, Keystone validates it (and the username) and 401s on mismatch.
-        # The password is stored only as a one-way PBKDF2 hash; leave it blank for an open lab.
+        # The password is encrypted at rest (AES-GCM); leave it blank for an open lab.
         if os_password:
             content["auth"] = {"username": os_username or "admin",
-                               "password_hash": hash_password(os_password),
-                               "project": os_project or "demo"}
+                               "project": os_project or "demo",
+                               **dc_creds.store("password", os_password)}
     except Exception as exc:
         return templates.TemplateResponse(request, "dc_new.html", {"error": str(exc), "form": {
             "name": name, "description": description, "instances_text": instances_text,
@@ -540,9 +541,9 @@ def dc_create_vcenter(request: Request, name: str = Form(...), description: str 
         if not vms:
             raise ValueError("Add at least one VM.")
         content = {"vms": vms}
-        if vc_password:  # validated on the SOAP Login; stored only as a one-way hash
+        if vc_password:  # validated on the SOAP Login; encrypted at rest (AES-GCM)
             content["auth"] = {"username": vc_username or "administrator@vsphere.local",
-                               "password_hash": hash_password(vc_password)}
+                               **dc_creds.store("password", vc_password)}
     except Exception as exc:
         return templates.TemplateResponse(request, "dc_new_vcenter.html", {"error": str(exc), "form": {
             "name": name, "description": description, "vms_text": vms_text, "vc_username": vc_username,
@@ -578,9 +579,9 @@ def dc_create_nsxt(request: Request, name: str = Form(...), description: str = F
         content = {"vms": parse_instances(vms_text), "groups": parse_nsxt_groups(groups_text)}
         if not (content["vms"] or content["groups"]):
             raise ValueError("Add at least one VM or group.")
-        if nsxt_password:  # validated at session/login time; stored only as a one-way hash
+        if nsxt_password:  # validated at session/login time; encrypted at rest (AES-GCM)
             content["auth"] = {"username": nsxt_username or "admin",
-                               "password_hash": hash_password(nsxt_password)}
+                               **dc_creds.store("password", nsxt_password)}
     except Exception as exc:
         return templates.TemplateResponse(request, "dc_new_nsxt.html", {"error": str(exc), "form": {
             "name": name, "description": description, "vms_text": vms_text,
@@ -619,9 +620,9 @@ def dc_create_globalnsxt(request: Request, name: str = Form(...), description: s
         content = {"vms": parse_instances(vms_text), "groups": parse_nsxt_groups(groups_text)}
         if not (content["vms"] or content["groups"]):
             raise ValueError("Add at least one VM or group.")
-        if nsxt_password:
+        if nsxt_password:  # encrypted at rest (AES-GCM)
             content["auth"] = {"username": nsxt_username or "admin",
-                               "password_hash": hash_password(nsxt_password)}
+                               **dc_creds.store("password", nsxt_password)}
     except Exception as exc:
         return templates.TemplateResponse(request, "dc_new_globalnsxt.html", {"error": str(exc), "form": {
             "name": name, "description": description, "vms_text": vms_text,
@@ -644,23 +645,26 @@ def dc_detail(dc_id: int, request: Request, db: Session = Depends(get_db)):
     dc = _owned(db, dc_id, user)
     base = get_settings().base_url.rstrip("/")
     apex_host = base.split("://", 1)[-1]  # bare host SmartConsole enters for vCenter/NSX-T
+    # Decrypt the stored secret (if any) so the detail page can show it as a copyable masked field.
+    _auth = (dc.content or {}).get("auth") or {}
+    dc_secret = dc_creds.plaintext(_auth, "secret" if dc.provider == "proxmox" else "password")
     if dc.provider == "vcenter":
         return templates.TemplateResponse(request, "dc_detail.html", {
             "dc": dc, "apex_host": apex_host,
-            "vms": dc.content.get("vms", []) or [], "dc_auth": (dc.content or {}).get("auth") or {},
+            "vms": dc.content.get("vms", []) or [], "dc_auth": _auth, "dc_secret": dc_secret,
             "flash": _pop_flash(request),
         })
     if dc.provider in ("nsxt", "globalnsxt"):
         return templates.TemplateResponse(request, "dc_detail.html", {
             "dc": dc, "apex_host": apex_host,
             "vms": dc.content.get("vms", []) or [], "groups": dc.content.get("groups", []) or [],
-            "dc_auth": (dc.content or {}).get("auth") or {}, "flash": _pop_flash(request),
+            "dc_auth": _auth, "dc_secret": dc_secret, "flash": _pop_flash(request),
         })
     if dc.provider == "proxmox":
         return templates.TemplateResponse(request, "dc_detail.html", {
             "dc": dc, "apex_host": apex_host,
             "vms": dc.content.get("vms", []) or [], "node": (dc.content or {}).get("node") or "pve",
-            "dc_auth": (dc.content or {}).get("auth") or {}, "flash": _pop_flash(request),
+            "dc_auth": _auth, "dc_secret": dc_secret, "flash": _pop_flash(request),
         })
     if dc.provider == "aci":
         return templates.TemplateResponse(request, "dc_detail.html", {
@@ -668,20 +672,20 @@ def dc_detail(dc_id: int, request: Request, db: Session = Depends(get_db)):
             "tenant": (dc.content or {}).get("tenant") or "DCSIM",
             "app_profile": (dc.content or {}).get("app_profile") or "DCSIM-AP",
             "epgs": dc.content.get("epgs", []) or [], "esgs": dc.content.get("esgs", []) or [],
-            "dc_auth": (dc.content or {}).get("auth") or {}, "flash": _pop_flash(request),
+            "dc_auth": _auth, "dc_secret": dc_secret, "flash": _pop_flash(request),
         })
     if dc.provider == "kubernetes":
         return templates.TemplateResponse(request, "dc_detail.html", {
             "dc": dc, "apex_host": apex_host,
             "nodes": dc.content.get("nodes", []) or [], "pods": dc.content.get("pods", []) or [],
             "services": dc.content.get("services", []) or [], "namespaces": k8s_svc.namespaces(dc),
-            "dc_auth": (dc.content or {}).get("auth") or {}, "flash": _pop_flash(request),
+            "dc_auth": _auth, "dc_secret": dc_secret, "flash": _pop_flash(request),
         })
     if dc.provider == "nutanix":
         return templates.TemplateResponse(request, "dc_detail.html", {
             "dc": dc, "apex_host": apex_host, "vms": dc.content.get("vms", []) or [],
             "categories": nutanix_svc.categories(dc),
-            "dc_auth": (dc.content or {}).get("auth") or {}, "flash": _pop_flash(request),
+            "dc_auth": _auth, "dc_secret": dc_secret, "flash": _pop_flash(request),
         })
     keystone_url = f"{base}/openstack/{dc.token}/v3"
     preview = {
@@ -694,7 +698,7 @@ def dc_detail(dc_id: int, request: Request, db: Session = Depends(get_db)):
         "instances": dc.content.get("instances", []) or [],
         "subnets": dc.content.get("subnets", []) or [],
         "secgroups": dc.content.get("security_groups", []) or [],
-        "os_auth": (dc.content or {}).get("auth") or {},
+        "os_auth": _auth, "dc_secret": dc_secret,
         "preview_json": json.dumps(preview, indent=2),
         "flash": _pop_flash(request),
     })

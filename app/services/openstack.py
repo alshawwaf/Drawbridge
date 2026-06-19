@@ -7,7 +7,7 @@ so Check Point follows the catalog exactly as it would against a real OpenStack 
 import ipaddress
 import uuid
 
-from ..security import verify_password
+from . import dc_creds
 
 _NS = uuid.UUID("00000000-0000-0000-0000-0000000c0de1")
 _EXPIRES = "2035-01-01T00:00:00.000000Z"
@@ -130,9 +130,9 @@ def auth_ok(dc, username: str, password: str) -> bool:
     """True when the presented credentials match the datacenter's configured ones. If no
     credentials are configured, the mock stays permissive (legacy / quick-lab datacenters)."""
     cfg = (dc.content or {}).get("auth") or {}
-    if not cfg.get("password_hash"):
+    if not dc_creds.configured(cfg):
         return True
-    return username == cfg.get("username") and verify_password(password, cfg["password_hash"])
+    return username == cfg.get("username") and bool(dc_creds.matches(cfg, password))
 
 
 def nova_servers(dc) -> dict:

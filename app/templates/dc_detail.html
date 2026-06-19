@@ -23,7 +23,7 @@
   <h3 style="margin:16px 0 8px;">Credentials</h3>
   {% if dc_auth and dc_auth.username %}
   {{ cp.cval("Username", dc_auth.username) }}
-  {{ cp.cnote("Password", "the one you set — stored hashed, not recoverable") }}
+  {% if dc_secret %}{{ cp.csecret("Password", dc_secret) }}{% else %}{{ cp.cnote("Password", "set — stored hashed, not recoverable") }}{% endif %}
   <p class="muted" style="margin-top:6px;">Validated on Login (<b>InvalidLogin</b> on mismatch). Role: Auditor or higher. Click <i>Test Connection</i>, then import the VMs.</p>
   {% else %}
   {{ cp.cval("Username", "any") }}
@@ -63,7 +63,7 @@
   <h3 style="margin:16px 0 8px;">Credentials</h3>
   {% if dc_auth and dc_auth.username %}
   {{ cp.cval("Username", dc_auth.username) }}
-  {{ cp.cnote("Password", "the one you set — stored hashed, not recoverable") }}
+  {% if dc_secret %}{{ cp.csecret("Password", dc_secret) }}{% else %}{{ cp.cnote("Password", "set — stored hashed, not recoverable") }}{% endif %}
   <p class="muted" style="margin-top:6px;">Validated on every call (<b>403</b> on mismatch). NSX-T role: Auditor or higher. Click <i>Test Connection</i>, then import.</p>
   {% else %}
   {{ cp.cval("Username", "any") }}
@@ -103,7 +103,7 @@
   <h3 style="margin:16px 0 8px;">Credentials</h3>
   {% if dc_auth and dc_auth.token_id %}
   {{ cp.cval("Token ID", dc_auth.token_id) }}
-  {{ cp.cnote("Secret", "the one you set — stored hashed, not recoverable") }}
+  {% if dc_secret %}{{ cp.csecret("Secret", dc_secret) }}{% else %}{{ cp.cnote("Secret", "set — stored hashed, not recoverable") }}{% endif %}
   <p class="muted" style="margin-top:6px;">Validated via the <code>PVEAPIToken</code> header (<b>401</b> on mismatch). Token role: <code>PVEAuditor</code> (Sys.Audit / VM.Audit / VM.Monitor). Click <i>Test Connection</i>, then import.</p>
   {% else %}
   {{ cp.cval("Token ID", "root@pam!cloudguard") }}
@@ -138,7 +138,7 @@
   <h3 style="margin:16px 0 8px;">Credentials</h3>
   {% if dc_auth and dc_auth.username %}
   {{ cp.cval("Username", dc_auth.username) }}
-  {{ cp.cnote("Password", "the one you set — stored hashed, not recoverable") }}
+  {% if dc_secret %}{{ cp.csecret("Password", dc_secret) }}{% else %}{{ cp.cnote("Password", "set — stored hashed, not recoverable") }}{% endif %}
   <p class="muted" style="margin-top:6px;">Validated on <code>aaaLogin</code> (<b>401</b> on mismatch). APIC role: read on Tenant/EPG. Click <i>Test Connection</i>, then import.</p>
   {% else %}
   {{ cp.cval("Username", "any") }}
@@ -219,7 +219,7 @@
   <h3 style="margin:16px 0 8px;">Credentials</h3>
   {% if dc_auth and dc_auth.username %}
   {{ cp.cval("Username", dc_auth.username) }}
-  {{ cp.cnote("Password", "the one you set — stored hashed, not recoverable") }}
+  {% if dc_secret %}{{ cp.csecret("Password", dc_secret) }}{% else %}{{ cp.cnote("Password", "set — stored hashed, not recoverable") }}{% endif %}
   <p class="muted" style="margin-top:6px;">Basic auth, validated on every call (<b>401</b> on mismatch). Prism <i>Viewer</i> role is enough. Click <i>Test Connection</i>, then import.</p>
   {% else %}
   {{ cp.cval("Username", "any") }}
@@ -256,7 +256,7 @@
   <h3 style="margin:16px 0 8px;">Credentials</h3>
   {% if os_auth and os_auth.username %}
   {{ cp.cval("Username", os_auth.username) }}
-  {{ cp.cnote("Password", "the one you set — stored hashed, not recoverable") }}
+  {% if dc_secret %}{{ cp.csecret("Password", dc_secret) }}{% else %}{{ cp.cnote("Password", "set — stored hashed, not recoverable") }}{% endif %}
   {{ cp.cval("Project", os_auth.project or 'demo') }}
   {{ cp.cval("Domain", "Default") }}
   <p class="muted" style="margin-top:6px;">Validated on auth (<b>401</b> on mismatch). Click <i>Test Connection</i>, then import Instances, Security Groups, and Subnets.</p>

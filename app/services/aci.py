@@ -13,7 +13,7 @@ queries** ``GET /api/node/class/<class>.xml``.
 import uuid
 import xml.sax.saxutils as _su
 
-from ..security import verify_password
+from . import dc_creds
 
 _NS = uuid.UUID("00000000-0000-0000-0000-0000000ac1c0")
 
@@ -252,15 +252,15 @@ def mo_subtree(dc, dn_path: str, params: dict | None = None) -> list[dict]:
 
 def auth_ok(dc, username: str, password: str) -> bool:
     cfg = (dc.content or {}).get("auth") or {}
-    if not cfg.get("password_hash"):
+    if not dc_creds.configured(cfg):
         return True
-    return username == cfg.get("username") and verify_password(password, cfg["password_hash"])
+    return username == cfg.get("username") and bool(dc_creds.matches(cfg, password))
 
 
 def authorized(dc, *, apic_cookie: str = "") -> bool:
     """Open when no creds configured; otherwise requires the APIC-cookie we issued at login."""
     cfg = (dc.content or {}).get("auth") or {}
-    if not cfg.get("password_hash"):
+    if not dc_creds.configured(cfg):
         return True
     return bool(apic_cookie)
 
