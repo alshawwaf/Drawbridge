@@ -41,11 +41,11 @@ async def _start_siem_receiver(settings):
     from .services import siem
     from .services.syslog_listener import SyslogReceiver
 
-    def store_cb(ip: str, transport: str, line: str) -> None:
+    def store_batch(items: list) -> None:
         with SessionLocal() as db:
-            siem.store_log(db, ip, transport, line)
+            siem.store_batch(db, items)
 
-    receiver = SyslogReceiver(settings.syslog_port, store_cb)
+    receiver = SyslogReceiver(settings.syslog_port, store_batch)
     try:
         await receiver.start()
     except OSError as exc:

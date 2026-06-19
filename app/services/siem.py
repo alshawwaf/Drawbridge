@@ -10,10 +10,15 @@ import re
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
+from ..config import get_settings
 from ..models import SiemLog
 
 _SEVERITY_NAMES = ["emerg", "alert", "crit", "err", "warning", "notice", "info", "debug"]
-_LOG_CAP = 2000  # newest-N retention, like the activity log
+
+
+def _max_records() -> int:
+    """Newest-N retention cap — a flooding gateway can't grow the table without bound."""
+    return max(100, get_settings().syslog_max_records)
 
 
 def _parse_ext(ext: str) -> dict:
@@ -135,25 +140,42 @@ def _header_host(header: str) -> str:
     return toks[-1]
 
 
-def store_log(db: Session, source_ip: str, transport: str, raw: str) -> SiemLog:
-    """Parse a raw line and persist it; trims to the newest _LOG_CAP records."""
+def _to_record(source_ip: str, transport: str, raw: str) -> SiemLog:
     p = parse_line(raw)
-    log = SiemLog(source_ip=source_ip or "", transport=transport, fmt=p["fmt"],
-                  severity=str(p["severity"])[:24], host=(p["host"] or "")[:120],
-                  summary=(p["summary"] or "")[:400], fields=p["fields"] or {}, raw=(raw or "")[:8000])
+    return SiemLog(source_ip=source_ip or "", transport=transport, fmt=p["fmt"],
+                   severity=str(p["severity"])[:24], host=(p["host"] or "")[:120],
+                   summary=(p["summary"] or "")[:400], fields=p["fields"] or {}, raw=(raw or "")[:8000])
+
+
+def store_log(db: Session, source_ip: str, transport: str, raw: str) -> SiemLog:
+    """Parse + persist one line (used by the 'Send test log' button); trims to the newest N."""
+    log = _to_record(source_ip, transport, raw)
     db.add(log)
     db.commit()
     _trim(db)
     return log
 
 
+def store_batch(db: Session, items: list[tuple[str, str, str]]) -> int:
+    """Parse + persist a batch of (source_ip, transport, raw) in one transaction — the listener's
+    hot path under a log flood, so it's one commit + one trim per batch, not per line."""
+    if not items:
+        return 0
+    db.add_all([_to_record(ip, transport, raw) for ip, transport, raw in items])
+    db.commit()
+    _trim(db)
+    return len(items)
+
+
 def _trim(db: Session) -> None:
+    """Delete everything older than the newest N by primary key — an indexed range delete that fires
+    only when over cap (cheap even under load), keeping the table (and disk) bounded."""
+    cap = _max_records()
     n = db.scalar(select(func.count()).select_from(SiemLog)) or 0
-    if n > _LOG_CAP:
-        old = db.scalars(select(SiemLog.id).order_by(SiemLog.at.asc()).limit(n - _LOG_CAP)).all()
-        if old:
-            db.execute(delete(SiemLog).where(SiemLog.id.in_(old)))
-            db.commit()
+    if n > cap:
+        max_id = db.scalar(select(func.max(SiemLog.id))) or 0
+        db.execute(delete(SiemLog).where(SiemLog.id <= max_id - cap))
+        db.commit()
 
 
 # Sample lines for the viewer's "Send test log" button — what Check Point Log Exporter emits, so the
