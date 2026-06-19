@@ -13,7 +13,7 @@ from .models import User
 from .middleware import ActivityLogMiddleware
 from .routers import (
     aci_mock, activity, datacenters, dynamic_layers, feeds, gateways, gaia_mock, kubernetes_mock,
-    nsxt_mock, nutanix_mock, openstack_mock, proxmox_mock, scenarios, serve, ui, vcenter_mock,
+    nsxt_mock, nutanix_mock, openstack_mock, proxmox_mock, scenarios, serve, siem, ui, vcenter_mock,
 )
 from .security import hash_password
 
@@ -33,12 +33,38 @@ def _seed_admin(settings) -> None:
             print(banner, file=sys.stderr)
 
 
+async def _start_siem_receiver(settings):
+    """Start the Log Exporter / SIEM receiver if a port is configured. Best-effort: a bind failure
+    (port in use / not permitted) logs a warning and the app continues without it."""
+    if not settings.syslog_port or settings.syslog_port <= 0:
+        return None
+    from .services import siem
+    from .services.syslog_listener import SyslogReceiver
+
+    def store_cb(ip: str, transport: str, line: str) -> None:
+        with SessionLocal() as db:
+            siem.store_log(db, ip, transport, line)
+
+    receiver = SyslogReceiver(settings.syslog_port, store_cb)
+    try:
+        await receiver.start()
+    except OSError as exc:
+        print(f"WARNING: SIEM receiver could not bind port {settings.syslog_port}: {exc}", file=sys.stderr)
+        return None
+    return receiver
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
     init_db()
     _seed_admin(settings)
-    yield
+    receiver = await _start_siem_receiver(settings)
+    try:
+        yield
+    finally:
+        if receiver is not None:
+            await receiver.stop()
 
 
 def create_app() -> FastAPI:
@@ -73,6 +99,7 @@ def create_app() -> FastAPI:
     app.include_router(datacenters.router)
     app.include_router(scenarios.router)
     app.include_router(activity.router)
+    app.include_router(siem.router)
 
     @app.get("/healthz", include_in_schema=False)
     def healthz() -> dict:

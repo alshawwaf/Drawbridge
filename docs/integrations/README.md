@@ -24,6 +24,7 @@ inventory (flip a tag, scale out, run a timed preset) and the next ~30s scan re-
 | [Nutanix Prism](nutanix.md) | Prism REST v3 + v4 (Basic auth) | Data Center → Nutanix | bare host (apex) — `<portal>` **on port 9440** (connector-fixed) |
 | [Dynamic Layers](dynamic-layers.md) | Gaia API (`set-dynamic-content`) | *(push to gateway / mock)* | n/a — portal is the client |
 | [Scenarios](scenarios.md) | live inventory mutation + timed presets | *(drives any DC mock's next poll)* | n/a — portal control panel (`/scenarios`) |
+| [SIEM receiver](siem.md) | Log Exporter sink — syslog / CEF / LEEF / JSON over TCP+UDP | *(gateway / MGMT sends logs here)* | `udp+tcp://<portal-host>:5514` (not HTTP — bypasses Caddy) |
 
 ## Routing: path-based vs apex single-tenant
 

@@ -32,6 +32,11 @@ class Settings(BaseSettings):
     # Default Generic DC poll interval hint shown in the UI (seconds). Min 10 per sk167210.
     default_gdc_interval: int = 10
 
+    # SIEM receiver: the TCP+UDP port the built-in Log Exporter listener binds (0 = disabled).
+    # Use a high port (e.g. 5514) to avoid needing root for the privileged 514; point Check Point's
+    # cp_log_export target-port here. Must also be published by docker-compose / the host firewall.
+    syslog_port: int = 0
+
 
 @lru_cache
 def get_settings() -> Settings:
