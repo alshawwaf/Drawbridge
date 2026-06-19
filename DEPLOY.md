@@ -23,8 +23,23 @@ no cert-trust step. (Caddy / `docker-compose.yml` are only for standalone local/
    DCSIM_ADMIN_PASSWORD=<choose a strong password>
    DCSIM_DATABASE_URL=sqlite:////data/dcsim.db
    DCSIM_ENCRYPTION_KEY=<openssl rand -base64 32>   # optional — encrypts saved gateway + DC creds
+   DCSIM_SYSLOG_PORT=5514                            # SIEM receiver port (0 disables it)
    ```
 8. **Deploy.** Sign in at your domain as the admin user above.
+
+## Extra ports (Nutanix 9440, SIEM receiver 5514)
+
+Two integrations don't ride the standard HTTPS-on-443 path and need their ports published explicitly
+on the Dokploy host (skip whichever you won't demo):
+
+- **Nutanix — 9440 (HTTPS).** CloudGuard's Prism connector hardcodes port `9440`, so the portal must
+  answer there. Add a Traefik entrypoint for `9440` that routes to the app (same cert/app as 443), or
+  run a `socat 9440→443` passthrough on the host. See [docs/integrations/nutanix.md](docs/integrations/nutanix.md).
+- **SIEM receiver — 5514 (TCP *and* UDP).** Check Point's Log Exporter sends raw syslog/CEF/LEEF —
+  **not** HTTP — so it bypasses Traefik's HTTP routing. Set `DCSIM_SYSLOG_PORT=5514` and publish the
+  port straight to the app container: add a TCP **and** a UDP entrypoint for `5514`, or map the host
+  port directly. See [docs/integrations/siem.md](docs/integrations/siem.md). Set `DCSIM_SYSLOG_PORT=0`
+  to turn the listener off entirely.
 
 ## Why each setting matters
 
