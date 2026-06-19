@@ -12,8 +12,10 @@ from ..db import get_db
 from ..links import public_url
 from ..models import Feed, FeedPoll, FeedType, User
 from ..security import get_user_or_none, new_feed_token, verify_password
+from ..schemas.ioc import IOC_LEVELS, IOC_TYPES
 from ..services.render import (
     normalize_generic_dc_content,
+    normalize_ioc_content,
     normalize_network_feed_flat,
     normalize_network_feed_json,
     render_feed,
@@ -63,6 +65,18 @@ DEFAULT_NETFEED_JSON_BODY = (
 )
 DEFAULT_JQ_QUERY = ".blocklist[].value"
 
+# --- IoC (Custom Intelligence) feed default — one line per type, all safe demo values ---
+DEFAULT_IOC_NAME = "IoC-Feed-Example"
+DEFAULT_IOC_DESCRIPTION = "Demo threat-intel indicators"
+# Quick-entry: 'value, type[, confidence, severity, product, comment]'. The MD5 is the EICAR test hash.
+DEFAULT_IOC_INDICATORS_TEXT = (
+    "203.0.113.66, IP, high, high, AB, C2 beacon\n"
+    "198.51.100.10-198.51.100.40, IP Range, medium, high, AB, Known-bad range\n"
+    "malware-c2.example.com, Domain, high, critical, AB, Botnet C2\n"
+    "http://drive-by.example.net/payload, URL, medium, high, AV, Drive-by host\n"
+    "44d88612fea8a8f36de82e1278abb02f, MD5, high, high, AV, EICAR test file"
+)
+
 
 def _default_form() -> dict:
     return {
@@ -86,6 +100,43 @@ def _default_network_form() -> dict:
         "interval_seconds": 3600,
         "basic_user": "",
     }
+
+
+def _default_ioc_form() -> dict:
+    return {
+        "name": DEFAULT_IOC_NAME,
+        "description": DEFAULT_IOC_DESCRIPTION,
+        "indicators_text": DEFAULT_IOC_INDICATORS_TEXT,
+        "interval_seconds": 3600,
+        "auth_header_key": "",
+    }
+
+
+def parse_indicators_text(text: str) -> list[dict]:
+    """IoC quick-entry: one per line, 'value, type[, confidence, severity, product, comment]'.
+
+    Names are auto-assigned (ioc-N — the unique key SEs don't care about). Splitting keeps at most 6
+    fields so commas inside the trailing comment survive. '#' lines and blanks are ignored.
+    """
+    indicators: list[dict] = []
+    n = 0
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = [p.strip() for p in line.split(",", 5)]
+        if len(parts) < 2 or not parts[0] or not parts[1]:
+            raise ValueError(
+                f"Line must be 'value, type[, confidence, severity, product, comment]': {raw.strip()!r}"
+            )
+        parts += [""] * (6 - len(parts))
+        n += 1
+        value, type_, conf, sev, prod, comment = parts
+        indicators.append({"name": f"ioc-{n}", "value": value, "type": type_,
+                           "confidence": conf, "severity": sev, "product": prod, "comment": comment})
+    if not indicators:
+        raise ValueError("Enter at least one indicator.")
+    return indicators
 
 
 def parse_objects_text(text: str) -> list[dict]:
@@ -121,6 +172,8 @@ def parse_entries_text(text: str) -> list[str]:
 def _item_count(feed: Feed) -> int:
     if feed.type == FeedType.network_feed:
         return len(feed.content.get("entries", []))
+    if feed.type == FeedType.ioc:
+        return len(feed.content.get("indicators", []))
     return len(feed.content.get("objects", []))
 
 
@@ -331,6 +384,61 @@ def create_network(
     db.commit()
     db.refresh(feed)
     _flash(request, f"Network Feed “{name}” created.")
+    return RedirectResponse(f"/feeds/{feed.id}", status_code=303)
+
+
+@router.get("/feeds/new/ioc", response_class=HTMLResponse)
+def new_ioc_page(request: Request, db: Session = Depends(get_db)):
+    if get_user_or_none(request, db) is None:
+        return RedirectResponse("/login", status_code=303)
+    return templates.TemplateResponse(
+        request,
+        "feed_new_ioc.html",
+        {"error": None, "form": _default_ioc_form(), "ioc_types": IOC_TYPES, "ioc_levels": IOC_LEVELS},
+    )
+
+
+@router.post("/feeds/new/ioc")
+def create_ioc(
+    request: Request,
+    name: str = Form(...),
+    description: str = Form(""),
+    interval_seconds: int = Form(3600),
+    auth_header_key: str = Form(""),
+    auth_header_value: str = Form(""),
+    indicators_text: str = Form(""),
+    db: Session = Depends(get_db),
+):
+    user = get_user_or_none(request, db)
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+    try:
+        content = normalize_ioc_content(parse_indicators_text(indicators_text), description)
+    except Exception as exc:
+        return templates.TemplateResponse(
+            request,
+            "feed_new_ioc.html",
+            {"error": str(exc), "ioc_types": IOC_TYPES, "ioc_levels": IOC_LEVELS, "form": {
+                "name": name, "description": description, "interval_seconds": interval_seconds,
+                "auth_header_key": auth_header_key, "indicators_text": indicators_text,
+            }},
+            status_code=400,
+        )
+    feed = Feed(
+        token=new_feed_token(),
+        type=FeedType.ioc,
+        name=name,
+        description=description,
+        content=content,
+        interval_seconds=interval_seconds,
+        auth_header_key=auth_header_key or None,
+        auth_header_value=auth_header_value or None,
+        owner_id=user.id,
+    )
+    db.add(feed)
+    db.commit()
+    db.refresh(feed)
+    _flash(request, f"IoC feed “{name}” created.")
     return RedirectResponse(f"/feeds/{feed.id}", status_code=303)
 
 

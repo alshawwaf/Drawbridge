@@ -63,6 +63,17 @@ def serve_generic_dc(token: str, request: Request, db: Session = Depends(get_db)
     return Response(content=body, media_type=media, headers={"Cache-Control": "no-store"})
 
 
+@router.get("/ioc/{token}.csv")
+def serve_ioc(token: str, request: Request, db: Session = Depends(get_db)) -> Response:
+    feed = _get_feed(db, token, FeedType.ioc)
+    if not _auth_ok(feed, request):  # optional Custom Header, same as the Generic DC feed
+        _record_poll(db, feed, request, 401)
+        raise HTTPException(status_code=401, detail="Missing or invalid feed credentials")
+    body, media = render_feed(feed)
+    _record_poll(db, feed, request, 200)
+    return Response(content=body, media_type=media, headers={"Cache-Control": "no-store"})
+
+
 def _basic_auth_ok(feed: Feed, request: Request) -> bool:
     """Network Feed uses HTTP Basic auth (username in auth_header_key, password in value)."""
     if not feed.auth_header_key:

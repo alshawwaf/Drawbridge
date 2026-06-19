@@ -1,10 +1,16 @@
 """Render a stored Feed into the exact wire format the gateway fetches."""
+import csv
+import io
 import json
 import uuid
 
 from ..models import Feed, FeedType
 from ..schemas.generic_dc import GDCObjectIn, GENERIC_DC_VERSION
+from ..schemas.ioc import IndicatorIn
 from ..schemas.network_feed import DATA_TYPES, validate_entry, validate_json_body
+
+# Check Point native CSV column order (UNIQ-NAME first, then VALUE, TYPE, ...).
+_IOC_COLUMNS = ("name", "value", "type", "confidence", "severity", "product", "comment")
 
 
 def normalize_generic_dc_content(objects: list[dict], description: str = "") -> dict:
@@ -74,11 +80,46 @@ def render_network_feed(feed: Feed) -> tuple[str, str]:
     return "\n".join(content.get("entries", [])) + "\n", "text/plain; charset=utf-8"
 
 
+def normalize_ioc_content(indicators: list[dict], description: str = "") -> dict:
+    """Validate SE-entered indicators (type/level tokens, per-type value, unique names).
+
+    Returns the dict persisted in Feed.content. Raises pydantic ValidationError / ValueError on
+    malformed input so the caller can surface a clean error.
+    """
+    normalized = []
+    seen: set[str] = set()
+    for raw in indicators:
+        ind = IndicatorIn.model_validate(raw)
+        if ind.name in seen:
+            raise ValueError(f"duplicate indicator name {ind.name!r} — UNIQ-NAME must be unique")
+        seen.add(ind.name)
+        normalized.append({k: getattr(ind, k) for k in _IOC_COLUMNS})
+    if not normalized:
+        raise ValueError("Enter at least one indicator.")
+    return {"indicators": normalized}
+
+
+def render_ioc(feed: Feed) -> tuple[str, str]:
+    """Emit the native Check Point IoC CSV: optional `#! DESCRIPTION` metadata, then positional rows.
+
+    csv.writer quotes any field containing a comma/quote (e.g. a COMMENT), so the output round-trips.
+    """
+    buf = io.StringIO()
+    desc = " ".join((feed.description or feed.name or "").split())
+    if desc:
+        buf.write(f"#! DESCRIPTION = {desc}\n")
+    writer = csv.writer(buf, lineterminator="\n")
+    for ind in feed.content.get("indicators", []):
+        writer.writerow([ind.get(col, "") for col in _IOC_COLUMNS])
+    return buf.getvalue(), "text/csv; charset=utf-8"
+
+
 def render_feed(feed: Feed) -> tuple[str, str]:
     """Dispatch to the per-type renderer. Returns (body, media_type)."""
     if feed.type == FeedType.generic_dc:
         return render_generic_dc(feed)
     if feed.type == FeedType.network_feed:
         return render_network_feed(feed)
-    # IoC (M2) renderer slots in here.
+    if feed.type == FeedType.ioc:
+        return render_ioc(feed)
     raise NotImplementedError(f"rendering not implemented for feed type {feed.type.value}")

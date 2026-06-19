@@ -10,6 +10,7 @@ from ..models import Feed, FeedType, User
 from ..security import current_user, new_feed_token
 from ..services.render import (
     normalize_generic_dc_content,
+    normalize_ioc_content,
     normalize_network_feed_flat,
     normalize_network_feed_json,
     render_feed,
@@ -34,6 +35,8 @@ class FeedCreate(BaseModel):
     # network_feed (custom JSON)
     json_body: str = ""
     jq_query: str = ""
+    # ioc
+    indicators: list[dict] = Field(default_factory=list)
 
 
 class FeedUpdate(BaseModel):
@@ -46,6 +49,7 @@ class FeedUpdate(BaseModel):
     entries: list[str] | None = None
     json_body: str | None = None
     jq_query: str | None = None
+    indicators: list[dict] | None = None
 
 
 def _build_content(
@@ -57,23 +61,28 @@ def _build_content(
     data_type: str = "ip_domain",
     json_body: str = "",
     jq_query: str = "",
+    indicators: list[dict] | None = None,
     description: str = "",
 ) -> dict:
     try:
         if ftype == FeedType.generic_dc:
             return normalize_generic_dc_content(objects or [], description)
+        if ftype == FeedType.ioc:
+            return normalize_ioc_content(indicators or [], description)
         if ftype == FeedType.network_feed:
             if feed_format == "json":
                 return normalize_network_feed_json(json_body, jq_query, data_type)
             return normalize_network_feed_flat(entries or [], data_type)
     except (ValidationError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=f"Invalid {ftype.value} content: {exc}")
-    raise HTTPException(status_code=400, detail=f"feed type '{ftype.value}' not yet supported (M2)")
+    raise HTTPException(status_code=400, detail=f"feed type '{ftype.value}' not supported")
 
 
 def _item_count(feed: Feed) -> int:
     if feed.type == FeedType.network_feed:
         return len(feed.content.get("entries", []))
+    if feed.type == FeedType.ioc:
+        return len(feed.content.get("indicators", []))
     return len(feed.content.get("objects", []))
 
 
@@ -110,6 +119,7 @@ def create_feed(body: FeedCreate, user: User = Depends(current_user), db: Sessio
         data_type=body.data_type,
         json_body=body.json_body,
         jq_query=body.jq_query,
+        indicators=body.indicators,
         description=body.description,
     )
     feed = Feed(
@@ -162,6 +172,8 @@ def update_feed(
         feed.auth_header_value = body.auth_header_value or None
     if body.objects is not None and feed.type == FeedType.generic_dc:
         feed.content = _build_content(feed.type, objects=body.objects, description=feed.description)
+    if body.indicators is not None and feed.type == FeedType.ioc:
+        feed.content = _build_content(feed.type, indicators=body.indicators, description=feed.description)
     if feed.type == FeedType.network_feed and (body.entries is not None or body.json_body is not None):
         feed.content = _build_content(
             feed.type,

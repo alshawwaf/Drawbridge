@@ -22,6 +22,11 @@
     <p class="muted"><b>In SmartConsole:</b> Objects → New → More → Cloud → Data Center → <i>New Generic Data Center…</i>, paste the URL, set the interval{% if feed.auth_header_key %}, add the Custom Header{% endif %}, then click <i>Test Connection</i>.</p>
     <h2>Test from a shell</h2>
     <pre>curl -s {% if feed.auth_header_key %}-H "{{ feed.auth_header_key }}: &lt;value&gt;" {% endif %}{{ url }}</pre>
+  {% elif feed.type.value == 'ioc' %}
+    <p class="muted">Poll interval {{ feed.interval_seconds }}s · {{ feed.content.get('indicators', [])|length }} indicators · Format <b>Check Point format/STIX</b> (native CSV).{% if feed.auth_header_key %} Requires header <code>{{ feed.auth_header_key }}</code>.{% endif %}</p>
+    <p class="muted"><b>In SmartConsole:</b> Security Policies → Threat Prevention → Custom Policy → <i>Custom Policy Tools</i> → <i>Indicators</i> → <b>New → New IoC Feed</b>. Paste the URL, set Feed Format = <b>Check Point format/STIX</b>{% if feed.auth_header_key %}, add the Custom Header under authentication{% endif %}, then Install the Threat Prevention policy. Anti-Bot / Anti-Virus then block matching traffic.</p>
+    <h2>Test from a shell</h2>
+    <pre>curl -s {% if feed.auth_header_key %}-H "{{ feed.auth_header_key }}: &lt;value&gt;" {% endif %}{{ url }}</pre>
   {% else %}
     {% set dtypes = {'ip': 'IP Address', 'domain': 'Domain', 'ip_domain': 'IP Address / Domain'} %}
     {% set fmt = 'JSON' if feed.content.format == 'json' else 'Flat list' %}
