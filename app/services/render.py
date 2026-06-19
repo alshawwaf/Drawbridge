@@ -6,11 +6,13 @@ import uuid
 
 from ..models import Feed, FeedType
 from ..schemas.generic_dc import GDCObjectIn, GENERIC_DC_VERSION
-from ..schemas.ioc import IndicatorIn
+from ..schemas.ioc import IndicatorIn, INDICATOR_FORMATS, validate_delimiter, validate_snort_rules
 from ..schemas.network_feed import DATA_TYPES, validate_entry, validate_json_body
+from .stix import render_stix
 
 # Check Point native CSV column order (UNIQ-NAME first, then VALUE, TYPE, ...).
 _IOC_COLUMNS = ("name", "value", "type", "confidence", "severity", "product", "comment")
+_IOC_HEADERS = ("UNIQ-NAME", "VALUE", "TYPE", "CONFIDENCE", "SEVERITY", "PRODUCT", "COMMENT")
 
 
 def normalize_generic_dc_content(objects: list[dict], description: str = "") -> dict:
@@ -80,12 +82,13 @@ def render_network_feed(feed: Feed) -> tuple[str, str]:
     return "\n".join(content.get("entries", [])) + "\n", "text/plain; charset=utf-8"
 
 
-def normalize_ioc_content(indicators: list[dict], description: str = "") -> dict:
-    """Validate SE-entered indicators (type/level tokens, per-type value, unique names).
-
-    Returns the dict persisted in Feed.content. Raises pydantic ValidationError / ValueError on
-    malformed input so the caller can surface a clean error.
-    """
+def normalize_ioc_content(indicators: list[dict], description: str = "", fmt: str = "cp_csv",
+                          delimiter: str = ",", comment: str = "#") -> dict:
+    """Validate SE-entered indicators (type/level tokens, per-type value, unique names) for an
+    indicator-based format (cp_csv / stix_1.x / custom_csv). Returns the dict persisted in
+    Feed.content. Raises pydantic ValidationError / ValueError on malformed input."""
+    if fmt not in INDICATOR_FORMATS:
+        raise ValueError(f"unknown indicator format {fmt!r}")
     normalized = []
     seen: set[str] = set()
     for raw in indicators:
@@ -96,23 +99,74 @@ def normalize_ioc_content(indicators: list[dict], description: str = "") -> dict
         normalized.append({k: getattr(ind, k) for k in _IOC_COLUMNS})
     if not normalized:
         raise ValueError("Enter at least one indicator.")
-    return {"indicators": normalized}
+    content: dict = {"format": fmt, "indicators": normalized}
+    if fmt == "custom_csv":
+        content["delimiter"] = validate_delimiter(delimiter)
+        content["comment"] = (comment or "#").strip() or "#"
+    return content
 
 
-def render_ioc(feed: Feed) -> tuple[str, str]:
-    """Emit the native Check Point IoC CSV: optional `#! DESCRIPTION` metadata, then positional rows.
+def normalize_snort_content(rules_text: str) -> dict:
+    """Validate Snort rule text (action keyword per line, rule cap). Returns Feed.content."""
+    return {"format": "snort", "rules": validate_snort_rules(rules_text)}
 
-    csv.writer quotes any field containing a comma/quote (e.g. a COMMENT), so the output round-trips.
-    """
+
+def render_ioc_cp_csv(feed: Feed) -> tuple[str, str]:
+    """Native Check Point CSV: optional `#! DESCRIPTION` metadata, the `#`-header, then positional
+    rows. csv.writer quotes any field with a comma/quote (e.g. a COMMENT), so the output round-trips."""
     buf = io.StringIO()
     desc = " ".join((feed.description or feed.name or "").split())
     if desc:
         buf.write(f"#! DESCRIPTION = {desc}\n")
-    buf.write("#UNIQ-NAME,VALUE,TYPE,CONFIDENCE,SEVERITY,PRODUCT,COMMENT\n")  # documented header line
+    buf.write("#" + ",".join(_IOC_HEADERS) + "\n")  # documented header line
     writer = csv.writer(buf, lineterminator="\n")
     for ind in feed.content.get("indicators", []):
         writer.writerow([ind.get(col, "") for col in _IOC_COLUMNS])
     return buf.getvalue(), "text/csv; charset=utf-8"
+
+
+def render_ioc_custom_csv(feed: Feed) -> tuple[str, str]:
+    """A deliberately non-default CSV layout (chosen delimiter + comment char) to demo the gateway's
+    `--format` mapping. Same columns/order as the native format."""
+    delim = feed.content.get("delimiter", ",")
+    comment = feed.content.get("comment", "#")
+    buf = io.StringIO()
+    desc = " ".join((feed.description or feed.name or "").split())
+    if desc:
+        buf.write(f"{comment} {desc}\n")
+    buf.write(comment + " " + delim.join(_IOC_HEADERS) + "\n")
+    writer = csv.writer(buf, delimiter=delim, lineterminator="\n")
+    for ind in feed.content.get("indicators", []):
+        writer.writerow([ind.get(col, "") for col in _IOC_COLUMNS])
+    return buf.getvalue(), "text/csv; charset=utf-8"
+
+
+def custom_csv_command(feed: Feed, url: str) -> str:
+    """The matching `ioc_feeds add` CLI command for this custom-CSV feed (shown on the detail page)."""
+    delim = feed.content.get("delimiter", ",")
+    comment = feed.content.get("comment", "#")
+    shown = "\\t" if delim == "\t" else delim
+    fmt = "[name:#1,value:#2,type:#3,confidence:#4,severity:#5,product:#6,comment:#7]"
+    return (f'ioc_feeds add --feed_name dcsim --transport https --resource "{url}" '
+            f'--feed_file_type custom_csv --format {fmt} --delimiter "{shown}" --comment "{comment}"')
+
+
+def render_ioc_snort(feed: Feed) -> tuple[str, str]:
+    """Serve Snort rules verbatim (one per line) as text/plain for an IPS IoC feed."""
+    rules = feed.content.get("rules", [])
+    return ("\n".join(rules) + "\n") if rules else "", "text/plain; charset=utf-8"
+
+
+def render_ioc(feed: Feed) -> tuple[str, str]:
+    """Dispatch on the IoC feed's stored output format (defaults to native Check Point CSV)."""
+    fmt = (feed.content or {}).get("format", "cp_csv")
+    if fmt == "stix_1.x":
+        return render_stix(feed)
+    if fmt == "snort":
+        return render_ioc_snort(feed)
+    if fmt == "custom_csv":
+        return render_ioc_custom_csv(feed)
+    return render_ioc_cp_csv(feed)
 
 
 def render_feed(feed: Feed) -> tuple[str, str]:

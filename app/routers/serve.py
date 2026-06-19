@@ -94,7 +94,9 @@ def serve_network_feed(token: str, request: Request, db: Session = Depends(get_d
     return Response(content=body, media_type=media, headers={"Cache-Control": "no-store"})
 
 
-@router.get("/ioc/{token}.csv")
+@router.get("/ioc/{token}.csv")   # native Check Point CSV / Custom CSV
+@router.get("/ioc/{token}.xml")   # STIX 1.x
+@router.get("/ioc/{token}.txt")   # Snort rules
 def serve_ioc(token: str, request: Request, db: Session = Depends(get_db)) -> Response:
     feed = _get_feed(db, token, FeedType.ioc)
     if not _basic_auth_ok(feed, request):  # IoC feeds authenticate with --user_name (HTTP Basic, R81.20+)

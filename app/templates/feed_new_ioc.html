@@ -2,7 +2,7 @@
 {% block title %}New IoC Feed{% endblock %}
 {% block content %}
 <h1>New IoC Feed <span class="pill">Custom Intelligence</span></h1>
-<p class="muted">A threat-intel feed in Check Point's native CSV format. Anti-Bot / Anti-Virus fetch it and block matching traffic. Pre-filled with a safe demo set — edit or replace it, then Create.</p>
+<p class="muted">A threat-intel feed Anti-Bot / Anti-Virus (or IPS, for Snort) fetch and enforce. Pick the wire format the gateway expects, fill in the content, then Create.</p>
 {% if error %}<div class="err" style="margin:12px 0;">{{ error }}</div>{% endif %}
 
 <form method="post" action="/feeds/new/ioc" class="card">
@@ -11,29 +11,59 @@
 
   <label>Description (optional)</label>
   <input name="description" value="{{ form.description }}" placeholder="Demo indicators">
-  <p class="muted">Emitted as a <code>#! DESCRIPTION</code> metadata line at the top of the feed.</p>
 
-  <label>Indicators — one per line</label>
-  <textarea name="indicators_text" style="min-height:170px;" placeholder="203.0.113.66, IP, high, high, AB, C2 beacon">{{ form.indicators_text }}</textarea>
-  <p class="muted">Format: <code>value, type[, confidence, severity, product, comment]</code>. Only <b>value</b> and <b>type</b> are required; a unique name is auto-assigned. The comment is the last field, so it may contain commas. <code>#</code> lines and blanks are ignored.</p>
+  <label>Feed format</label>
+  <select name="ioc_format" id="ioc_format">
+    <option value="cp_csv" {{ 'selected' if form.ioc_format == 'cp_csv' else '' }}>Check Point CSV (native)</option>
+    <option value="stix_1.x" {{ 'selected' if form.ioc_format == 'stix_1.x' else '' }}>STIX 1.x (CybOX XML)</option>
+    <option value="custom_csv" {{ 'selected' if form.ioc_format == 'custom_csv' else '' }}>Custom CSV (delimiter mapping)</option>
+    <option value="snort" {{ 'selected' if form.ioc_format == 'snort' else '' }}>Snort rules (IPS)</option>
+  </select>
+  <p class="muted" id="format-hint"></p>
 
-  <div class="row" style="gap:24px; flex-wrap:wrap;">
-    <div>
-      <label style="margin-bottom:4px;">Valid types</label>
-      <div>{% for t in ioc_types %}<span class="pill" style="margin:2px;">{{ t }}</span>{% endfor %}</div>
+  <div id="indicator-fields">
+    <label>Indicators — one per line</label>
+    <textarea name="indicators_text" style="min-height:150px;" placeholder="203.0.113.66, IP, high, high, AB, C2 beacon">{{ form.indicators_text }}</textarea>
+    <p class="muted">Format: <code>value, type[, confidence, severity, product, comment]</code>. Only <b>value</b> and <b>type</b> are required; a unique name is auto-assigned. <span id="stix-note" style="display:none;">(STIX carries the observable only — confidence/severity/product are CSV concepts and are dropped.)</span></p>
+    <div class="row" style="gap:24px; flex-wrap:wrap;">
+      <div>
+        <label style="margin-bottom:4px;">Valid types</label>
+        <div>{% for t in ioc_types %}<span class="pill" style="margin:2px;">{{ t }}</span>{% endfor %}</div>
+      </div>
+      <div>
+        <label style="margin-bottom:4px;">Confidence / Severity</label>
+        <div>{% for l in ioc_levels %}<span class="pill faint" style="margin:2px;">{{ l }}</span>{% endfor %}</div>
+      </div>
     </div>
-    <div>
-      <label style="margin-bottom:4px;">Confidence / Severity</label>
-      <div>{% for l in ioc_levels %}<span class="pill faint" style="margin:2px;">{{ l }}</span>{% endfor %}</div>
+    <div id="custom-fields" style="margin-top:14px;">
+      <div class="row">
+        <div class="grow">
+          <label>Delimiter</label>
+          <select name="delimiter">
+            <option value="," {{ 'selected' if form.delimiter == ',' else '' }}>Comma ,</option>
+            <option value="|" {{ 'selected' if form.delimiter == '|' else '' }}>Pipe |</option>
+            <option value=";" {{ 'selected' if form.delimiter == ';' else '' }}>Semicolon ;</option>
+            <option value="\t" {{ 'selected' if form.delimiter == '\t' else '' }}>Tab</option>
+          </select>
+        </div>
+        <div class="grow"><label>Comment char</label><input name="comment" value="{{ form.comment }}" placeholder="#" style="width:90px;"></div>
+      </div>
+      <p class="muted">The portal serves your indicators in this layout and shows the matching <code>ioc_feeds add --format … --delimiter …</code> command on the feed page.</p>
     </div>
   </div>
 
-  <label style="margin-top:16px;">Poll interval (seconds)</label>
+  <div id="snort-fields">
+    <label>Snort rules — one per line</label>
+    <textarea name="snort_rules" style="min-height:150px;" placeholder='alert tcp any any -> any 80 (msg:"..."; sid:1000001;)'>{{ form.snort_rules }}</textarea>
+    <p class="muted">Each rule must start with an action (<code>alert</code>, <code>drop</code>, <code>reject</code>, …). Requires the <b>IPS</b> blade; capped at 6000 rules. <code>#</code> lines and blanks are ignored.</p>
+  </div>
+
+  <label>Poll interval (seconds)</label>
   <input name="interval_seconds" type="number" min="1" value="{{ form.interval_seconds }}" style="width:140px">
   <p class="muted">SmartConsole's IoC feed "Check feed interval" is in minutes (default 60).</p>
 
   <h2>Optional: HTTP Basic auth</h2>
-  <p class="muted">IoC feeds authenticate with a username/password (<code>ioc_feeds --user_name</code>, R81.20+). Leave blank for an open feed — the unguessable token in the URL is the guard.</p>
+  <p class="muted">IoC feeds authenticate with a username/password (<code>ioc_feeds --user_name</code>, R81.20+). Leave blank for an open feed.</p>
   <div class="row">
     <div class="grow"><label>Username</label><input name="basic_user" value="{{ form.basic_user }}" placeholder="feeduser"></div>
     <div class="grow"><label>Password</label><input name="basic_pass" type="password" placeholder="(secret)"></div>
@@ -44,4 +74,32 @@
     <a class="btn secondary" href="/">Cancel</a>
   </div>
 </form>
+
+<script>
+  (function () {
+    var sel = document.getElementById('ioc_format');
+    var indicators = document.getElementById('indicator-fields');
+    var custom = document.getElementById('custom-fields');
+    var snort = document.getElementById('snort-fields');
+    var stixNote = document.getElementById('stix-note');
+    var hint = document.getElementById('format-hint');
+    var HINTS = {
+      'cp_csv': 'Native Check Point CSV — #! metadata, a # header, then UNIQ-NAME,VALUE,TYPE,… rows.',
+      'stix_1.x': 'STIX 1.x / CybOX 2.1 XML (Observables). Validate against the gateway once connected.',
+      'custom_csv': 'A non-default CSV layout (your delimiter + comment char) to demo the --format mapping.',
+      'snort': 'Snort/IPS rule text, served verbatim. Needs the IPS blade.'
+    };
+    function sync() {
+      var f = sel.value;
+      var isSnort = f === 'snort';
+      indicators.style.display = isSnort ? 'none' : '';
+      snort.style.display = isSnort ? '' : 'none';
+      custom.style.display = (f === 'custom_csv') ? '' : 'none';
+      stixNote.style.display = (f === 'stix_1.x') ? '' : 'none';
+      hint.textContent = HINTS[f] || '';
+    }
+    sel.addEventListener('change', sync);
+    sync();
+  })();
+</script>
 {% endblock %}

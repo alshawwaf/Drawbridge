@@ -13,6 +13,7 @@ from ..services.render import (
     normalize_ioc_content,
     normalize_network_feed_flat,
     normalize_network_feed_json,
+    normalize_snort_content,
     render_feed,
 )
 
@@ -37,6 +38,10 @@ class FeedCreate(BaseModel):
     jq_query: str = ""
     # ioc
     indicators: list[dict] = Field(default_factory=list)
+    ioc_format: str = "cp_csv"
+    snort_rules: str = ""
+    ioc_delimiter: str = ","
+    ioc_comment: str = "#"
 
 
 class FeedUpdate(BaseModel):
@@ -50,6 +55,10 @@ class FeedUpdate(BaseModel):
     json_body: str | None = None
     jq_query: str | None = None
     indicators: list[dict] | None = None
+    ioc_format: str | None = None
+    snort_rules: str | None = None
+    ioc_delimiter: str | None = None
+    ioc_comment: str | None = None
 
 
 def _build_content(
@@ -62,13 +71,20 @@ def _build_content(
     json_body: str = "",
     jq_query: str = "",
     indicators: list[dict] | None = None,
+    ioc_format: str = "cp_csv",
+    snort_rules: str = "",
+    ioc_delimiter: str = ",",
+    ioc_comment: str = "#",
     description: str = "",
 ) -> dict:
     try:
         if ftype == FeedType.generic_dc:
             return normalize_generic_dc_content(objects or [], description)
         if ftype == FeedType.ioc:
-            return normalize_ioc_content(indicators or [], description)
+            if ioc_format == "snort":
+                return normalize_snort_content(snort_rules)
+            return normalize_ioc_content(indicators or [], description, ioc_format,
+                                         ioc_delimiter, ioc_comment)
         if ftype == FeedType.network_feed:
             if feed_format == "json":
                 return normalize_network_feed_json(json_body, jq_query, data_type)
@@ -82,6 +98,8 @@ def _item_count(feed: Feed) -> int:
     if feed.type == FeedType.network_feed:
         return len(feed.content.get("entries", []))
     if feed.type == FeedType.ioc:
+        if feed.content.get("format") == "snort":
+            return len(feed.content.get("rules", []))
         return len(feed.content.get("indicators", []))
     return len(feed.content.get("objects", []))
 
@@ -120,6 +138,10 @@ def create_feed(body: FeedCreate, user: User = Depends(current_user), db: Sessio
         json_body=body.json_body,
         jq_query=body.jq_query,
         indicators=body.indicators,
+        ioc_format=body.ioc_format,
+        snort_rules=body.snort_rules,
+        ioc_delimiter=body.ioc_delimiter,
+        ioc_comment=body.ioc_comment,
         description=body.description,
     )
     feed = Feed(
@@ -172,8 +194,12 @@ def update_feed(
         feed.auth_header_value = body.auth_header_value or None
     if body.objects is not None and feed.type == FeedType.generic_dc:
         feed.content = _build_content(feed.type, objects=body.objects, description=feed.description)
-    if body.indicators is not None and feed.type == FeedType.ioc:
-        feed.content = _build_content(feed.type, indicators=body.indicators, description=feed.description)
+    if feed.type == FeedType.ioc and (body.indicators is not None or body.snort_rules is not None):
+        fmt = body.ioc_format or feed.content.get("format", "cp_csv")
+        feed.content = _build_content(
+            feed.type, indicators=body.indicators or [], ioc_format=fmt,
+            snort_rules=body.snort_rules or "", ioc_delimiter=body.ioc_delimiter or ",",
+            ioc_comment=body.ioc_comment or "#", description=feed.description)
     if feed.type == FeedType.network_feed and (body.entries is not None or body.json_body is not None):
         feed.content = _build_content(
             feed.type,
