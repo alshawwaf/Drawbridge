@@ -2,7 +2,7 @@
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -463,6 +463,182 @@ def create_ioc(
     db.refresh(feed)
     _flash(request, f"IoC feed “{name}” created.")
     return RedirectResponse(f"/feeds/{feed.id}", status_code=303)
+
+
+# --- Edit a feed -----------------------------------------------------------------------
+# The create forms (feed_new_*.html) are reused for editing: GET prefills them by serializing the
+# stored content back to the quick-entry text format, POST re-parses and updates in place.
+
+def _ser_gdc_objects(objects: list[dict]) -> str:
+    """Generic DC: 'Name = range1, range2 | description' per line (reverse of parse_objects_text)."""
+    out = []
+    for o in objects or []:
+        line = f"{o['name']} = {', '.join(o.get('ranges') or [])}"
+        if o.get("description"):
+            line += f" | {o['description']}"
+        out.append(line)
+    return "\n".join(out)
+
+
+def _ser_ioc_indicators(indicators: list[dict]) -> str:
+    """IoC: 'value, type[, confidence, severity, product, comment]' per line, trailing blanks trimmed."""
+    out = []
+    for i in indicators or []:
+        fields = [i.get("value", ""), i.get("type", ""), i.get("confidence", ""),
+                  i.get("severity", ""), i.get("product", ""), i.get("comment", "")]
+        while len(fields) > 2 and not fields[-1]:
+            fields.pop()
+        out.append(", ".join(fields))
+    return "\n".join(out)
+
+
+_FEED_EDIT_TEMPLATE = {
+    FeedType.generic_dc: "feed_new_generic.html",
+    FeedType.network_feed: "feed_new_network.html",
+    FeedType.ioc: "feed_new_ioc.html",
+}
+
+
+def _feed_build_form(feed: Feed) -> dict:
+    c = feed.content or {}
+    key = feed.auth_header_key or ""
+    form = {"name": feed.name, "description": feed.description or "", "interval_seconds": feed.interval_seconds}
+    if feed.type == FeedType.generic_dc:
+        form.update(objects_text=_ser_gdc_objects(c.get("objects")), auth_header_key=key)
+    elif feed.type == FeedType.network_feed:
+        fmt = c.get("format", "flat")
+        form.update(data_type=c.get("data_type", "ip_domain"), feed_format=fmt, basic_user=key,
+                    entries_text="\n".join(c.get("entries") or []) if fmt == "flat" else "",
+                    json_body=c.get("body", "") if fmt == "json" else "",
+                    jq_query=c.get("jq_query", "") if fmt == "json" else "")
+    elif feed.type == FeedType.ioc:
+        fmt = c.get("format", "cp_csv")
+        form.update(ioc_format=fmt, delimiter=c.get("delimiter", ","), comment=c.get("comment", "#"), basic_user=key,
+                    indicators_text=_ser_ioc_indicators(c.get("indicators")) if fmt != "snort" else "",
+                    snort_rules="\n".join(c.get("rules") or []) if fmt == "snort" else "")
+    return form
+
+
+def _feed_parse_edit(feed: Feed, raw) -> tuple[dict, dict]:
+    """Rebuild (content, attribute-updates) from the submitted edit form (raises ValueError on bad input).
+    A blank password keeps the stored one; clearing the username (or the password) reverts to an open feed."""
+    name = (raw.get("name") or "").strip()
+    if not name:
+        raise ValueError("Feed name is required.")
+    description = (raw.get("description") or "").strip()
+    try:
+        interval = int(raw.get("interval_seconds") or feed.interval_seconds)
+    except (TypeError, ValueError):
+        interval = feed.interval_seconds
+
+    if feed.type == FeedType.generic_dc:
+        content = normalize_generic_dc_content(parse_objects_text(raw.get("objects_text", "")), description)
+        auth_key, pass_field = (raw.get("auth_header_key") or "").strip(), "auth_header_value"
+    elif feed.type == FeedType.network_feed:
+        dt = raw.get("data_type", "ip_domain")
+        if raw.get("feed_format", "flat") == "json":
+            content = normalize_network_feed_json(raw.get("json_body", ""), raw.get("jq_query", ""), dt)
+        else:
+            content = normalize_network_feed_flat(parse_entries_text(raw.get("entries_text", "")), dt)
+        auth_key, pass_field = (raw.get("basic_user") or "").strip(), "basic_pass"
+    elif feed.type == FeedType.ioc:
+        if raw.get("ioc_format", "cp_csv") == "snort":
+            content = normalize_snort_content(raw.get("snort_rules", ""))
+        else:
+            content = normalize_ioc_content(parse_indicators_text(raw.get("indicators_text", "")), description,
+                                            raw.get("ioc_format", "cp_csv"), raw.get("delimiter", ","),
+                                            raw.get("comment", "#"))
+        auth_key, pass_field = (raw.get("basic_user") or "").strip(), "basic_pass"
+    else:
+        raise ValueError("This feed type can’t be edited.")
+
+    new_pass = raw.get(pass_field) or ""
+    val_final = new_pass or (feed.auth_header_value if auth_key else None)  # blank keeps the stored value
+    if raw.get("clear_creds") or not auth_key or not val_final:
+        key_final, val_final = None, None  # open feed: explicit clear, or a missing username/password
+    else:
+        key_final = auth_key
+    return content, {"name": name, "description": description, "interval_seconds": interval,
+                     "auth_header_key": key_final, "auth_header_value": val_final}
+
+
+def _feed_edit_ctx(feed: Feed, form: dict, error: str | None) -> dict:
+    ctx = {"error": error, "form": form, "editing": True, "creds_set": bool(feed.auth_header_key),
+           "action": f"/feeds/{feed.id}/edit", "cancel": f"/feeds/{feed.id}"}
+    if feed.type == FeedType.network_feed:
+        ctx["examples"] = NETFEED_EXAMPLES
+    elif feed.type == FeedType.ioc:
+        ctx.update(ioc_types=IOC_TYPES, ioc_levels=IOC_LEVELS)
+    return ctx
+
+
+@router.get("/feeds/{feed_id}/edit", response_class=HTMLResponse)
+def feed_edit(feed_id: int, request: Request, db: Session = Depends(get_db)):
+    user = get_user_or_none(request, db)
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+    feed = _owned(db, feed_id, user)
+    tmpl = _FEED_EDIT_TEMPLATE.get(feed.type)
+    if not tmpl:
+        raise HTTPException(status_code=404, detail="This feed type can't be edited")
+    return templates.TemplateResponse(request, tmpl, _feed_edit_ctx(feed, _feed_build_form(feed), None))
+
+
+@router.post("/feeds/{feed_id}/edit")
+async def feed_edit_save(feed_id: int, request: Request, db: Session = Depends(get_db)):
+    user = get_user_or_none(request, db)
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+    feed = _owned(db, feed_id, user)
+    tmpl = _FEED_EDIT_TEMPLATE.get(feed.type)
+    if not tmpl:
+        raise HTTPException(status_code=404, detail="This feed type can't be edited")
+    raw = await request.form()
+    try:
+        content, updates = _feed_parse_edit(feed, raw)
+    except Exception as exc:
+        form = {k: raw.get(k, v) for k, v in _feed_build_form(feed).items()}
+        return templates.TemplateResponse(request, tmpl, _feed_edit_ctx(feed, form, str(exc)), status_code=400)
+    feed.content = content
+    for attr, val in updates.items():
+        setattr(feed, attr, val)
+    db.commit()
+    _flash(request, f"Feed “{feed.name}” updated.")
+    return RedirectResponse(f"/feeds/{feed.id}", status_code=303)
+
+
+@router.post("/feeds/{feed_id}/quick-edit")
+async def feed_quick_edit(feed_id: int, request: Request, db: Session = Depends(get_db)):
+    """Inline single-field edit from the feed detail page (JSON {field, value}): rename, or set/clear
+    the Basic-auth / Custom-Header credentials. Clearing either side reverts to an open feed."""
+    user = get_user_or_none(request, db)
+    if user is None:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    feed = _owned(db, feed_id, user)
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    field = (data.get("field") or "").strip()
+    value = (data.get("value") or "").strip()
+    if field == "name":
+        if not value:
+            return JSONResponse({"error": "Name can’t be empty."}, status_code=400)
+        feed.name = value
+    elif field == "auth_key":
+        if value:
+            feed.auth_header_key = value
+        else:
+            feed.auth_header_key = feed.auth_header_value = None
+    elif field == "auth_value":
+        if value:
+            feed.auth_header_value = value
+        else:  # clearing the password reverts the whole feed to open (a key alone is useless)
+            feed.auth_header_key = feed.auth_header_value = None
+    else:
+        return JSONResponse({"error": "Unknown field."}, status_code=400)
+    db.commit()
+    return JSONResponse({"ok": True})
 
 
 # --- Feed detail / polls / delete ------------------------------------------------------

@@ -3,9 +3,10 @@
 {% block title %}{{ layer.name }}{% endblock %}
 
 {% block content %}
+<div id="inline-edit-meta" data-quick-edit-url="/layers/{{ layer.id }}/quick-edit" hidden></div>
 <div class="row">
   <div class="grow">
-    <h1>{{ layer.name }} <span class="pill">dynamic layer</span></h1>
+    <h1><span class="dc-name">{{ layer.name }}</span> <span class="pill">dynamic layer</span> <button type="button" class="copybtn cf-edit-name" title="Rename this layer" style="vertical-align:middle; font-size:12px;">Rename</button></h1>
     <p class="muted">Gateway layer <code>{{ layer.layer_name }}</code>{% if layer.description %} · {{ layer.description }}{% endif %}</p>
   </div>
   <div class="row" style="gap:8px;">
@@ -295,4 +296,6 @@
     });
   })();
 </script>
+
+{% include "_inline_edit_js.html" %}
 {% endblock %}

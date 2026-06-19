@@ -204,6 +204,28 @@ def layers_create(
     return RedirectResponse(f"/layers/{layer.id}", status_code=303)
 
 
+@router.post("/layers/{layer_id}/quick-edit")
+async def layers_quick_edit(layer_id: int, request: Request, db: Session = Depends(get_db)):
+    """Inline rename from the layer detail page (JSON {field:'name', value}). Rules/objects are
+    structured, so they stay on the full Edit page — only the name is editable in place."""
+    user = _user(request, db)
+    if user is None:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    layer = _owned(db, layer_id, user)
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    if (data.get("field") or "") != "name":
+        return JSONResponse({"error": "Only the name can be edited inline."}, status_code=400)
+    value = (data.get("value") or "").strip()
+    if not value:
+        return JSONResponse({"error": "Name can’t be empty."}, status_code=400)
+    layer.name = value
+    db.commit()
+    return JSONResponse({"ok": True, "value": layer.name})
+
+
 @router.get("/layers/{layer_id}/edit", response_class=HTMLResponse)
 def layers_edit(layer_id: int, request: Request, db: Session = Depends(get_db)):
     user = _user(request, db)

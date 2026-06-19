@@ -2,14 +2,18 @@
 {% block title %}{{ feed.name }}{% endblock %}
 {% import "_macros.html" as cp %}
 {% block content %}
+<div id="inline-edit-meta" data-quick-edit-url="/feeds/{{ feed.id }}/quick-edit" hidden></div>
 <div class="row">
   <div class="grow">
-    <h1>{{ feed.name }} <span class="pill">{{ feed.type.value }}</span></h1>
+    <h1><span class="dc-name">{{ feed.name }}</span> <span class="pill">{{ feed.type.value }}</span> <button type="button" class="copybtn cf-edit-name" title="Rename this feed" style="vertical-align:middle; font-size:12px;">Rename</button></h1>
     <p class="muted">{{ feed.description or "No description" }}</p>
   </div>
-  <form method="post" action="/feeds/{{ feed.id }}/delete">
-    <button class="danger" type="submit" data-confirm="Delete “{{ feed.name }}”? This removes the feed and its poll history.">Delete</button>
-  </form>
+  <div style="display:flex; gap:8px; align-items:flex-start;">
+    <a class="btn secondary" href="/feeds/{{ feed.id }}/edit">Edit</a>
+    <form method="post" action="/feeds/{{ feed.id }}/delete">
+      <button class="danger" type="submit" data-confirm="Delete “{{ feed.name }}”? This removes the feed and its poll history.">Delete</button>
+    </form>
+  </div>
 </div>
 
 <div class="card">
@@ -45,8 +49,8 @@
   {% endif %}
   {% if feed.auth_header_key %}
   <h3 style="margin:16px 0 8px;">{{ 'Custom Header' if feed.type.value == 'generic_dc' else 'Basic auth' }} — paste into SmartConsole</h3>
-  {{ cp.cval('Header name' if feed.type.value == 'generic_dc' else 'Username', feed.auth_header_key) }}
-  {{ cp.csecret('Header value' if feed.type.value == 'generic_dc' else 'Password', feed.auth_header_value) }}
+  {{ cp.cval('Header name' if feed.type.value == 'generic_dc' else 'Username', feed.auth_header_key, edit="auth_key") }}
+  {{ cp.csecret('Header value' if feed.type.value == 'generic_dc' else 'Password', feed.auth_header_value, edit="auth_value") }}
   {% else %}
   <p class="muted" style="margin-top:12px;">Open feed — no authentication required.</p>
   {% endif %}
@@ -64,4 +68,6 @@
     <p class="muted">Loading…</p>
   </div>
 </div>
+
+{% include "_inline_edit_js.html" %}
 {% endblock %}

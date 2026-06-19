@@ -1,11 +1,11 @@
 {% extends "base.html" %}
-{% block title %}New Generic DC feed{% endblock %}
+{% block title %}{{ 'Edit' if editing|default(false) else 'New' }} Generic DC feed{% endblock %}
 {% block content %}
-<h1>New Generic Data Center feed</h1>
+<h1>{{ 'Edit' if editing|default(false) else 'New' }} Generic Data Center feed</h1>
 <p class="muted">Pre-filled with the Generic Data Center example from sk167210 — edit or replace it, then Create. The portal serves it as the exact JSON the gateway fetches.</p>
 {% if error %}<div class="err" style="margin:12px 0;">{{ error }}</div>{% endif %}
 
-<form method="post" action="/feeds/new/generic-dc" class="card">
+<form method="post" action="{{ action|default('/feeds/new/generic-dc') }}" class="card">
   <label>Feed name</label>
   <input name="name" value="{{ form.name }}" placeholder="Boston-financial-lab" required>
 
@@ -23,12 +23,12 @@
   <p class="muted">Mirrors the Generic DC "Custom Header" auth. Leave blank for an open feed.</p>
   <div class="row">
     <div class="grow"><label>Header key</label><input name="auth_header_key" value="{{ form.auth_header_key }}" placeholder="X-Feed-Token"></div>
-    <div class="grow"><label>Header value</label><input name="auth_header_value" type="password" placeholder="(secret)"></div>
+    <div class="grow"><label>Header value</label><input name="auth_header_value" type="password" placeholder="{{ 'Leave blank to keep the saved password' if editing|default(false) else '(secret)' }}"></div>
   </div>
 
   <div style="margin-top:20px;" class="row">
-    <button type="submit">Create feed</button>
-    <a class="btn secondary" href="/">Cancel</a>
+    <button type="submit">{{ 'Save changes' if editing|default(false) else 'Create feed' }}</button>
+    <a class="btn secondary" href="{{ cancel|default('/') }}">Cancel</a>
   </div>
 </form>
 {% endblock %}

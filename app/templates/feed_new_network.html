@@ -1,11 +1,11 @@
 {% extends "base.html" %}
-{% block title %}New Network Feed{% endblock %}
+{% block title %}{{ 'Edit' if editing|default(false) else 'New' }} Network Feed{% endblock %}
 {% block content %}
-<h1>New Network Feed</h1>
+<h1>{{ 'Edit' if editing|default(false) else 'New' }} Network Feed</h1>
 <p class="muted">Pre-filled with a sample — edit or replace it, then Create. Serve a simple flat list, or author your own JSON that the gateway parses with a JQ query.</p>
 {% if error %}<div class="err" style="margin:12px 0;">{{ error }}</div>{% endif %}
 
-<form method="post" action="/feeds/new/network-feed" class="card">
+<form method="post" action="{{ action|default('/feeds/new/network-feed') }}" class="card">
   <label>Feed name</label>
   <input name="name" value="{{ form.name }}" placeholder="Threat-intel-blocklist" required>
 
@@ -52,12 +52,12 @@
   <p class="muted">The gateway authenticates to the URL with username/password. Leave blank for an open feed.</p>
   <div class="row">
     <div class="grow"><label>Username</label><input name="basic_user" value="{{ form.basic_user }}" placeholder="feeduser"></div>
-    <div class="grow"><label>Password</label><input name="basic_pass" type="password" placeholder="(secret)"></div>
+    <div class="grow"><label>Password</label><input name="basic_pass" type="password" placeholder="{{ 'Leave blank to keep the saved password' if editing|default(false) else '(secret)' }}"></div>
   </div>
 
   <div style="margin-top:20px;" class="row">
-    <button type="submit">Create feed</button>
-    <a class="btn secondary" href="/">Cancel</a>
+    <button type="submit">{{ 'Save changes' if editing|default(false) else 'Create feed' }}</button>
+    <a class="btn secondary" href="{{ cancel|default('/') }}">Cancel</a>
   </div>
 </form>
 
