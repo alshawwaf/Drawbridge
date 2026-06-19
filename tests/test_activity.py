@@ -51,8 +51,8 @@ def test_shell_renders_checkbox_filters_page_size_and_modal():
     counts = {"all": 4445, "feed_poll": 4077, "layer_apply": 19}
     html = _render("activity.html", counts=counts, kind_labels=KIND_LABELS, selected=["feed_poll"],
                    page_size=10, page_sizes=PAGE_SIZES, provider_labels=PROVIDER_LABELS,
-                   dc_counts={"vcenter": 3, "proxmox": 5}, q="", dc="",
-                   status="", status_classes=["2xx", "3xx", "4xx", "5xx"], flash=None)
+                   dc_counts={"vcenter": 3, "proxmox": 5}, q="", selected_dc=[],
+                   selected_status=[], status_classes=["2xx", "3xx", "4xx", "5xx"], flash=None)
     # filters are checkboxes on the left; the selected one is checked
     assert 'name="kinds" value="feed_poll" class="kind-cb" checked' in html
     assert 'name="kinds" value="layer_apply" class="kind-cb" ' in html
@@ -65,21 +65,21 @@ def test_shell_renders_checkbox_filters_page_size_and_modal():
     assert 'input[type="checkbox"], input[type="radio"]' in html
     # new: search bar, auto-refresh control, and the Data Center sub-filter (vCenter, Proxmox…)
     assert 'id="q-input"' in html and 'id="refresh-rate"' in html
-    # data-center type is a dropdown (vCenter, Proxmox…) folded into the top toolbar
-    assert 'id="dc-select"' in html
-    assert 'value="vcenter"' in html and 'value="proxmox"' in html
-    # status-class quick-filter chips
-    assert 'data-status="4xx"' in html and 'data-status=""' in html
+    # Status / Type / Data center are multiselect dropdown menus folded into the top toolbar
+    assert 'id="msel-status"' in html and 'id="msel-type"' in html and 'id="msel-dc"' in html
+    assert 'name="dc" value="vcenter"' in html and 'name="dc" value="proxmox"' in html
+    assert 'name="status" value="4xx"' in html
 
 
-def test_filter_conds_dc_type_overrides_kinds_and_search_ands():
-    # A specific dc provider narrows to its paths (overriding kinds); q adds an AND text match.
-    assert len(_filter_conds([], "", "")) == 0                       # nothing selected = no filter
-    assert len(_filter_conds(["feed_poll"], "", "")) == 1            # kinds only
-    assert len(_filter_conds([], "proxmox", "")) == 1                # dc only
-    assert len(_filter_conds(["feed_poll"], "proxmox", "")) == 1     # dc overrides kinds (still 1)
-    assert len(_filter_conds(["datacenter"], "", "403")) == 2        # kinds + search
-    assert len(_filter_conds([], "vcenter", "sdk")) == 2             # dc + search
+def test_filter_conds_are_independent_and_filters():
+    # kinds / dc / status / q are independent AND conditions (each OR within itself).
+    assert len(_filter_conds([], [], "", [])) == 0                          # nothing → no filter
+    assert len(_filter_conds(["feed_poll"], [], "", [])) == 1               # kinds only
+    assert len(_filter_conds([], ["proxmox"], "", [])) == 1                 # dc only
+    assert len(_filter_conds(["feed_poll"], ["proxmox"], "", [])) == 2      # kinds AND dc (independent)
+    assert len(_filter_conds([], [], "", ["4xx"])) == 1                     # status only
+    assert len(_filter_conds(["datacenter"], [], "403", ["4xx"])) == 3      # kinds + search + status
+    assert len(_filter_conds([], ["vcenter", "nsxt"], "sdk", [])) == 2      # dc (multi) + search
 
 
 def test_pager_and_rows_render_selectable_clickable():

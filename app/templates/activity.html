@@ -13,34 +13,40 @@
 <form method="post" action="/activity/delete" id="act-form">
   <input type="hidden" name="page_size" id="ps-hidden" value="{{ page_size }}">
   <input type="hidden" name="q" id="q-hidden" value="{{ q }}">
-  <input type="hidden" name="dc" id="dc-hidden" value="{{ dc }}">
-  <input type="hidden" name="status" id="st-hidden" value="{{ status }}">
 
   <div class="card cmdbar">
-    <div class="cmdrow">
-      <div class="searchbox">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
-        <input type="search" id="q-input" value="{{ q }}" autocomplete="off"
-               placeholder="Search path, method, status, source IP…">
-      </div>
-      <div class="segmented" id="status-seg" role="group" aria-label="Status filter">
-        <button type="button" class="{{ 'active' if not status else '' }}" data-status="">All</button>
-        {% for s in status_classes %}<button type="button" class="{{ 'active' if status == s else '' }}" data-status="{{ s }}">{{ s }}</button>{% endfor %}
-      </div>
+    <div class="searchbox" style="margin-bottom:13px;">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+      <input type="search" id="q-input" value="{{ q }}" autocomplete="off"
+             placeholder="Search path, method, status, source IP…">
     </div>
-    <div class="cmdrow" style="margin-top:13px;">
-      <span class="frlabel">Type</span>
-      {% for k, label in kind_labels.items() %}
-      <label class="tchip"><input type="checkbox" name="kinds" value="{{ k }}" class="kind-cb" {{ 'checked' if k in selected else '' }} hidden>{{ label }} <span class="tcount">{{ counts.get(k, 0) }}</span></label>
-      {% endfor %}
+    <div class="cmdrow">
+      <div class="msel" id="msel-status">
+        <button type="button" class="msel-btn">Status <span class="msel-badge" hidden></span><span class="msel-caret">▾</span></button>
+        <div class="msel-panel">
+          {% for s in status_classes %}
+          <label class="msel-opt"><input type="checkbox" name="status" value="{{ s }}" class="status-cb" {{ 'checked' if s in selected_status else '' }}>{{ s }}</label>
+          {% endfor %}
+        </div>
+      </div>
+      <div class="msel" id="msel-type">
+        <button type="button" class="msel-btn">Type <span class="msel-badge" hidden></span><span class="msel-caret">▾</span></button>
+        <div class="msel-panel">
+          {% for k, label in kind_labels.items() %}
+          <label class="msel-opt"><input type="checkbox" name="kinds" value="{{ k }}" class="kind-cb" {{ 'checked' if k in selected else '' }}>{{ label }} <span class="fcount">{{ counts.get(k, 0) }}</span></label>
+          {% endfor %}
+        </div>
+      </div>
+      <div class="msel" id="msel-dc">
+        <button type="button" class="msel-btn">Data center <span class="msel-badge" hidden></span><span class="msel-caret">▾</span></button>
+        <div class="msel-panel">
+          {% for prov, plabel in provider_labels.items() %}
+          <label class="msel-opt"><input type="checkbox" name="dc" value="{{ prov }}" class="dc-cb" {{ 'checked' if prov in selected_dc else '' }}>{{ plabel }} <span class="fcount">{{ dc_counts.get(prov, 0) }}</span></label>
+          {% endfor %}
+        </div>
+      </div>
       <span class="grow"></span>
       <button type="button" class="linkbtn" id="reset-filters" hidden>↺ Reset</button>
-      <label class="ctl">Data center
-        <select id="dc-select">
-          <option value="">Any</option>
-          {% for prov, plabel in provider_labels.items() %}<option value="{{ prov }}" {{ 'selected' if dc == prov else '' }}>{{ plabel }} ({{ dc_counts.get(prov, 0) }})</option>{% endfor %}
-        </select>
-      </label>
     </div>
   </div>
 
@@ -80,41 +86,45 @@
   (function () {
     var $ = function (id) { return document.getElementById(id); };
     var form = $('act-form'), rowsEl = $('rows'), psSel = $('page-size'), psHidden = $('ps-hidden');
-    var qInput = $('q-input'), qHidden = $('q-hidden'), dcHidden = $('dc-hidden'), stHidden = $('st-hidden');
-    var dcSel = $('dc-select'), refreshSel = $('refresh-rate'), liveDot = $('livedot'), liveText = $('livetext');
+    var qInput = $('q-input'), qHidden = $('q-hidden');
+    var refreshSel = $('refresh-rate'), liveDot = $('livedot'), liveText = $('livetext');
     var selAll = $('sel-all'), delBtn = $('del-btn'), clearBtn = $('clear-btn');
     var modal = $('rec-modal'), recBody = $('rec-body');
-    var page = 1, timer = null, currentStatus = {{ status | tojson }};
+    var page = 1, timer = null;
 
-    function setHTML(el, html) {
-      el.replaceChildren(document.createRange().createContextualFragment(html));
+    function setHTML(el, html) { el.replaceChildren(document.createRange().createContextualFragment(html)); }
+    function checkedVals(cls) {
+      return Array.prototype.slice.call(form.querySelectorAll('.' + cls + ':checked')).map(function (c) { return c.value; });
     }
-    function selectedKinds() {
-      return Array.prototype.slice.call(form.querySelectorAll('.kind-cb'))
-        .filter(function (c) { return c.checked; }).map(function (c) { return c.value; });
-    }
-    function selectedDc() { return dcSel.value || ''; }
+    function selectedKinds() { return checkedVals('kind-cb'); }
+    function selectedDc() { return checkedVals('dc-cb'); }
+    function selectedStatus() { return checkedVals('status-cb'); }
     function searchText() { return (qInput.value || '').trim(); }
     function rowCbs() { return Array.prototype.slice.call(rowsEl.querySelectorAll('.row-cb')); }
     function syncDel() { delBtn.disabled = !rowCbs().some(function (c) { return c.checked; }); }
     function query(extra) {
       var p = new URLSearchParams();
       selectedKinds().forEach(function (k) { p.append('kinds', k); });
+      selectedDc().forEach(function (d) { p.append('dc', d); });
+      selectedStatus().forEach(function (s) { p.append('status', s); });
       p.set('page_size', psSel.value);
       if (searchText()) p.set('q', searchText());
-      if (selectedDc()) p.set('dc', selectedDc());
-      if (currentStatus) p.set('status', currentStatus);
       if (extra) Object.keys(extra).forEach(function (k) { p.set(k, extra[k]); });
       return p;
+    }
+    function updateBadges() {
+      document.querySelectorAll('.msel').forEach(function (m) {
+        var n = m.querySelectorAll('input:checked').length, b = m.querySelector('.msel-badge');
+        b.textContent = n; b.hidden = !n;
+      });
     }
     function syncState() {
       var p = query();
       history.replaceState(null, '', '/activity' + (p.toString() ? '?' + p.toString() : ''));
       psHidden.value = psSel.value;            // keep the delete/clear form in sync with the view
       qHidden.value = searchText();
-      dcHidden.value = selectedDc();
-      stHidden.value = currentStatus;
-      var anyFilter = selectedKinds().length || selectedDc() || searchText() || currentStatus;
+      updateBadges();
+      var anyFilter = selectedKinds().length || selectedDc().length || selectedStatus().length || searchText();
       clearBtn.textContent = anyFilter ? 'Clear filtered' : 'Clear all';
       $('reset-filters').hidden = !anyFilter;
     }
@@ -128,9 +138,7 @@
       return d.toLocaleDateString();
     }
     function updateTimes() {
-      rowsEl.querySelectorAll('.act-time[data-ts]').forEach(function (el) {
-        el.textContent = rel(el.getAttribute('data-ts'));
-      });
+      rowsEl.querySelectorAll('.act-time[data-ts]').forEach(function (el) { el.textContent = rel(el.getAttribute('data-ts')); });
     }
     function load() {
       fetch('/activity/rows?' + query({ page: page }).toString())
@@ -151,28 +159,29 @@
     rowsEl.addEventListener('change', function (e) { if (e.target.classList.contains('row-cb')) syncDel(); });
     selAll.addEventListener('change', function () { rowCbs().forEach(function (c) { c.checked = selAll.checked; }); syncDel(); });
 
-    // Type chips (kind checkboxes) and the Data Center dropdown both re-query.
+    // Any filter checkbox (Status / Type / Data center) re-queries.
     form.addEventListener('change', function (e) {
-      if (e.target.classList.contains('kind-cb') || e.target.id === 'dc-select') reload();
+      var t = e.target;
+      if (t.classList.contains('kind-cb') || t.classList.contains('dc-cb') || t.classList.contains('status-cb')) reload();
     });
     psSel.addEventListener('change', reload);
 
-    // Status segmented control + Reset filters.
-    $('status-seg').addEventListener('click', function (e) {
-      var seg = e.target.closest('button[data-status]');
-      if (!seg) return;
-      e.preventDefault();
-      currentStatus = seg.getAttribute('data-status') || '';
-      this.querySelectorAll('button').forEach(function (b) { b.classList.toggle('active', b === seg); });
-      reload();
+    // Multiselect dropdown menus: toggle on the button, stay open while ticking options, close outside.
+    document.addEventListener('click', function (e) {
+      var btn = e.target.closest('.msel-btn');
+      if (btn) {
+        e.preventDefault();
+        var msel = btn.closest('.msel'), wasOpen = msel.classList.contains('open');
+        document.querySelectorAll('.msel.open').forEach(function (m) { m.classList.remove('open'); });
+        if (!wasOpen) msel.classList.add('open');
+        return;
+      }
+      if (e.target.closest('.msel-panel')) return;
+      document.querySelectorAll('.msel.open').forEach(function (m) { m.classList.remove('open'); });
     });
+
     $('reset-filters').addEventListener('click', function () {
-      currentStatus = '';
-      $('status-seg').querySelectorAll('button').forEach(function (b) {
-        b.classList.toggle('active', !b.getAttribute('data-status'));
-      });
-      form.querySelectorAll('.kind-cb').forEach(function (c) { c.checked = false; });
-      dcSel.value = '';
+      form.querySelectorAll('.kind-cb, .dc-cb, .status-cb').forEach(function (c) { c.checked = false; });
       qInput.value = '';
       reload();
     });
