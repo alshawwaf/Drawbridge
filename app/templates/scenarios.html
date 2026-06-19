@@ -96,6 +96,16 @@
     </div>
     <button type="submit">Run</button>
   </form>
+  <div class="subpanel" id="demo-guide" style="margin-top:14px;">
+    {% for p in presets %}{% set g = guides.get(p.key) if guides else None %}{% if g %}
+    <div class="dg" data-preset="{{ p.key }}" hidden>
+      <div class="muted" style="font-size:11px; font-weight:700; letter-spacing:.5px; text-transform:uppercase; margin-bottom:6px;">Talk-track · {{ p.label }}</div>
+      <p style="margin:0 0 11px;">{{ g.story }}</p>
+      <div class="muted" style="font-size:12px; font-weight:700; margin-bottom:5px;">Show in SmartConsole</div>
+      <ol style="margin:0; padding-left:18px;">{% for step in g.watch %}<li class="muted" style="margin:3px 0;">{{ step }}</li>{% endfor %}</ol>
+    </div>
+    {% endif %}{% endfor %}
+  </div>
   <div id="run-timeline" data-poll="/scenarios/{{ selected.id }}/run-status" style="margin-top:16px;"></div>
 </div>
 <script>
@@ -113,6 +123,16 @@
       .catch(function () { setTimeout(tick, 3000); });
   }
   tick();
+})();
+
+(function () {  // Show the talk-track for the chosen preset; follow the picker.
+  var sel = document.querySelector('select[name="preset"]'), guide = document.getElementById('demo-guide');
+  if (!sel || !guide) return;
+  function sync() {
+    guide.querySelectorAll('.dg').forEach(function (d) { d.hidden = d.getAttribute('data-preset') !== sel.value; });
+  }
+  sel.addEventListener('change', sync);
+  sync();
 })();
 </script>
 {% endif %}

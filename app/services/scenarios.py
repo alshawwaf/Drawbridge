@@ -161,6 +161,45 @@ _PRESET_LABELS = {
 }
 
 
+# SE-facing talk-tracks per preset: the customer story + the exact SmartConsole moves to show while
+# the timed runner mutates the inventory. Surfaced on the Scenarios page, synced to the preset picker.
+PRESET_GUIDE = {
+    "quarantine": {
+        "story": "A workload is flagged compromised. On CloudGuard's next scan it picks up the "
+                 "`quarantine` tag, the Quarantine access role absorbs it, and your existing rule "
+                 "isolates it — no manual policy change.",
+        "watch": [
+            "In SmartConsole, open the Access Role / dynamic object bound to the `quarantine` tag.",
+            "Hit Refresh (or wait ~30s for the scan to run).",
+            "The host lands in the Quarantine group — the existing block rule now covers it.",
+        ],
+    },
+    "scale_out": {
+        "story": "Auto-scaling spins up new workloads. They inherit the `scaleout` tag and are "
+                 "protected the instant they appear — security keeps pace with elasticity, zero new rules.",
+        "watch": [
+            "Refresh the Data Center object in SmartConsole.",
+            "The new workloads appear automatically as each step lands.",
+            "They're already matched by the tag-based rule — nothing to write.",
+        ],
+    },
+    "blocklist": {
+        "story": "Threat intel flags every workload. Each takes the `blocklist` tag in turn — watch "
+                 "the access role's membership grow live across successive scans.",
+        "watch": [
+            "Open the access role / group bound to the `blocklist` tag.",
+            "Refresh as each step lands — members increase one by one.",
+            "The block rule applies to all of them dynamically.",
+        ],
+    },
+}
+
+
+def preset_guides() -> dict:
+    """Talk-track per preset key — {story, watch:[...]} — for the Scenarios demo guide."""
+    return PRESET_GUIDE
+
+
 def _tag_literal(provider: str, word: str) -> str:
     """A tag in the provider's style: bare ``word`` for list tags, ``word=true`` for map tags."""
     return f"{word}=true" if is_map_tags(provider) else word
