@@ -1,8 +1,9 @@
 """Server-rendered portal UI (Jinja2 + HTMX)."""
+import json
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -13,6 +14,7 @@ from ..links import public_url
 from ..models import Feed, FeedPoll, FeedType, User
 from ..security import get_user_or_none, new_feed_token, verify_password
 from ..schemas.ioc import IOC_FORMATS, IOC_LEVELS, IOC_TYPES
+from ..services import bundle
 from ..services.render import (
     custom_csv_command,
     normalize_generic_dc_content,
@@ -273,6 +275,71 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
         "dashboard.html",
         {"user": user, "rows": rows, "type_counts": type_counts, "flash": _pop_flash(request)},
     )
+
+
+# --- PoV bundle: export / import the whole simulated environment -----------------------
+@router.get("/portal/export")
+def portal_export(request: Request, db: Session = Depends(get_db)):
+    user = get_user_or_none(request, db)
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+    body = json.dumps(bundle.export_bundle(db, user), indent=2)
+    return Response(body, media_type="application/json",
+                    headers={"Content-Disposition": 'attachment; filename="dcsim-pov-bundle.json"'})
+
+
+@router.post("/portal/import")
+async def portal_import(request: Request, file: UploadFile = File(None), db: Session = Depends(get_db)):
+    user = get_user_or_none(request, db)
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+    if file is None or not file.filename:
+        _flash(request, "Choose a bundle file to import.", "error")
+        return RedirectResponse("/", status_code=303)
+    try:
+        data = json.loads((await file.read()).decode("utf-8"))
+        result = bundle.import_bundle(db, user, data)
+    except (ValueError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+        _flash(request, f"Import failed: {exc}", "error")
+        return RedirectResponse("/", status_code=303)
+    c = result["counts"]
+    msg = (f"Imported {c['feeds']} feed(s), {c['datacenters']} datacenter(s), "
+           f"{c['gateways']} gateway(s), {c['dynamic_layers']} layer(s). "
+           "Credentials aren’t included in bundles — re-enter them on each item.")
+    if result["skipped"]:
+        msg += " Skipped: " + "; ".join(result["skipped"]) + "."
+    _flash(request, msg)
+    return RedirectResponse("/", status_code=303)
+
+
+@router.post("/portal/seed")
+def portal_seed(request: Request, db: Session = Depends(get_db)):
+    user = get_user_or_none(request, db)
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+    result = bundle.import_bundle(db, user, bundle.seed_bundle())
+    c = result["counts"]
+    extra = ""
+    # Best-effort: start a gentle live scenario on the seeded OpenStack DC so the demo opens "live".
+    try:
+        from ..models import Datacenter, DatacenterBaseline
+        from ..services import scenario_runner, scenarios
+        dc = db.scalars(select(Datacenter).where(Datacenter.owner_id == user.id,
+                        Datacenter.name == "OpenStack-Demo").order_by(Datacenter.id.desc())).first()
+        if dc:
+            preset = next((p["key"] for p in scenarios.list_presets(dc.provider, dc.content) if p["count"]), None)
+            if preset:
+                if dc.baseline is None:
+                    db.add(DatacenterBaseline(datacenter_id=dc.id, content=scenarios.snapshot(dc.content)))
+                    db.commit()
+                label, steps = scenarios.plan_preset(preset, dc.provider, dc.content)
+                scenario_runner.start_run(dc.id, dc.name, label, steps, 8)
+                extra = f" A live scenario (“{label}”) is now running on {dc.name} — watch the Activity log."
+    except Exception:
+        pass
+    _flash(request, f"Seeded a demo environment: {c['feeds']} feeds, {c['datacenters']} datacenters, "
+                    f"{c['gateways']} gateway, {c['dynamic_layers']} dynamic layer.{extra}")
+    return RedirectResponse("/", status_code=303)
 
 
 # --- New feed: chooser then per-type forms ---------------------------------------------
