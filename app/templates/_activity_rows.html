@@ -1,10 +1,10 @@
 {% if stats %}
 <div class="statbar">
-  <div class="stat"><div class="stat-n">{{ stats.total }}</div><div class="stat-l">events</div></div>
-  <div class="stat"><div class="stat-n ok">{{ stats.ok }}</div><div class="stat-l">2xx success</div></div>
-  <div class="stat"><div class="stat-n {{ 'bad' if stats.err else '' }}">{{ stats.err }}</div><div class="stat-l">errors ≥ 400</div></div>
-  <div class="stat"><div class="stat-n">{{ stats.avg_ms }}<span class="stat-u">ms</span></div><div class="stat-l">avg latency</div></div>
-  <div class="stat"><div class="stat-n">{{ stats.sources }}</div><div class="stat-l">sources</div></div>
+  <span class="stat"><span class="stat-n">{{ stats.total }}</span><span class="stat-l">events</span></span>
+  <span class="stat"><span class="stat-n ok">{{ stats.ok }}</span><span class="stat-l">2xx success</span></span>
+  <span class="stat"><span class="stat-n {{ 'bad' if stats.err else '' }}">{{ stats.err }}</span><span class="stat-l">errors ≥ 400</span></span>
+  <span class="stat"><span class="stat-n">{{ stats.avg_ms }}<span class="stat-u">ms</span></span><span class="stat-l">avg latency</span></span>
+  <span class="stat"><span class="stat-n">{{ stats.sources }}</span><span class="stat-l">sources</span></span>
 </div>
 {% endif %}
 

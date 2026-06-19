@@ -293,13 +293,14 @@
     table.rulebase tbody td { border-bottom:1px solid var(--line-soft); }
 
     /* ── Activity log ── */
-    .statbar { display:flex; gap:10px; flex-wrap:wrap; margin:0 0 16px; }
-    .stat { flex:1 1 0; min-width:112px; background:var(--surface-2); border:1px solid var(--line);
-      border-radius:11px; padding:12px 15px; }
-    .stat-n { font-size:23px; font-weight:740; letter-spacing:-.5px; line-height:1.05; }
+    /* Slim one-line summary strip above the table (replaces the old big stat tiles). */
+    .statbar { display:flex; align-items:center; gap:8px 22px; flex-wrap:wrap; margin:0 0 4px;
+      padding:9px 4px 13px; border-bottom:1px solid var(--line); }
+    .stat { display:inline-flex; align-items:baseline; gap:6px; white-space:nowrap; }
+    .stat-n { font-size:15.5px; font-weight:720; letter-spacing:-.3px; color:var(--text); line-height:1; }
     .stat-n.ok { color:var(--ok); } .stat-n.bad { color:var(--danger); }
-    .stat-u { font-size:12px; font-weight:600; color:var(--muted); margin-left:2px; }
-    .stat-l { font-size:10.5px; color:var(--faint); text-transform:uppercase; letter-spacing:.6px; margin-top:4px; }
+    .stat-u { font-size:11px; font-weight:600; color:var(--muted); margin-left:1px; }
+    .stat-l { font-size:11px; color:var(--faint); text-transform:uppercase; letter-spacing:.5px; }
     .livewrap { display:inline-flex; align-items:center; gap:7px; font-size:12.5px; color:var(--muted); }
     .livedot { width:8px; height:8px; border-radius:50%; background:var(--ok); display:inline-block; }
     .livedot.on { animation:pulse 1.8s infinite; } .livedot.off { background:var(--faint); }
