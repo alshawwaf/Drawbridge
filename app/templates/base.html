@@ -154,7 +154,20 @@
     input::placeholder, textarea::placeholder { color:var(--faint); }
     select { appearance:none; background-image:linear-gradient(45deg,transparent 50%,var(--muted) 50%),linear-gradient(135deg,var(--muted) 50%,transparent 50%);
       background-position:calc(100% - 18px) 52%, calc(100% - 13px) 52%; background-size:5px 5px,5px 5px; background-repeat:no-repeat; padding-right:34px; }
-    input[type="checkbox"], input[type="radio"] { width:auto; padding:0; accent-color:var(--accent); }
+    input[type="checkbox"], input[type="radio"] { appearance:none; -webkit-appearance:none; width:17px;
+      height:17px; flex:none; margin:0; padding:0; border:1.5px solid var(--line-strong);
+      background:var(--input-bg); cursor:pointer; position:relative; vertical-align:middle;
+      transition:background .12s, border-color .12s, box-shadow .12s; }
+    input[type="checkbox"] { border-radius:5px; } input[type="radio"] { border-radius:50%; }
+    input[type="checkbox"]:hover, input[type="radio"]:hover { border-color:var(--accent); }
+    input[type="checkbox"]:checked { background:var(--accent); border-color:var(--accent); }
+    input[type="checkbox"]:checked::after { content:""; position:absolute; left:5px; top:2px; width:4px;
+      height:8px; border:solid var(--on-accent); border-width:0 2px 2px 0; transform:rotate(45deg); }
+    input[type="radio"]:checked { border-color:var(--accent); }
+    input[type="radio"]:checked::after { content:""; position:absolute; inset:3px; border-radius:50%;
+      background:var(--accent); }
+    input[type="checkbox"]:focus-visible, input[type="radio"]:focus-visible { outline:none;
+      box-shadow:0 0 0 3px var(--focus-ring); }
     input:focus, textarea:focus, select:focus { outline:none; border-color:var(--accent); box-shadow:0 0 0 3px var(--focus-ring); }
     textarea { min-height:120px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12.5px; line-height:1.6; resize:vertical; }
     fieldset { border:none; padding:0; margin:0; transition:opacity .15s; }
@@ -306,6 +319,21 @@
       white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:block; }
     .act-time { font-family:ui-monospace,monospace; font-size:12px; color:var(--muted); white-space:nowrap; }
     .act-num { text-align:right; font-variant-numeric:tabular-nums; color:var(--muted); font-size:12px; white-space:nowrap; }
+    /* Activity filter sidebar + table controls */
+    .filterpanel { width:248px; flex:0 0 248px; padding:18px; align-self:flex-start; }
+    .fsection-h { font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:.6px; color:var(--faint); margin:0 0 8px; }
+    .fitem { display:flex; align-items:center; gap:10px; padding:7px 9px; margin:1px -9px; border-radius:8px;
+      cursor:pointer; font-size:13px; color:var(--text-2); transition:background .12s, color .12s; }
+    .fitem:hover { background:var(--hover); color:var(--text); }
+    .fitem:has(input:checked) { color:var(--text); font-weight:600; }
+    .fcount { margin-left:auto; font-size:11px; font-weight:600; color:var(--faint); background:var(--subtle-bg);
+      border:1px solid var(--line); padding:1px 8px; border-radius:var(--r-pill); }
+    .fitem:has(input:checked) .fcount { color:var(--accent); border-color:transparent; background:var(--accent-soft); }
+    .fdivider { height:1px; background:var(--line); margin:16px 0; }
+    .fsub { margin:2px 0 6px 26px; }
+    .fsub .fitem { font-size:12.5px; padding:5px 9px; }
+    .ctl { display:inline-flex; align-items:center; gap:7px; font-size:12px; font-weight:600; color:var(--muted); }
+    .ctl select { width:auto; min-width:84px; padding:7px 30px 7px 11px; font-size:12.5px; }
   </style>
 </head>
 <body>
