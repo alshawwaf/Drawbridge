@@ -1,6 +1,7 @@
 # IoC Feed (Custom Intelligence)
 
-A **threat-intelligence** feed in Check Point's native CSV format. Unlike the Network Feed (dynamic
+A **threat-intelligence** feed in any of Check Point's IoC formats (native CSV, STIX 1.x, Custom CSV,
+or Snort). Unlike the Network Feed (dynamic
 network objects) this drives **Threat Prevention** — the **Anti-Bot** and **Anti-Virus** blades fetch
 the indicators and block matching traffic, so it unlocks the "feed → enforcement / auto-quarantine"
 demo. CloudGuard/the gateway **polls** the URL on its configured interval.
@@ -11,10 +12,11 @@ demo. CloudGuard/the gateway **polls** the URL on its configured interval.
 
 ## Use it
 
-1. Portal → **New feed → IoC Feed**. Enter indicators, one per line, in quick-entry form:
-   `value, type[, confidence, severity, product, comment]`. Only **value** and **type** are required;
-   a unique name is auto-assigned (`ioc-N`). `#` lines and blanks are ignored. The trailing comment
-   may contain commas.
+1. Portal → **New feed → IoC Feed**. Pick a **Feed format** (see below). For the indicator formats,
+   enter indicators one per line in quick-entry form: `value, type[, confidence, severity, product,
+   comment]` — only **value** and **type** are required, a unique name is auto-assigned (`ioc-N`),
+   `#` lines and blanks are ignored, and the trailing comment may contain commas. For **Snort**, paste
+   rules instead.
 2. (Optional) Add a **username/password** — IoC feeds authenticate with HTTP **Basic** auth
    (`ioc_feeds --user_name`, R81.20+). Leave blank for an open feed — the unguessable token in the
    URL is the guard.
@@ -24,6 +26,32 @@ demo. CloudGuard/the gateway **polls** the URL on its configured interval.
    policy. Matching traffic is then blocked by Anti-Bot / Anti-Virus.
 4. Watch the live **poll log** on the feed page (and the full request/response in the
    [Activity log](../../app/routers/activity.py), kind *Feed poll*).
+
+## Feed formats
+
+The IoC feed serves one of the four formats sk132193 documents (the SmartConsole "Feed Format"
+dropdown offers the same set). Pick it on the new-feed form; the served wire format and URL extension
+follow:
+
+| Format | What it serves | URL | Media type |
+|---|---|---|---|
+| **Check Point CSV** (`cp_csv`, default) | native CSV (below) | `…/ioc/<token>.csv` | `text/csv` |
+| **STIX 1.x** (`stix_1.x`) | the same indicators as STIX/CybOX 2.1 XML | `…/ioc/<token>.xml` | `application/xml` |
+| **Custom CSV** (`custom_csv`) | the indicators in a chosen delimiter/comment layout, + the matching `ioc_feeds add --format …` command on the feed page | `…/ioc/<token>.csv` | `text/csv` |
+| **Snort** (`snort`) | Snort/IPS rules served verbatim (needs the **IPS** blade; ≤ 6000 rules) | `…/ioc/<token>.txt` | `text/plain` |
+
+- **STIX 1.x** is emitted as an Observables-only package — one `cybox:Observable` per indicator with
+  the per-type CybOX object (AddressObj for IP / IP Range, DomainNameObj, URIObj, FileObj hashes,
+  EmailMessageObj for Mail-*). Confidence/severity are CSV concepts and are omitted (the gateway uses
+  its profile/defaults). It's built to the CybOX 2.1 schema; **validate against your gateway** once
+  connected — the parser is strict about namespaces/`xsi:type`, and the Mail-* encodings are
+  best-effort.
+- **Custom CSV** demonstrates the gateway's flexible parser: the portal serves the indicators in your
+  delimiter (`,` `|` `;` tab) with your comment char, and the feed page shows the exact
+  `ioc_feeds add --feed_file_type custom_csv --format [value:#2,type:#3,…] --delimiter … --comment …`
+  command to ingest it.
+- **Snort** stores rule lines (each must start with an action — `alert`, `drop`, `reject`, …) and
+  serves them verbatim. Enforcement is governed by the Threat Prevention profile, not a feed action.
 
 ## The native "Check Point format" CSV
 

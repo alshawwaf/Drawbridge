@@ -19,7 +19,7 @@ Access Control rulebase in the portal and apply it to a gateway's Gaia API — o
 |---|---|---|
 | M0 | Foundation (app, config, DB, portal auth, Docker/Caddy) | ✅ done |
 | M1 | **Generic Data Center** feed end-to-end (the hero demo, 10s sync) | ✅ done |
-| M2 | **IoC feed** (Custom Intelligence, native Check Point CSV) — Anti-Bot / AV threat intel | ✅ done |
+| M2 | **IoC feed** (Custom Intelligence — CSV / STIX 1.x / Custom CSV / Snort) — Anti-Bot / AV / IPS threat intel | ✅ done |
 | M3 | Network Feed (flat list + JSON/JQ, HTTP Basic auth) | ✅ done |
 | M4 | **Scenarios** — live inventory mutation (tag flip / scale-out / remove) + named presets + server-side timed runner with live timeline + baseline/reset | ✅ done |
 | DC | **Data Centers** — mock OpenStack (Keystone + Nova + Neutron) CP connects to; template for more providers | ✅ done |
@@ -39,7 +39,7 @@ docs — what it mocks, how to point Check Point at it, endpoints, object model,
 |---|---|---|
 | [Generic Data Center](docs/integrations/generic-datacenter.md) | sk167210 JSON server | Generic Data Center |
 | [Network Feed](docs/integrations/network-feed.md) | feed server (list / JSON+JQ) | Network Feed |
-| [IoC Feed](docs/integrations/ioc-feed.md) | Custom Intelligence CSV (Check Point format) | Threat Prevention (Anti-Bot / AV) |
+| [IoC Feed](docs/integrations/ioc-feed.md) | Custom Intelligence — CSV / STIX 1.x / Custom CSV / Snort | Threat Prevention (Anti-Bot / AV / IPS) |
 | [OpenStack](docs/integrations/openstack.md) | Keystone + Nova + Neutron | Data Center → OpenStack |
 | [VMware vCenter](docs/integrations/vcenter.md) | vSphere SOAP + REST | Data Center → vCenter |
 | [VMware NSX-T](docs/integrations/nsxt.md) | NSX-T Policy Mode REST (Local Manager) | Data Center → NSX-T |

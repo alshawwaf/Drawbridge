@@ -7,7 +7,7 @@ _Last updated: 2026-06-18._
 
 The portal is the broadest CloudGuard-Controller demo surface in one place: **8 datacenter mocks + 3
 feeds + the full push side** (dynamic-layer builder → real or mock gateway) **+ a live-mutation
-control panel**, one app, **199 tests passing**, **live-confirmed against real R82.10 CloudGuard**.
+control panel**, one app, **207 tests passing**, **live-confirmed against real R82.10 CloudGuard**.
 The mocks are built to each provider's *exact* API contract (response shapes, auth, query semantics)
 and validated against a live SMS — so they connect on the first/second try rather than after weeks of
 guessing. The **Scenarios** engine delivers the demo-*landing* moment on cue (flip a tag / scale out /
@@ -23,11 +23,11 @@ import/export** (M6).
 | **Datacenter mocks** | OpenStack, VMware vCenter, NSX-T, Global NSX-T, Proxmox, Cisco ACI, Kubernetes, Nutanix | **All 8 user-addressable R82.10 types built**; groups/tags resolve to member IPs |
 | Live-confirmed in SmartConsole | OpenStack, vCenter, NSX-T, Proxmox, ACI, **Kubernetes**, Global NSX-T (Region) | ✅ |
 | Pending | **Nutanix** (needs port 9440 open at the hosting edge — see `docs/integrations/nutanix.md`); Global NSX-T group-under-Region nesting (a CloudGuard-side limitation, documented) | ⏳ |
-| **Pull feeds** | Generic Data Center (sk167210 JSON), Network Feed (flat list + JSON/JQ), **IoC / Custom Intelligence CSV** (Anti-Bot / AV) | ✅ |
+| **Pull feeds** | Generic Data Center (sk167210 JSON), Network Feed (flat list + JSON/JQ), **IoC / Custom Intelligence** — CSV / STIX 1.x / Custom CSV / Snort (Anti-Bot / AV / IPS) | ✅ |
 | **Push side** | Dynamic-layer builder → `set-dynamic-content` → **real gateway or mock Gaia**; live apply trace; history / merge-to-rulebase | ✅ |
 | Gateways | CRUD, encrypted password (AES-GCM), cert-pin, real-gateway push | ✅ |
 | **Live demo control** | **Scenarios** (`/scenarios`): per-workload tag flip / scale-out / remove · named presets (quarantine, scale-out, blocklist) · **server-side timed runner** with live timeline · baseline/reset | ✅ |
-| **Diagnostics / infra** | Activity log (full request/response, redacted, per-provider filter + search), auth, Docker/Dokploy deploy, **199 tests** | ✅ |
+| **Diagnostics / infra** | Activity log (full request/response, redacted, per-provider filter + search), auth, Docker/Dokploy deploy, **207 tests** | ✅ |
 | **Not built yet** | one-click **auto-quarantine** demo (IoC → BotFound → quarantine) · one-click seed + demo-mode · branding + import/export (M6) | ❌ |
 
 ## How good it is
