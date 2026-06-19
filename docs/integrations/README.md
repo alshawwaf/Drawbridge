@@ -45,6 +45,16 @@ instances, NSX-T NS group → VMs). An empty group object reads as a broken inte
 Check the provider's importable types in the **R82.10** admin guide (the deployed version — always
 read the latest, never older) before declaring it done.
 
+## Credentials
+
+Auth on a DC mock is optional (leave it blank for an open lab). When set, it's **encrypted at rest
+(AES-256-GCM, `DCSIM_ENCRYPTION_KEY`, falls back to the session secret)** — so the DC page can show the
+password / token-secret back as a **copyable, masked field** to paste into SmartConsole. Where the
+encryption key or library is unavailable the app falls back to a one-way hash (the value then can't be
+shown). Feed auth (Custom Header for the Generic DC feed, HTTP Basic for Network / IoC feeds) is stored
+for comparison and is likewise copyable on the feed page. Credentials are always masked in the Activity
+log.
+
 ## Shared diagnostics
 
 - **Activity log** (`/activity`) — every inbound call (feed poll, datacenter API, mock Gaia) with the

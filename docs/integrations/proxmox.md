@@ -68,9 +68,9 @@ matching real Proxmox, where an off/agent-less VM has no importable IP.
 ## Auth
 
 API token via the `PVEAPIToken=<id>=<secret>` Authorization header. If a secret is set on the DC, the
-mock validates it and returns **401** on mismatch; the secret is stored only as a one-way hash. No
-secret = open lab. The token secret is masked in the Activity log (`Authorization` is a redacted
-header).
+mock validates it and returns **401** on mismatch; the secret is **encrypted at rest (AES-256-GCM)**,
+so the DC page can show it back as a copyable masked field. No secret = open lab. The token secret is
+masked in the Activity log (`Authorization` is a redacted header).
 
 ## Diagnostics
 

@@ -22,6 +22,7 @@ no cert-trust step. (Caddy / `docker-compose.yml` are only for standalone local/
    DCSIM_ADMIN_USERNAME=admin
    DCSIM_ADMIN_PASSWORD=<choose a strong password>
    DCSIM_DATABASE_URL=sqlite:////data/dcsim.db
+   DCSIM_ENCRYPTION_KEY=<openssl rand -base64 32>   # optional — encrypts saved gateway + DC creds
    ```
 8. **Deploy.** Sign in at your domain as the admin user above.
 
@@ -31,6 +32,9 @@ no cert-trust step. (Caddy / `docker-compose.yml` are only for standalone local/
   it must match the public domain, or the URLs you hand out will be wrong.
 - The container runs uvicorn with `--proxy-headers`, so the **live poll log shows the real
   gateway IP** (from Traefik's `X-Forwarded-For`), not Traefik's address.
+- **`DCSIM_ENCRYPTION_KEY`** encrypts saved gateway and datacenter credentials at rest (AES-256-GCM).
+  Optional — it falls back to `DCSIM_SESSION_SECRET`; set a dedicated key so rotating the session
+  secret doesn't make stored credentials unreadable.
 - A Docker `HEALTHCHECK` hits `/healthz`, so Dokploy reports container health.
 
 ## Updating

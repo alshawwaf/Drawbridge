@@ -87,8 +87,10 @@ Caddy obtains the cert for `DCSIM_DOMAIN` (use `localhost` for an internal cert)
 
 - Portal management endpoints require login; feed endpoints are public-by-design (the gateway
   must reach them) but guarded by a long random token plus an optional per-feed credential.
-- TLS 1.2+ via Caddy; no secrets in code (all via env); PBKDF2 password hashing; parameterized
-  queries via SQLAlchemy; feed input validated against the CP schema.
+- TLS 1.2+ via Caddy/Traefik; no secrets in code (all via env); portal logins use PBKDF2; saved
+  **gateway & datacenter credentials are AES-256-GCM encrypted at rest** (`DCSIM_ENCRYPTION_KEY`,
+  falls back to the session secret); parameterized queries via SQLAlchemy; feed input validated
+  against the CP schema.
 - **Use demo/synthetic data only.** Do not upload real customer threat-intel; if anything
   sensitive is ever involved it must stay on Check Point-controlled infrastructure.
 
