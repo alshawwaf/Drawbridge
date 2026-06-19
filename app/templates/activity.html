@@ -16,22 +16,25 @@
   <input type="hidden" name="dc" id="dc-hidden" value="{{ dc }}">
   <input type="hidden" name="status" id="st-hidden" value="{{ status }}">
 
-  <div class="card" style="padding:14px 16px;">
-    <input type="search" id="q-input" value="{{ q }}" autocomplete="off"
-           placeholder="Search — path, method, status, source IP… (e.g. /global-infra/sites, 403, 38.104.95.242)">
-    <div class="sfilter" style="margin-top:12px;">
-      <span class="frlabel">Status</span>
-      <button type="button" class="schip {{ 'active' if not status else '' }}" data-status="">All</button>
-      {% for s in status_classes %}
-      <button type="button" class="schip {{ 'active' if status == s else '' }}" data-status="{{ s }}">{{ s }}</button>
-      {% endfor %}
+  <div class="card cmdbar">
+    <div class="cmdrow">
+      <div class="searchbox">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+        <input type="search" id="q-input" value="{{ q }}" autocomplete="off"
+               placeholder="Search path, method, status, source IP…">
+      </div>
+      <div class="segmented" id="status-seg" role="group" aria-label="Status filter">
+        <button type="button" class="{{ 'active' if not status else '' }}" data-status="">All</button>
+        {% for s in status_classes %}<button type="button" class="{{ 'active' if status == s else '' }}" data-status="{{ s }}">{{ s }}</button>{% endfor %}
+      </div>
     </div>
-    <div class="sfilter" style="margin-top:10px;">
+    <div class="cmdrow" style="margin-top:13px;">
       <span class="frlabel">Type</span>
       {% for k, label in kind_labels.items() %}
       <label class="tchip"><input type="checkbox" name="kinds" value="{{ k }}" class="kind-cb" {{ 'checked' if k in selected else '' }} hidden>{{ label }} <span class="tcount">{{ counts.get(k, 0) }}</span></label>
       {% endfor %}
       <span class="grow"></span>
+      <button type="button" class="linkbtn" id="reset-filters" hidden>↺ Reset</button>
       <label class="ctl">Data center
         <select id="dc-select">
           <option value="">Any</option>
@@ -39,7 +42,6 @@
         </select>
       </label>
     </div>
-    <p class="muted" style="font-size:11px; margin:10px 0 0;">No type selected = all ({{ counts.get('all', 0) }}). A data center type narrows to that provider and overrides the type chips.</p>
   </div>
 
   <div class="row" style="align-items:center; gap:12px; margin:14px 0 12px; flex-wrap:wrap;">
@@ -112,8 +114,9 @@
       qHidden.value = searchText();
       dcHidden.value = selectedDc();
       stHidden.value = currentStatus;
-      clearBtn.textContent =
-        (selectedKinds().length || selectedDc() || searchText() || currentStatus) ? 'Clear filtered' : 'Clear all';
+      var anyFilter = selectedKinds().length || selectedDc() || searchText() || currentStatus;
+      clearBtn.textContent = anyFilter ? 'Clear filtered' : 'Clear all';
+      $('reset-filters').hidden = !anyFilter;
     }
     // Relative timestamps ("12s ago"), refreshed with each load + on a timer.
     function rel(iso) {
@@ -154,12 +157,23 @@
     });
     psSel.addEventListener('change', reload);
 
-    // Status quick-filter chips.
-    document.querySelector('.sfilter').addEventListener('click', function (e) {
-      var chip = e.target.closest('.schip');
-      if (!chip) return;
-      currentStatus = chip.getAttribute('data-status') || '';
-      this.querySelectorAll('.schip').forEach(function (c) { c.classList.toggle('active', c === chip); });
+    // Status segmented control + Reset filters.
+    $('status-seg').addEventListener('click', function (e) {
+      var seg = e.target.closest('button[data-status]');
+      if (!seg) return;
+      e.preventDefault();
+      currentStatus = seg.getAttribute('data-status') || '';
+      this.querySelectorAll('button').forEach(function (b) { b.classList.toggle('active', b === seg); });
+      reload();
+    });
+    $('reset-filters').addEventListener('click', function () {
+      currentStatus = '';
+      $('status-seg').querySelectorAll('button').forEach(function (b) {
+        b.classList.toggle('active', !b.getAttribute('data-status'));
+      });
+      form.querySelectorAll('.kind-cb').forEach(function (c) { c.checked = false; });
+      dcSel.value = '';
+      qInput.value = '';
       reload();
     });
 
