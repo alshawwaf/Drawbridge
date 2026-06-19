@@ -12,12 +12,14 @@ from ..db import get_db
 from ..links import public_url
 from ..models import Feed, FeedPoll, FeedType, User
 from ..security import get_user_or_none, new_feed_token, verify_password
-from ..schemas.ioc import IOC_LEVELS, IOC_TYPES
+from ..schemas.ioc import IOC_FORMATS, IOC_LEVELS, IOC_TYPES
 from ..services.render import (
+    custom_csv_command,
     normalize_generic_dc_content,
     normalize_ioc_content,
     normalize_network_feed_flat,
     normalize_network_feed_json,
+    normalize_snort_content,
     render_feed,
 )
 
@@ -76,6 +78,12 @@ DEFAULT_IOC_INDICATORS_TEXT = (
     "http://drive-by.example.net/payload, URL, medium, high, AV, Drive-by host\n"
     "44d88612fea8a8f36de82e1278abb02f, MD5, high, high, AV, EICAR test file"
 )
+# Snort-format default (each line starts with an action). Two simple, well-formed demo rules.
+DEFAULT_SNORT_RULES = (
+    'alert tcp any any -> any 80 (msg:"DCSIM demo - suspicious URI"; content:"/malware.bin"; '
+    'http_uri; sid:1000001; rev:1;)\n'
+    'alert ip 203.0.113.66 any -> any any (msg:"DCSIM demo - known-bad source"; sid:1000002; rev:1;)'
+)
 
 
 def _default_form() -> dict:
@@ -106,7 +114,11 @@ def _default_ioc_form() -> dict:
     return {
         "name": DEFAULT_IOC_NAME,
         "description": DEFAULT_IOC_DESCRIPTION,
+        "ioc_format": "cp_csv",
         "indicators_text": DEFAULT_IOC_INDICATORS_TEXT,
+        "snort_rules": DEFAULT_SNORT_RULES,
+        "delimiter": ",",
+        "comment": "#",
         "interval_seconds": 3600,
         "basic_user": "",
     }
@@ -173,6 +185,8 @@ def _item_count(feed: Feed) -> int:
     if feed.type == FeedType.network_feed:
         return len(feed.content.get("entries", []))
     if feed.type == FeedType.ioc:
+        if feed.content.get("format") == "snort":
+            return len(feed.content.get("rules", []))
         return len(feed.content.get("indicators", []))
     return len(feed.content.get("objects", []))
 
@@ -406,21 +420,30 @@ def create_ioc(
     interval_seconds: int = Form(3600),
     basic_user: str = Form(""),
     basic_pass: str = Form(""),
+    ioc_format: str = Form("cp_csv"),
     indicators_text: str = Form(""),
+    snort_rules: str = Form(""),
+    delimiter: str = Form(","),
+    comment: str = Form("#"),
     db: Session = Depends(get_db),
 ):
     user = get_user_or_none(request, db)
     if user is None:
         return RedirectResponse("/login", status_code=303)
     try:
-        content = normalize_ioc_content(parse_indicators_text(indicators_text), description)
+        if ioc_format == "snort":
+            content = normalize_snort_content(snort_rules)
+        else:
+            content = normalize_ioc_content(parse_indicators_text(indicators_text), description,
+                                            ioc_format, delimiter, comment)
     except Exception as exc:
         return templates.TemplateResponse(
             request,
             "feed_new_ioc.html",
             {"error": str(exc), "ioc_types": IOC_TYPES, "ioc_levels": IOC_LEVELS, "form": {
                 "name": name, "description": description, "interval_seconds": interval_seconds,
-                "basic_user": basic_user, "indicators_text": indicators_text,
+                "basic_user": basic_user, "ioc_format": ioc_format, "indicators_text": indicators_text,
+                "snort_rules": snort_rules, "delimiter": delimiter, "comment": comment,
             }},
             status_code=400,
         )
@@ -450,10 +473,13 @@ def feed_detail(feed_id: int, request: Request, db: Session = Depends(get_db)):
         return RedirectResponse("/login", status_code=303)
     feed = _owned(db, feed_id, user)
     body, _ = render_feed(feed)
+    url = public_url(feed)
+    ioc_cmd = (custom_csv_command(feed, url)
+               if feed.type == FeedType.ioc and feed.content.get("format") == "custom_csv" else None)
     return templates.TemplateResponse(
         request,
         "feed_detail.html",
-        {"feed": feed, "url": public_url(feed), "preview": body, "flash": _pop_flash(request)},
+        {"feed": feed, "url": url, "preview": body, "ioc_cmd": ioc_cmd, "flash": _pop_flash(request)},
     )
 
 

@@ -23,8 +23,15 @@
     <h2>Test from a shell</h2>
     <pre>curl -s {% if feed.auth_header_key %}-H "{{ feed.auth_header_key }}: &lt;value&gt;" {% endif %}{{ url }}</pre>
   {% elif feed.type.value == 'ioc' %}
-    <p class="muted">Poll interval {{ feed.interval_seconds }}s · {{ feed.content.get('indicators', [])|length }} indicators · Format <b>Check Point format/STIX</b> (native CSV).{% if feed.auth_header_key %} Basic-auth user <code>{{ feed.auth_header_key }}</code>.{% endif %}</p>
-    <p class="muted"><b>In SmartConsole:</b> Security Policies → Threat Prevention → Custom Policy → <i>Custom Policy Tools</i> → <i>Indicators</i> → <b>New → New IoC Feed</b>. Paste the URL, set Feed Format = <b>Check Point format/STIX</b>{% if feed.auth_header_key %}, add the username/password under authentication{% endif %}, then Install the Threat Prevention policy. Anti-Bot / Anti-Virus then block matching traffic.</p>
+    {% set fmt = feed.content.get('format', 'cp_csv') %}
+    {% set fmtlabels = {'cp_csv': 'Check Point format/STIX (native CSV)', 'stix_1.x': 'Check Point format/STIX (STIX 1.x XML)', 'custom_csv': 'Custom CSV', 'snort': 'Snort'} %}
+    {% set count = feed.content.get('rules', [])|length if fmt == 'snort' else feed.content.get('indicators', [])|length %}
+    <p class="muted">Poll interval {{ feed.interval_seconds }}s · {{ count }} {{ 'rules' if fmt == 'snort' else 'indicators' }} · Feed Format <b>{{ fmtlabels[fmt] }}</b>.{% if feed.auth_header_key %} Basic-auth user <code>{{ feed.auth_header_key }}</code>.{% endif %}</p>
+    <p class="muted"><b>In SmartConsole:</b> Security Policies → Threat Prevention → Custom Policy → <i>Custom Policy Tools</i> → <i>Indicators</i> → <b>New → New IoC Feed</b>. Paste the URL, set Feed Format = <b>{{ fmtlabels[fmt] }}</b>{% if fmt == 'snort' %} (requires the <b>IPS</b> blade){% endif %}{% if feed.auth_header_key %}, add the username/password under authentication{% endif %}, then Install the Threat Prevention policy.</p>
+    {% if ioc_cmd %}
+    <h2>Or fetch via CLI (custom CSV mapping)</h2>
+    <pre>{{ ioc_cmd }}</pre>
+    {% endif %}
     <h2>Test from a shell</h2>
     <pre>curl -s {% if feed.auth_header_key %}-u "{{ feed.auth_header_key }}:&lt;password&gt;" {% endif %}{{ url }}</pre>
   {% else %}

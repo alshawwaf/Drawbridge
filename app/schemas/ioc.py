@@ -22,6 +22,44 @@ IOC_TYPES = (
 )
 IOC_LEVELS = ("low", "medium", "high", "critical")  # confidence + severity
 
+# Feed output formats (sk132193). cp_csv/stix_1.x/custom_csv share the same observable validation;
+# snort is rule text, not observables.
+IOC_FORMATS = ("cp_csv", "stix_1.x", "custom_csv", "snort")
+INDICATOR_FORMATS = ("cp_csv", "stix_1.x", "custom_csv")
+
+# Custom-CSV delimiter choices (the literal "\t" string from the form maps to a real tab).
+CUSTOM_DELIMITERS = {",": ",", "|": "|", ";": ";", "\\t": "\t", "\t": "\t"}
+
+# Snort rule actions (the first token of a rule). Light validation only — Snort syntax is large.
+SNORT_ACTIONS = ("alert", "log", "pass", "activate", "dynamic", "drop", "reject", "sdrop", "block")
+SNORT_MAX_RULES = 6000  # sk132193: a Snort IoC feed is capped at 6000 rules
+
+
+def validate_delimiter(value: str) -> str:
+    """Map a delimiter choice to the real character, or raise ValueError."""
+    d = CUSTOM_DELIMITERS.get(value or ",")
+    if d is None:
+        raise ValueError("delimiter must be one of , | ; or tab")
+    return d
+
+
+def validate_snort_rules(text: str) -> list[str]:
+    """Keep non-comment, non-blank lines that start with a Snort action. Enforces the rule cap."""
+    rules = []
+    for raw in (text or "").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.split(None, 1)[0].lower() not in SNORT_ACTIONS:
+            raise ValueError(
+                f"Snort rule must start with an action ({', '.join(SNORT_ACTIONS)}) — got {line[:50]!r}")
+        rules.append(line)
+    if not rules:
+        raise ValueError("Enter at least one Snort rule.")
+    if len(rules) > SNORT_MAX_RULES:
+        raise ValueError(f"A Snort IoC feed is limited to {SNORT_MAX_RULES} rules (sk132193).")
+    return rules
+
 _TYPE_CANON = {t.lower(): t for t in IOC_TYPES}
 _LEVEL_SET = set(IOC_LEVELS)
 _HASH_LEN = {"MD5": 32, "SHA1": 40, "SHA256": 64}
