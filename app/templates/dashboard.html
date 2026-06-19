@@ -30,7 +30,7 @@
 <div class="tablewrap">
 <table id="feedtable">
   <thead><tr>
-    <th>Name</th><th>Type</th><th class="nowrap">Items</th><th class="nowrap">Interval</th><th>Auth</th><th>Feed URL</th>
+    <th>Name</th><th>Type</th><th class="nowrap">Items</th><th class="nowrap">Interval</th><th>Auth</th><th>Feed URL</th><th></th>
   </tr></thead>
   <tbody>
   {% for r in rows %}
@@ -46,8 +46,18 @@
       <td>
         <div class="urlcell">
           <span class="urltext" title="{{ r.url }}">{{ r.url }}</span>
-          <a class="copybtn" href="/feeds/{{ r.feed.id }}/edit">Edit</a>
           <button class="copybtn" type="button" data-copy="{{ r.url }}">Copy</button>
+        </div>
+      </td>
+      <td class="nowrap">
+        <div class="rowacts">
+          <a class="copybtn" href="/feeds/{{ r.feed.id }}/edit">Edit</a>
+          <form method="post" action="/feeds/{{ r.feed.id }}/delete" style="margin:0;">
+            <button class="copybtn cb-danger" type="submit" title="Delete feed" aria-label="Delete feed"
+                    data-confirm="Delete “{{ r.feed.name }}”? This removes the feed and its poll history.">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
+            </button>
+          </form>
         </div>
       </td>
     </tr>
