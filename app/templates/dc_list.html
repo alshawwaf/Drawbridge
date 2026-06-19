@@ -36,6 +36,7 @@
       <td class="muted">{{ r.summary }}</td>
       <td class="nowrap" style="text-align:right;">
         <a class="copybtn" href="/datacenters/{{ r.dc.id }}">Open</a>
+        <a class="copybtn" href="/datacenters/{{ r.dc.id }}/edit" style="margin-left:6px;">Edit</a>
         <form method="post" action="/datacenters/{{ r.dc.id }}/delete" style="display:inline;">
           <button class="minibtn" type="submit" style="margin-left:6px;"
                   data-confirm="Delete “{{ r.dc.name }}”? This removes the mock datacenter.">Delete</button>

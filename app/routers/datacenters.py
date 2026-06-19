@@ -704,6 +704,216 @@ def dc_detail(dc_id: int, request: Request, db: Session = Depends(get_db)):
     })
 
 
+# --- Edit an existing datacenter -----------------------------------------------------------
+# The create forms (dc_new_*.html) are reused for editing: the GET prefills them by serializing the
+# stored content back into the quick-entry text format, the POST re-parses and updates in place.
+
+def _ser_tagged(items: list[dict]) -> str:
+    """'name = ip | tag, tag' — list-tag items (OpenStack instances; vCenter/NSX-T/Proxmox VMs)."""
+    out = []
+    for it in items or []:
+        tags = ", ".join(it.get("tags") or [])
+        out.append(f"{it['name']} = {it.get('ip', '')}" + (f" | {tags}" if tags else ""))
+    return "\n".join(out)
+
+
+def _ser_kvtagged(items: list[dict], key: str) -> str:
+    """'name = ip | k=v, k=v' — dict-tag items (Nutanix 'categories'; K8s node 'labels')."""
+    out = []
+    for it in items or []:
+        kv = ", ".join(f"{k}={v}" for k, v in (it.get(key) or {}).items())
+        out.append(f"{it['name']} = {it.get('ip', '')}" + (f" | {kv}" if kv else ""))
+    return "\n".join(out)
+
+
+def _ser_subnets(items: list[dict]) -> str:
+    return "\n".join(f"{s['name']} = {s.get('cidr', '')}" for s in items or [])
+
+
+def _ser_secgroups(items: list[dict]) -> str:
+    return "\n".join(s["name"] for s in items or [])
+
+
+def _ser_nsxt_groups(items: list[dict]) -> str:
+    out = []
+    for g in items or []:
+        gtags = ", ".join(g.get("tags") or [])
+        out.append(f"{g['name']} = {g.get('member_tag', '')}" + (f" | {gtags}" if gtags else ""))
+    return "\n".join(out)
+
+
+def _ser_aci_groups(items: list[dict]) -> str:
+    return "\n".join(f"{g['name']} = {', '.join(g.get('ips') or [])}" for g in items or [])
+
+
+def _ser_k8s_pods(items: list[dict]) -> str:
+    out = []
+    for p in items or []:
+        ref = f"{p.get('namespace', 'default')}/{p['name']}"
+        kv = ", ".join(f"{k}={v}" for k, v in (p.get("labels") or {}).items())
+        out.append(f"{ref} = {p.get('ip', '')}" + (f" | {kv}" if kv else ""))
+    return "\n".join(out)
+
+
+def _ser_k8s_services(items: list[dict]) -> str:
+    out = []
+    for s in items or []:
+        ref = f"{s.get('namespace', 'default')}/{s['name']}"
+        out.append(f"{ref} = {s.get('cluster_ip', '')} | {s.get('type', 'ClusterIP')}")
+    return "\n".join(out)
+
+
+def _edit_auth(content: dict, dc: Datacenter, raw, *, identity: dict, secret_form: str, secret_key: str):
+    """Edit-mode credential handling, mirroring the gateway password UX: a blank secret keeps the one
+    already stored, a new value re-encrypts, and 'clear_creds' drops auth (back to an open lab).
+    ``identity`` maps form-field → auth-key for the non-secret fields stored alongside the secret."""
+    if not secret_form or raw.get("clear_creds"):
+        return
+    ident = {akey: (raw.get(ff) or "").strip() for ff, akey in identity.items()}
+    new_secret = (raw.get(secret_form) or "").strip()
+    existing = (dc.content or {}).get("auth") or {}
+    if new_secret:
+        content["auth"] = {**ident, **dc_creds.store(secret_key, new_secret)}
+    elif dc_creds.configured(existing, secret_key):
+        content["auth"] = {**existing, **ident}  # keep the stored secret, refresh identity fields
+
+
+_DC_EDIT_TEMPLATE = {
+    "openstack": "dc_new.html", "vcenter": "dc_new_vcenter.html", "nsxt": "dc_new_nsxt.html",
+    "globalnsxt": "dc_new_globalnsxt.html", "proxmox": "dc_new_proxmox.html", "aci": "dc_new_aci.html",
+    "kubernetes": "dc_new_kubernetes.html", "nutanix": "dc_new_nutanix.html",
+}
+
+
+def _dc_build_form(dc: Datacenter) -> dict:
+    """Serialize a datacenter's content into the create-form's text fields (for prefill / re-render)."""
+    c = dc.content or {}
+    a = c.get("auth") or {}
+    form = {"name": dc.name, "description": dc.description or ""}
+    p = dc.provider
+    if p == "openstack":
+        form.update(instances_text=_ser_tagged(c.get("instances")), subnets_text=_ser_subnets(c.get("subnets")),
+                    secgroups_text=_ser_secgroups(c.get("security_groups")),
+                    os_username=a.get("username", "admin"), os_project=a.get("project", "demo"))
+    elif p == "vcenter":
+        form.update(vms_text=_ser_tagged(c.get("vms")), vc_username=a.get("username", "administrator@vsphere.local"))
+    elif p in ("nsxt", "globalnsxt"):
+        form.update(vms_text=_ser_tagged(c.get("vms")), groups_text=_ser_nsxt_groups(c.get("groups")),
+                    nsxt_username=a.get("username", "admin"))
+    elif p == "proxmox":
+        form.update(vms_text=_ser_tagged(c.get("vms")), node=c.get("node", "pve"),
+                    token_id=a.get("token_id", "root@pam!cloudguard"))
+    elif p == "aci":
+        form.update(tenant=c.get("tenant", "DCSIM"), app_profile=c.get("app_profile", "DCSIM-AP"),
+                    epgs_text=_ser_aci_groups(c.get("epgs")), esgs_text=_ser_aci_groups(c.get("esgs")),
+                    aci_username=a.get("username", "admin"))
+    elif p == "kubernetes":
+        form.update(nodes_text=_ser_kvtagged(c.get("nodes"), "labels"), pods_text=_ser_k8s_pods(c.get("pods")),
+                    services_text=_ser_k8s_services(c.get("services")))
+    elif p == "nutanix":
+        form.update(vms_text=_ser_kvtagged(c.get("vms"), "categories"), nutanix_username=a.get("username", "admin"))
+    return form
+
+
+def _dc_parse_edit(dc: Datacenter, raw) -> dict:
+    """Rebuild a datacenter's content dict from the submitted edit form (raises ValueError on bad input)."""
+    p = dc.provider
+    if p == "openstack":
+        content = {"instances": parse_instances(raw.get("instances_text", "")),
+                   "subnets": parse_subnets(raw.get("subnets_text", "")),
+                   "security_groups": parse_secgroups(raw.get("secgroups_text", ""))}
+        if not (content["instances"] or content["subnets"] or content["security_groups"]):
+            raise ValueError("Add at least one instance, subnet, or security group.")
+        _edit_auth(content, dc, raw, identity={"os_username": "username", "os_project": "project"},
+                   secret_form="os_password", secret_key="password")
+    elif p == "vcenter":
+        content = {"vms": parse_vms(raw.get("vms_text", ""))}
+        if not content["vms"]:
+            raise ValueError("Add at least one VM.")
+        _edit_auth(content, dc, raw, identity={"vc_username": "username"},
+                   secret_form="vc_password", secret_key="password")
+    elif p in ("nsxt", "globalnsxt"):
+        content = {"vms": parse_instances(raw.get("vms_text", "")), "groups": parse_nsxt_groups(raw.get("groups_text", ""))}
+        if not (content["vms"] or content["groups"]):
+            raise ValueError("Add at least one VM or group.")
+        _edit_auth(content, dc, raw, identity={"nsxt_username": "username"},
+                   secret_form="nsxt_password", secret_key="password")
+    elif p == "proxmox":
+        content = {"vms": parse_instances(raw.get("vms_text", "")), "node": (raw.get("node") or "pve").strip()}
+        if not content["vms"]:
+            raise ValueError("Add at least one VM.")
+        _edit_auth(content, dc, raw, identity={"token_id": "token_id"},
+                   secret_form="token_secret", secret_key="secret")
+    elif p == "aci":
+        content = {"tenant": (raw.get("tenant") or "DCSIM").strip(),
+                   "app_profile": (raw.get("app_profile") or "DCSIM-AP").strip(),
+                   "epgs": parse_aci_groups(raw.get("epgs_text", "")), "esgs": parse_aci_groups(raw.get("esgs_text", ""))}
+        if not (content["epgs"] or content["esgs"]):
+            raise ValueError("Add at least one EPG or ESG.")
+        _edit_auth(content, dc, raw, identity={"aci_username": "username"},
+                   secret_form="aci_password", secret_key="password")
+    elif p == "kubernetes":
+        content = {"nodes": parse_k8s_nodes(raw.get("nodes_text", "")), "pods": parse_k8s_pods(raw.get("pods_text", "")),
+                   "services": parse_k8s_services(raw.get("services_text", ""))}
+        if not (content["nodes"] or content["pods"] or content["services"]):
+            raise ValueError("Add at least one node, pod, or service.")
+    elif p == "nutanix":
+        content = {"vms": parse_nutanix_vms(raw.get("vms_text", ""))}
+        if not content["vms"]:
+            raise ValueError("Add at least one VM.")
+        _edit_auth(content, dc, raw, identity={"nutanix_username": "username"},
+                   secret_form="nutanix_password", secret_key="password")
+    else:
+        raise ValueError(f"This datacenter type ({p}) can't be edited.")
+    return content
+
+
+def _dc_edit_ctx(dc: Datacenter, form: dict, error: str | None) -> dict:
+    secret_key = "secret" if dc.provider == "proxmox" else "password"
+    return {"error": error, "form": form, "editing": True,
+            "action": f"/datacenters/{dc.id}/edit", "cancel": f"/datacenters/{dc.id}",
+            "creds_set": dc_creds.configured((dc.content or {}).get("auth") or {}, secret_key)}
+
+
+@router.get("/datacenters/{dc_id}/edit", response_class=HTMLResponse)
+def dc_edit(dc_id: int, request: Request, db: Session = Depends(get_db)):
+    user = get_user_or_none(request, db)
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+    dc = _owned(db, dc_id, user)
+    tmpl = _DC_EDIT_TEMPLATE.get(dc.provider)
+    if not tmpl:
+        raise HTTPException(status_code=404, detail="This datacenter type can't be edited")
+    return templates.TemplateResponse(request, tmpl, _dc_edit_ctx(dc, _dc_build_form(dc), None))
+
+
+@router.post("/datacenters/{dc_id}/edit")
+async def dc_edit_save(dc_id: int, request: Request, db: Session = Depends(get_db)):
+    user = get_user_or_none(request, db)
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+    dc = _owned(db, dc_id, user)
+    tmpl = _DC_EDIT_TEMPLATE.get(dc.provider)
+    if not tmpl:
+        raise HTTPException(status_code=404, detail="This datacenter type can't be edited")
+    raw = await request.form()
+    name = (raw.get("name") or "").strip()
+    try:
+        if not name:
+            raise ValueError("Name is required.")
+        content = _dc_parse_edit(dc, raw)
+    except Exception as exc:
+        # Re-render with the values the user just submitted (passwords are never echoed back).
+        form = {k: raw.get(k, v) for k, v in _dc_build_form(dc).items()}
+        return templates.TemplateResponse(request, tmpl, _dc_edit_ctx(dc, form, str(exc)), status_code=400)
+    dc.name = name
+    dc.description = (raw.get("description") or "").strip()
+    dc.content = content
+    db.commit()
+    _flash(request, f"Datacenter “{name}” updated.")
+    return RedirectResponse(f"/datacenters/{dc.id}", status_code=303)
+
+
 @router.post("/datacenters/{dc_id}/delete")
 def dc_delete(dc_id: int, request: Request, db: Session = Depends(get_db)):
     user = get_user_or_none(request, db)

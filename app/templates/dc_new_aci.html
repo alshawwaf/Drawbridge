@@ -1,11 +1,11 @@
 {% extends "base.html" %}
-{% block title %}New Cisco ACI datacenter{% endblock %}
+{% block title %}{{ 'Edit' if editing|default(false) else 'New' }} Cisco ACI datacenter{% endblock %}
 {% block content %}
-<h1>New Cisco ACI datacenter</h1>
+<h1>{{ 'Edit' if editing|default(false) else 'New' }} Cisco ACI datacenter</h1>
 <p class="muted">Define the inventory the mock <b>Cisco ACI</b> (APIC REST <code>/api/...</code>) will serve. Point a SmartConsole <i>Cisco ACI</i> Data Center object at the portal to import the Tenant, Application Profile, EPGs, ESGs, and their endpoint IPs.</p>
 {% if error %}<div class="err" style="margin:12px 0;">{{ error }}</div>{% endif %}
 
-<form method="post" action="/datacenters/new/aci" class="card">
+<form method="post" action="{{ action|default('/datacenters/new/aci') }}" class="card">
   <label>Name</label>
   <input name="name" value="{{ form.name }}" placeholder="Cisco-ACI-lab" required>
 
@@ -30,12 +30,13 @@
   <label>Username</label>
   <input name="aci_username" value="{{ form.aci_username }}" placeholder="admin">
   <label>Password <span class="muted" style="font-weight:400;">— optional</span></label>
-  <input name="aci_password" type="password" autocomplete="new-password" placeholder="Leave blank to accept any credentials (open lab)">
-  <p class="muted">If set, the mock validates them on <code>aaaLogin</code> and returns <code>401</code> on mismatch. Stored only as a one-way hash. APIC role: read on Tenant/EPG or higher.</p>
+  <input name="aci_password" type="password" autocomplete="new-password" placeholder="{{ 'Leave blank to keep the saved password' if editing|default(false) else 'Leave blank to accept any credentials (open lab)' }}">
+  {% if editing|default(false) and creds_set|default(false) %}<div class="check" style="margin-top:8px;"><input type="checkbox" id="clear_creds" name="clear_creds" value="1"><label for="clear_creds">Clear saved credentials (revert to an open lab)</label></div>{% endif %}
+  <p class="muted">If set, the mock validates them on <code>aaaLogin</code> and returns <code>401</code> on mismatch. Stored encrypted at rest (AES-256-GCM; a one-way hash only if encryption is unavailable). APIC role: read on Tenant/EPG or higher.</p>
 
   <div class="row" style="margin-top:18px;">
-    <button type="submit">Create datacenter</button>
-    <a class="btn secondary" href="/datacenters">Cancel</a>
+    <button type="submit">{{ 'Save changes' if editing|default(false) else 'Create datacenter' }}</button>
+    <a class="btn secondary" href="{{ cancel|default('/datacenters') }}">Cancel</a>
   </div>
 </form>
 {% endblock %}

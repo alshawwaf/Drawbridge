@@ -1,11 +1,11 @@
 {% extends "base.html" %}
-{% block title %}New vCenter datacenter{% endblock %}
+{% block title %}{{ 'Edit' if editing|default(false) else 'New' }} vCenter datacenter{% endblock %}
 {% block content %}
-<h1>New vCenter datacenter</h1>
+<h1>{{ 'Edit' if editing|default(false) else 'New' }} vCenter datacenter</h1>
 <p class="muted">Define the VM inventory the mock vCenter (vSphere SOAP API) will serve. Point a SmartConsole <i>VMware vCenter</i> Data Center object at the portal to import it.</p>
 {% if error %}<div class="err" style="margin:12px 0;">{{ error }}</div>{% endif %}
 
-<form method="post" action="/datacenters/new/vcenter" class="card">
+<form method="post" action="{{ action|default('/datacenters/new/vcenter') }}" class="card">
   <label>Name</label>
   <input name="name" value="{{ form.name }}" placeholder="vCenter-lab" required>
 
@@ -20,12 +20,13 @@
   <label>Username</label>
   <input name="vc_username" value="{{ form.vc_username }}" placeholder="administrator@vsphere.local">
   <label>Password <span class="muted" style="font-weight:400;">— optional</span></label>
-  <input name="vc_password" type="password" autocomplete="new-password" placeholder="Leave blank to accept any read-only credentials (open lab)">
-  <p class="muted">If set, the mock validates the username + password on Login and returns a vSphere <code>InvalidLogin</code> fault on mismatch — like real vCenter. Stored only as a one-way hash. Use the <i>Auditor</i> role or higher.</p>
+  <input name="vc_password" type="password" autocomplete="new-password" placeholder="{{ 'Leave blank to keep the saved password' if editing|default(false) else 'Leave blank to accept any read-only credentials (open lab)' }}">
+  {% if editing|default(false) and creds_set|default(false) %}<div class="check" style="margin-top:8px;"><input type="checkbox" id="clear_creds" name="clear_creds" value="1"><label for="clear_creds">Clear saved credentials (revert to an open lab)</label></div>{% endif %}
+  <p class="muted">If set, the mock validates the username + password on Login and returns a vSphere <code>InvalidLogin</code> fault on mismatch — like real vCenter. Stored encrypted at rest (AES-256-GCM; a one-way hash only if encryption is unavailable). Use the <i>Auditor</i> role or higher.</p>
 
   <div class="row" style="margin-top:18px;">
-    <button type="submit">Create datacenter</button>
-    <a class="btn secondary" href="/datacenters">Cancel</a>
+    <button type="submit">{{ 'Save changes' if editing|default(false) else 'Create datacenter' }}</button>
+    <a class="btn secondary" href="{{ cancel|default('/datacenters') }}">Cancel</a>
   </div>
 </form>
 {% endblock %}

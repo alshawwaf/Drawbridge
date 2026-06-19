@@ -6,9 +6,12 @@
 <div class="row">
   <div class="grow"><h1>{{ dc.name }} <span class="pill">{{ dc.provider }}</span></h1>
     <p class="muted">{{ dc.description or "Mock VMware vCenter (vSphere SOAP API)" }}</p></div>
-  <form method="post" action="/datacenters/{{ dc.id }}/delete">
-    <button class="danger" type="submit" data-confirm="Delete “{{ dc.name }}”? This removes the mock datacenter.">Delete</button>
-  </form>
+  <div style="display:flex; gap:8px; align-items:flex-start;">
+    <a class="btn secondary" href="/datacenters/{{ dc.id }}/edit">Edit</a>
+    <form method="post" action="/datacenters/{{ dc.id }}/delete">
+      <button class="danger" type="submit" data-confirm="Delete “{{ dc.name }}”? This removes the mock datacenter.">Delete</button>
+    </form>
+  </div>
 </div>
 
 <div class="card">
@@ -46,9 +49,12 @@
 <div class="row">
   <div class="grow"><h1>{{ dc.name }} <span class="pill">{{ dc.provider }}</span></h1>
     <p class="muted">Mock VMware {{ "Global NSX-T (Global Manager / Federation)" if is_global else "NSX-T Manager" }} — Policy Mode REST API</p></div>
-  <form method="post" action="/datacenters/{{ dc.id }}/delete">
-    <button class="danger" type="submit" data-confirm="Delete “{{ dc.name }}”? This removes the mock datacenter.">Delete</button>
-  </form>
+  <div style="display:flex; gap:8px; align-items:flex-start;">
+    <a class="btn secondary" href="/datacenters/{{ dc.id }}/edit">Edit</a>
+    <form method="post" action="/datacenters/{{ dc.id }}/delete">
+      <button class="danger" type="submit" data-confirm="Delete “{{ dc.name }}”? This removes the mock datacenter.">Delete</button>
+    </form>
+  </div>
 </div>
 
 <div class="card">
@@ -86,9 +92,12 @@
 <div class="row">
   <div class="grow"><h1>{{ dc.name }} <span class="pill">{{ dc.provider }}</span></h1>
     <p class="muted">{{ dc.description or "Mock Proxmox VE (/api2/json REST)" }}</p></div>
-  <form method="post" action="/datacenters/{{ dc.id }}/delete">
-    <button class="danger" type="submit" data-confirm="Delete “{{ dc.name }}”? This removes the mock datacenter.">Delete</button>
-  </form>
+  <div style="display:flex; gap:8px; align-items:flex-start;">
+    <a class="btn secondary" href="/datacenters/{{ dc.id }}/edit">Edit</a>
+    <form method="post" action="/datacenters/{{ dc.id }}/delete">
+      <button class="danger" type="submit" data-confirm="Delete “{{ dc.name }}”? This removes the mock datacenter.">Delete</button>
+    </form>
+  </div>
 </div>
 
 <div class="card">
@@ -122,9 +131,12 @@
 <div class="row">
   <div class="grow"><h1>{{ dc.name }} <span class="pill">{{ dc.provider }}</span></h1>
     <p class="muted">{{ dc.description or "Mock Cisco ACI (APIC REST API)" }}</p></div>
-  <form method="post" action="/datacenters/{{ dc.id }}/delete">
-    <button class="danger" type="submit" data-confirm="Delete “{{ dc.name }}”? This removes the mock datacenter.">Delete</button>
-  </form>
+  <div style="display:flex; gap:8px; align-items:flex-start;">
+    <a class="btn secondary" href="/datacenters/{{ dc.id }}/edit">Edit</a>
+    <form method="post" action="/datacenters/{{ dc.id }}/delete">
+      <button class="danger" type="submit" data-confirm="Delete “{{ dc.name }}”? This removes the mock datacenter.">Delete</button>
+    </form>
+  </div>
 </div>
 
 <div class="card">
@@ -161,9 +173,12 @@
 <div class="row">
   <div class="grow"><h1>{{ dc.name }} <span class="pill">{{ dc.provider }}</span></h1>
     <p class="muted">{{ dc.description or "Mock Kubernetes API server (kube-apiserver REST)" }}</p></div>
-  <form method="post" action="/datacenters/{{ dc.id }}/delete">
-    <button class="danger" type="submit" data-confirm="Delete “{{ dc.name }}”? This removes the mock datacenter.">Delete</button>
-  </form>
+  <div style="display:flex; gap:8px; align-items:flex-start;">
+    <a class="btn secondary" href="/datacenters/{{ dc.id }}/edit">Edit</a>
+    <form method="post" action="/datacenters/{{ dc.id }}/delete">
+      <button class="danger" type="submit" data-confirm="Delete “{{ dc.name }}”? This removes the mock datacenter.">Delete</button>
+    </form>
+  </div>
 </div>
 
 <div class="card">
@@ -202,9 +217,12 @@
 <div class="row">
   <div class="grow"><h1>{{ dc.name }} <span class="pill">{{ dc.provider }}</span></h1>
     <p class="muted">{{ dc.description or "Mock Nutanix Prism (REST — v3 + v4)" }}</p></div>
-  <form method="post" action="/datacenters/{{ dc.id }}/delete">
-    <button class="danger" type="submit" data-confirm="Delete “{{ dc.name }}”? This removes the mock datacenter.">Delete</button>
-  </form>
+  <div style="display:flex; gap:8px; align-items:flex-start;">
+    <a class="btn secondary" href="/datacenters/{{ dc.id }}/edit">Edit</a>
+    <form method="post" action="/datacenters/{{ dc.id }}/delete">
+      <button class="danger" type="submit" data-confirm="Delete “{{ dc.name }}”? This removes the mock datacenter.">Delete</button>
+    </form>
+  </div>
 </div>
 
 <div class="card">
@@ -240,9 +258,12 @@
 <div class="row">
   <div class="grow"><h1>{{ dc.name }} <span class="pill">{{ dc.provider }}</span></h1>
     <p class="muted">{{ dc.description or "Mock OpenStack datacenter (Keystone + Nova + Neutron)" }}</p></div>
-  <form method="post" action="/datacenters/{{ dc.id }}/delete">
-    <button class="danger" type="submit" data-confirm="Delete “{{ dc.name }}”? This removes the mock datacenter.">Delete</button>
-  </form>
+  <div style="display:flex; gap:8px; align-items:flex-start;">
+    <a class="btn secondary" href="/datacenters/{{ dc.id }}/edit">Edit</a>
+    <form method="post" action="/datacenters/{{ dc.id }}/delete">
+      <button class="danger" type="submit" data-confirm="Delete “{{ dc.name }}”? This removes the mock datacenter.">Delete</button>
+    </form>
+  </div>
 </div>
 
 <div class="card">

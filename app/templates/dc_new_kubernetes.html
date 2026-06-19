@@ -1,11 +1,11 @@
 {% extends "base.html" %}
-{% block title %}New Kubernetes datacenter{% endblock %}
+{% block title %}{{ 'Edit' if editing|default(false) else 'New' }} Kubernetes datacenter{% endblock %}
 {% block content %}
-<h1>New Kubernetes datacenter</h1>
+<h1>{{ 'Edit' if editing|default(false) else 'New' }} Kubernetes datacenter</h1>
 <p class="muted">Define the inventory the mock <b>Kubernetes</b> API server (<code>kube-apiserver</code> REST) will serve. Point a SmartConsole <i>Kubernetes</i> Data Center object at the portal to import <b>Nodes, Pods, Services, Endpoints</b> and the <b>Namespaces</b> + <b>Labels</b> derived from them.</p>
 {% if error %}<div class="err" style="margin:12px 0;">{{ error }}</div>{% endif %}
 
-<form method="post" action="/datacenters/new/kubernetes" class="card">
+<form method="post" action="{{ action|default('/datacenters/new/kubernetes') }}" class="card">
   <label>Name</label>
   <input name="name" value="{{ form.name }}" placeholder="Kubernetes-lab" required>
 
@@ -27,8 +27,8 @@
   <p class="muted" style="margin-top:18px;"><b>Service-account token:</b> nothing to enter — after you save, the DC page has a <b>“Download Service Account Token”</b> button. SmartConsole's Kubernetes object requires the token as an imported <i>file</i>, so download it from there and import it (the mock is the API server and accepts it).</p>
 
   <div class="row" style="margin-top:18px;">
-    <button type="submit">Create datacenter</button>
-    <a class="btn secondary" href="/datacenters">Cancel</a>
+    <button type="submit">{{ 'Save changes' if editing|default(false) else 'Create datacenter' }}</button>
+    <a class="btn secondary" href="{{ cancel|default('/datacenters') }}">Cancel</a>
   </div>
 </form>
 {% endblock %}
