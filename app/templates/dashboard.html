@@ -35,7 +35,7 @@
   <tbody>
   {% for r in rows %}
     <tr data-feedtype="{{ r.feed.type.value }}">
-      <td><a class="feedname" href="/feeds/{{ r.feed.id }}">{{ r.feed.name }}</a> <a class="copybtn" href="/feeds/{{ r.feed.id }}/edit" style="margin-left:6px;">Edit</a></td>
+      <td><a class="feedname" href="/feeds/{{ r.feed.id }}">{{ r.feed.name }}</a></td>
       <td>
         <span class="pill">{{ r.feed.type.value }}</span>
         {% if r.selections %}<div class="subsel">{{ r.selections }}</div>{% endif %}
@@ -46,6 +46,7 @@
       <td>
         <div class="urlcell">
           <span class="urltext" title="{{ r.url }}">{{ r.url }}</span>
+          <a class="copybtn" href="/feeds/{{ r.feed.id }}/edit">Edit</a>
           <button class="copybtn" type="button" data-copy="{{ r.url }}">Copy</button>
         </div>
       </td>

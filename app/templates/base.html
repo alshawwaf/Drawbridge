@@ -193,12 +193,14 @@
     .check label { margin:0; }
 
     /* ============================ URL cell + copy ============================ */
-    .urlcell { display:flex; align-items:center; gap:8px; max-width:300px; }
+    .urlcell { display:flex; align-items:center; gap:8px; max-width:340px; }
     .urltext { font-family:ui-monospace,monospace; font-size:12px; color:var(--subtle-fg); background:var(--subtle-bg);
       border:1px solid var(--line); padding:8px 10px; border-radius:7px; overflow:hidden; text-overflow:ellipsis;
       white-space:nowrap; flex:1; min-width:0; }
     .copybtn { background:var(--surface-2); color:var(--text); border:1px solid var(--line); border-radius:7px;
-      padding:8px 12px; font-size:12.5px; font-weight:650; cursor:pointer; white-space:nowrap; transition:.12s; }
+      padding:8px 12px; font-size:12.5px; font-weight:650; line-height:1.15; cursor:pointer; white-space:nowrap;
+      transition:.12s; text-decoration:none; display:inline-flex; align-items:center; justify-content:center;
+      vertical-align:middle; box-sizing:border-box; }
     .copybtn:hover { border-color:var(--accent); color:var(--accent); }
     .copybtn.copied { background:var(--ok-bg); color:var(--ok); border-color:var(--ok-line); }
     /* Copyable credential rows (detail pages) */
