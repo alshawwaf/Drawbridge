@@ -301,11 +301,6 @@
     .livedot.on { animation:pulse 1.8s infinite; } .livedot.off { background:var(--faint); }
     @keyframes pulse { 0% { box-shadow:0 0 0 0 rgba(52,211,153,.5); } 70% { box-shadow:0 0 0 7px rgba(52,211,153,0); }
       100% { box-shadow:0 0 0 0 rgba(52,211,153,0); } }
-    .sfilter { display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
-    .schip { background:var(--surface); color:var(--muted); border:1px solid var(--line); border-radius:var(--r-pill);
-      padding:5px 12px; font-size:12px; font-weight:650; cursor:pointer; transition:.12s; }
-    .schip:hover { border-color:var(--line-strong); color:var(--text); }
-    .schip.active { background:var(--accent-soft); color:var(--accent); border-color:transparent; }
     .method { display:inline-block; min-width:50px; text-align:center; font-size:10.5px; font-weight:700;
       letter-spacing:.4px; padding:3px 7px; border-radius:6px; font-family:ui-monospace,monospace;
       background:var(--chip-bg); color:var(--chip-fg); }
@@ -325,21 +320,25 @@
     .searchbox { position:relative; display:flex; align-items:center; flex:1; min-width:220px; }
     .searchbox > svg { position:absolute; left:13px; color:var(--faint); pointer-events:none; }
     .searchbox input { padding-left:38px; }
-    .frlabel { font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.5px; color:var(--faint); margin-right:2px; }
-    .segmented { display:inline-flex; border:1px solid var(--line); border-radius:9px; overflow:hidden;
-      background:var(--surface-2); flex:none; }
-    .segmented button { border:none; border-left:1px solid var(--line); border-radius:0; background:transparent;
-      color:var(--muted); font-size:12.5px; font-weight:650; padding:8px 15px; box-shadow:none; }
-    .segmented button:first-child { border-left:none; }
-    .segmented button:hover { background:var(--hover); color:var(--text); filter:none; transform:none; box-shadow:none; }
-    .segmented button.active { background:var(--accent); color:var(--on-accent); }
-    .segmented button.active:hover { filter:brightness(1.06); transform:none; }
-    .tchip { display:inline-flex; align-items:center; gap:6px; background:var(--surface); color:var(--muted);
-      border:1px solid var(--line); border-radius:var(--r-pill); padding:5px 12px; font-size:12px;
-      font-weight:650; cursor:pointer; transition:.12s; }
-    .tchip:hover { border-color:var(--line-strong); color:var(--text); }
-    .tchip:has(input:checked) { background:var(--accent-soft); color:var(--accent); border-color:transparent; }
-    .tchip .tcount { font-size:10.5px; font-weight:600; opacity:.7; }
+    .msel { position:relative; display:inline-block; }
+    .msel-btn { background:var(--surface-2); color:var(--text); border:1px solid var(--line); border-radius:9px;
+      padding:8px 13px; font-size:12.5px; font-weight:650; box-shadow:none; display:inline-flex; align-items:center; gap:8px; }
+    .msel-btn:hover { background:var(--hover); border-color:var(--line-strong); filter:none; transform:none; box-shadow:none; }
+    .msel.open .msel-btn { border-color:var(--accent); }
+    .msel-badge { background:var(--accent); color:var(--on-accent); border-radius:var(--r-pill); font-size:10px;
+      font-weight:700; padding:1px 6px; min-width:16px; text-align:center; }
+    .msel-caret { color:var(--faint); font-size:9px; }
+    .msel-panel { position:absolute; top:calc(100% + 8px); left:0; min-width:216px; background:var(--surface-2);
+      border:1px solid var(--line); border-radius:12px; box-shadow:var(--shadow-lg); z-index:600; padding:6px; display:none;
+      max-height:340px; overflow-y:auto; }
+    .msel-panel.right { left:auto; right:0; }
+    .msel.open .msel-panel { display:block; animation:pop .14s ease; }
+    .msel-opt { display:flex; align-items:center; gap:10px; padding:7px 10px; border-radius:8px; cursor:pointer;
+      font-size:13px; color:var(--text-2); }
+    .msel-opt:hover { background:var(--hover); color:var(--text); }
+    .msel-opt:has(input:checked) { color:var(--text); font-weight:600; }
+    .msel-opt .fcount { margin-left:auto; font-size:11px; font-weight:600; color:var(--faint);
+      background:var(--subtle-bg); border:1px solid var(--line); padding:1px 8px; border-radius:var(--r-pill); }
     .ctl { display:inline-flex; align-items:center; gap:7px; font-size:12px; font-weight:600; color:var(--muted); }
     .ctl select { width:auto; min-width:84px; padding:7px 30px 7px 11px; font-size:12.5px; }
     .linkbtn { background:none; border:none; box-shadow:none; color:var(--accent); font-size:12px; font-weight:650;

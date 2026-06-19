@@ -42,18 +42,28 @@ DEFAULT_PAGE_SIZE = 10
 STATUS_RANGES = {"2xx": (200, 300), "3xx": (300, 400), "4xx": (400, 500), "5xx": (500, 600)}
 
 
-def _filter_conds(sel_kinds: list[str], dc: str, q: str, status: str = "") -> list:
-    """SQL conditions for the row/count queries. A specific ``dc`` provider narrows to that provider's
-    paths (and overrides the kind checkboxes); otherwise the checked kinds apply. ``status`` narrows to
-    a status class (2xx/3xx/4xx/5xx). ``q`` is a free-text AND-match across path, summary, source IP."""
+def _clean_dc(dc: list[str]) -> list[str]:
+    return [d for d in (dc or []) if d in PROVIDER_PATHS]
+
+
+def _clean_status(status: list[str]) -> list[str]:
+    return [s for s in (status or []) if s in STATUS_RANGES]
+
+
+def _filter_conds(sel_kinds: list[str], dc: list[str], q: str, status: list[str]) -> list:
+    """SQL conditions for the row/count queries — independent AND filters. ``sel_kinds`` (kind IN),
+    ``dc`` providers (path matches ANY selected provider), ``status`` classes (status in ANY selected
+    range), and ``q`` (free-text match across path/summary/source IP). Each group is OR within itself."""
     conds = []
-    if dc in PROVIDER_PATHS:
-        conds.append(or_(*[ActivityLog.path.like(f"%{p}%") for p in PROVIDER_PATHS[dc]]))
-    elif sel_kinds:
+    if sel_kinds:
         conds.append(ActivityLog.kind.in_(sel_kinds))
-    if status in STATUS_RANGES:
-        lo, hi = STATUS_RANGES[status]
-        conds.append(and_(ActivityLog.status >= lo, ActivityLog.status < hi))
+    provs = _clean_dc(dc)
+    if provs:
+        conds.append(or_(*[ActivityLog.path.like(f"%{p}%") for d in provs for p in PROVIDER_PATHS[d]]))
+    classes = _clean_status(status)
+    if classes:
+        conds.append(or_(*[and_(ActivityLog.status >= STATUS_RANGES[s][0],
+                                ActivityLog.status < STATUS_RANGES[s][1]) for s in classes]))
     q = (q or "").strip()
     if q:
         like = f"%{q}%"
@@ -92,23 +102,23 @@ def _clean_page_size(page_size: int) -> int:
     return page_size if page_size in PAGE_SIZES else DEFAULT_PAGE_SIZE
 
 
-def _activity_url(kinds: list[str], page_size: int, q: str = "", dc: str = "", status: str = "") -> str:
+def _activity_url(kinds: list[str], page_size: int, q: str = "",
+                  dc: list[str] | None = None, status: list[str] | None = None) -> str:
     """Build /activity?… so a delete/clear redirect preserves the view (filters, search, dc, status)."""
     params = [("kinds", k) for k in _clean_kinds(kinds)]
     params.append(("page_size", _clean_page_size(page_size)))
     if (q or "").strip():
         params.append(("q", q.strip()))
-    if dc in PROVIDER_PATHS:
-        params.append(("dc", dc))
-    if status in STATUS_RANGES:
-        params.append(("status", status))
+    params += [("dc", d) for d in _clean_dc(dc or [])]
+    params += [("status", s) for s in _clean_status(status or [])]
     return "/activity?" + urlencode(params)
 
 
 @router.get("/activity", response_class=HTMLResponse)
 def activity_page(request: Request, kinds: list[str] = Query(default=[]),
                   page_size: int = Query(DEFAULT_PAGE_SIZE), q: str = Query(""),
-                  dc: str = Query(""), status: str = Query(""), db: Session = Depends(get_db)):
+                  dc: list[str] = Query(default=[]), status: list[str] = Query(default=[]),
+                  db: Session = Depends(get_db)):
     user = get_user_or_none(request, db)
     if user is None:
         return RedirectResponse("/login", status_code=303)
@@ -123,16 +133,16 @@ def activity_page(request: Request, kinds: list[str] = Query(default=[]),
         "counts": counts, "kind_labels": KIND_LABELS, "selected": _clean_kinds(kinds),
         "page_size": _clean_page_size(page_size), "page_sizes": PAGE_SIZES,
         "provider_labels": PROVIDER_LABELS, "dc_counts": dc_counts,
-        "q": q, "dc": dc if dc in PROVIDER_PATHS else "",
-        "status": status if status in STATUS_RANGES else "", "status_classes": list(STATUS_RANGES),
+        "q": q, "selected_dc": _clean_dc(dc),
+        "selected_status": _clean_status(status), "status_classes": list(STATUS_RANGES),
         "flash": _pop_flash(request),
     })
 
 
 @router.get("/activity/rows", response_class=HTMLResponse)
 def activity_rows(request: Request, kinds: list[str] = Query(default=[]), page: int = 1,
-                  page_size: int = DEFAULT_PAGE_SIZE, q: str = "", dc: str = "", status: str = "",
-                  db: Session = Depends(get_db)):
+                  page_size: int = DEFAULT_PAGE_SIZE, q: str = "", dc: list[str] = Query(default=[]),
+                  status: list[str] = Query(default=[]), db: Session = Depends(get_db)):
     if get_user_or_none(request, db) is None:
         return HTMLResponse("", status_code=401)
     sel = _clean_kinds(kinds)
@@ -169,8 +179,8 @@ def activity_detail(log_id: int, request: Request, db: Session = Depends(get_db)
 @router.post("/activity/delete")
 def activity_delete(request: Request, ids: list[int] = Form(default=[]),
                     kinds: list[str] = Form(default=[]), page_size: int = Form(DEFAULT_PAGE_SIZE),
-                    q: str = Form(""), dc: str = Form(""), status: str = Form(""),
-                    db: Session = Depends(get_db)):
+                    q: str = Form(""), dc: list[str] = Form(default=[]),
+                    status: list[str] = Form(default=[]), db: Session = Depends(get_db)):
     """Delete the selected record(s) — one or many."""
     if get_user_or_none(request, db) is None:
         return RedirectResponse("/login", status_code=303)
@@ -185,8 +195,9 @@ def activity_delete(request: Request, ids: list[int] = Form(default=[]),
 
 @router.post("/activity/clear")
 def activity_clear(request: Request, kinds: list[str] = Form(default=[]),
-                   page_size: int = Form(DEFAULT_PAGE_SIZE), q: str = Form(""), dc: str = Form(""),
-                   status: str = Form(""), db: Session = Depends(get_db)):
+                   page_size: int = Form(DEFAULT_PAGE_SIZE), q: str = Form(""),
+                   dc: list[str] = Form(default=[]), status: list[str] = Form(default=[]),
+                   db: Session = Depends(get_db)):
     """Clear everything matching the current view (checked kinds / data center type / status / search)."""
     if get_user_or_none(request, db) is None:
         return RedirectResponse("/login", status_code=303)
