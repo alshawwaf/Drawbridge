@@ -23,7 +23,7 @@
       --accent-soft:rgba(255,61,154,.15); --focus-ring:rgba(255,61,154,.32);
       --ok:#34d399; --ok-bg:rgba(52,211,153,.14); --ok-line:rgba(52,211,153,.34);
       --danger:#fb7185; --danger-bg:rgba(251,113,133,.13); --danger-line:rgba(251,113,133,.34);
-      --warn:#fbbf24;
+      --warn:#fbbf24; --warn-bg:rgba(251,191,36,.16); --info:#38bdf8; --info-bg:rgba(56,189,248,.16);
       --header-bg:rgba(11,15,25,.85); --header-fg:#eef1f8; --header-muted:#aab4c8;
       --header-line:#202842; --header-hover:rgba(255,255,255,.08);
       --code-bg:#070b14; --code-fg:#d8e3ff;
@@ -43,7 +43,7 @@
       --accent-soft:rgba(230,0,126,.10); --focus-ring:rgba(230,0,126,.16);
       --ok:#15935a; --ok-bg:#e6f5ec; --ok-line:#bfe6cd;
       --danger:#c0344d; --danger-bg:#fdecef; --danger-line:#f3c6d0;
-      --warn:#b7791f;
+      --warn:#b7791f; --warn-bg:rgba(183,121,31,.12); --info:#0284c7; --info-bg:rgba(2,132,199,.10);
       --header-bg:rgba(255,255,255,.86); --header-fg:#16203a; --header-muted:#5b6678;
       --header-line:#e3e8f1; --header-hover:#eef1f7;
       --code-bg:#0f1626; --code-fg:#d8e3ff;
@@ -211,7 +211,7 @@
     .menu.open .menu-items { display:block; animation:pop .14s ease; }
     @keyframes pop { from { opacity:0; transform:translateY(-5px); } to { opacity:1; transform:none; } }
     .menu-items a { display:block; padding:10px 12px; color:var(--text) !important; text-decoration:none; font-size:13.5px; border-radius:8px; }
-    .menu-items a:hover { background:var(--hover); }
+    .menu-items a:hover, .menu-items a:focus { background:var(--accent-soft); color:var(--accent) !important; }
 
     /* ============================ Confirm modal ============================ */
     .modal-overlay { position:fixed; inset:0; background:var(--overlay); -webkit-backdrop-filter:blur(3px); backdrop-filter:blur(3px);
@@ -274,6 +274,38 @@
     .apiarrow { color:var(--faint); font-weight:700; }
     table.rulebase th, table.rulebase td { padding:9px 12px; font-size:12.5px; vertical-align:top; }
     table.rulebase tbody td { border-bottom:1px solid var(--line-soft); }
+
+    /* ── Activity log ── */
+    .statbar { display:flex; gap:10px; flex-wrap:wrap; margin:0 0 16px; }
+    .stat { flex:1 1 0; min-width:112px; background:var(--surface-2); border:1px solid var(--line);
+      border-radius:11px; padding:12px 15px; }
+    .stat-n { font-size:23px; font-weight:740; letter-spacing:-.5px; line-height:1.05; }
+    .stat-n.ok { color:var(--ok); } .stat-n.bad { color:var(--danger); }
+    .stat-u { font-size:12px; font-weight:600; color:var(--muted); margin-left:2px; }
+    .stat-l { font-size:10.5px; color:var(--faint); text-transform:uppercase; letter-spacing:.6px; margin-top:4px; }
+    .livewrap { display:inline-flex; align-items:center; gap:7px; font-size:12.5px; color:var(--muted); }
+    .livedot { width:8px; height:8px; border-radius:50%; background:var(--ok); display:inline-block; }
+    .livedot.on { animation:pulse 1.8s infinite; } .livedot.off { background:var(--faint); }
+    @keyframes pulse { 0% { box-shadow:0 0 0 0 rgba(52,211,153,.5); } 70% { box-shadow:0 0 0 7px rgba(52,211,153,0); }
+      100% { box-shadow:0 0 0 0 rgba(52,211,153,0); } }
+    .sfilter { display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
+    .schip { background:var(--surface); color:var(--muted); border:1px solid var(--line); border-radius:var(--r-pill);
+      padding:5px 12px; font-size:12px; font-weight:650; cursor:pointer; transition:.12s; }
+    .schip:hover { border-color:var(--line-strong); color:var(--text); }
+    .schip.active { background:var(--accent-soft); color:var(--accent); border-color:transparent; }
+    .method { display:inline-block; min-width:50px; text-align:center; font-size:10.5px; font-weight:700;
+      letter-spacing:.4px; padding:3px 7px; border-radius:6px; font-family:ui-monospace,monospace;
+      background:var(--chip-bg); color:var(--chip-fg); }
+    .m-get { background:var(--info-bg); color:var(--info); } .m-post { background:var(--ok-bg); color:var(--ok); }
+    .m-put, .m-patch { background:var(--warn-bg); color:var(--warn); }
+    .m-delete { background:var(--danger-bg); color:var(--danger); }
+    table.acttable td, table.acttable th { padding:8px 10px; }
+    table.acttable tbody tr { cursor:pointer; }
+    table.acttable td.tcell-path { max-width:420px; }
+    .act-pathtext { font-family:ui-monospace,monospace; font-size:12.5px; color:var(--text-2);
+      white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:block; }
+    .act-time { font-family:ui-monospace,monospace; font-size:12px; color:var(--muted); white-space:nowrap; }
+    .act-num { text-align:right; font-variant-numeric:tabular-nums; color:var(--muted); font-size:12px; white-space:nowrap; }
   </style>
 </head>
 <body>

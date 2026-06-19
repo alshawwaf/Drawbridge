@@ -51,7 +51,8 @@ def test_shell_renders_checkbox_filters_page_size_and_modal():
     counts = {"all": 4445, "feed_poll": 4077, "layer_apply": 19}
     html = _render("activity.html", counts=counts, kind_labels=KIND_LABELS, selected=["feed_poll"],
                    page_size=10, page_sizes=PAGE_SIZES, provider_labels=PROVIDER_LABELS,
-                   dc_counts={"vcenter": 3, "proxmox": 5}, q="", dc="", flash=None)
+                   dc_counts={"vcenter": 3, "proxmox": 5}, q="", dc="",
+                   status="", status_classes=["2xx", "3xx", "4xx", "5xx"], flash=None)
     # filters are checkboxes on the left; the selected one is checked
     assert 'name="kinds" value="feed_poll" class="kind-cb" checked' in html
     assert 'name="kinds" value="layer_apply" class="kind-cb" ' in html
@@ -65,6 +66,8 @@ def test_shell_renders_checkbox_filters_page_size_and_modal():
     # new: search bar, auto-refresh control, and the Data Center sub-filter (vCenter, Proxmox…)
     assert 'id="q-input"' in html and 'id="refresh-rate"' in html
     assert 'name="dcfilter" value="vcenter"' in html and 'name="dcfilter" value="proxmox"' in html
+    # new: status-class quick-filter chips
+    assert 'data-status="4xx"' in html and 'data-status=""' in html
 
 
 def test_filter_conds_dc_type_overrides_kinds_and_search_ands():
@@ -79,14 +82,17 @@ def test_filter_conds_dc_type_overrides_kinds_and_search_ands():
 
 def test_pager_and_rows_render_selectable_clickable():
     html = _render("_activity_rows.html", rows=[_row(rid=42)], page=6, pages=88,
-                   total=4399, kind_labels=KIND_LABELS)
+                   total=4399, kind_labels=KIND_LABELS,
+                   stats={"total": 4399, "ok": 4001, "err": 12, "avg_ms": 8, "sources": 3})
     assert "Page 6 of 88" in html
     assert "« First" in html and "Last »" in html
     assert 'data-page="1"' in html and 'data-page="88"' in html      # First + Last
     assert 'data-page="5"' in html and 'data-page="7"' in html       # window around page 6
     assert 'aria-current="page"' in html                             # current page marked
+    # live stats strip
+    assert 'class="statbar"' in html and "4001" in html
     # each row is a clickable record with a selection checkbox
-    assert 'class="act-row itemrow" data-id="42"' in html
+    assert 'class="act-row" data-id="42"' in html
     assert 'name="ids" value="42" class="row-cb"' in html
 
 

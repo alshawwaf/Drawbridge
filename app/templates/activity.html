@@ -2,22 +2,31 @@
 {% block title %}Activity log{% endblock %}
 {% block main_class %}wide{% endblock %}
 {% block content %}
-<div class="row">
+<div class="row" style="align-items:flex-start;">
   <div class="grow">
     <h1>Activity log</h1>
-    <p class="muted">Every gateway feed poll, mock Gaia API call, and layer apply — with the actual request &amp; response. Live; secrets redacted. Click a row to inspect it.</p>
+    <p class="muted">Every gateway feed poll, mock API call, Scenario mutation, and layer apply — with the real request &amp; response. Live; secrets redacted. Click a row to inspect it.</p>
   </div>
+  <span class="livewrap"><span class="livedot on" id="livedot"></span><span id="livetext">Live</span></span>
 </div>
 
-<div class="card" style="padding:12px 14px; margin:14px 0;">
+<div class="card" style="padding:14px 16px; margin:14px 0;">
   <input type="search" id="q-input" value="{{ q }}" autocomplete="off"
-         placeholder="Search the log — path, method, status, source IP… (e.g. /global-infra/sites, 403, 38.104.95.242)">
+         placeholder="Search — path, method, status, source IP… (e.g. /global-infra/sites, 403, 38.104.95.242)">
+  <div class="sfilter" style="margin-top:12px;">
+    <span class="muted" style="font-size:12px; margin-right:2px;">Status</span>
+    <button type="button" class="schip {{ 'active' if not status else '' }}" data-status="">All</button>
+    {% for s in status_classes %}
+    <button type="button" class="schip {{ 'active' if status == s else '' }}" data-status="{{ s }}">{{ s }}</button>
+    {% endfor %}
+  </div>
 </div>
 
 <form method="post" action="/activity/delete" id="act-form">
   <input type="hidden" name="page_size" id="ps-hidden" value="{{ page_size }}">
   <input type="hidden" name="q" id="q-hidden" value="{{ q }}">
   <input type="hidden" name="dc" id="dc-hidden" value="{{ dc }}">
+  <input type="hidden" name="status" id="st-hidden" value="{{ status }}">
   <div style="display:flex; gap:18px; align-items:flex-start; flex-wrap:wrap;">
     <aside class="card" style="width:248px; flex:0 0 248px;">
       <div class="trace-lbl">Filter by type</div>
@@ -74,7 +83,7 @@
         <button class="danger" type="submit" id="del-btn" disabled
                 data-confirm="Delete the selected log record(s)? This cannot be undone.">Delete selected</button>
       </div>
-      <div class="card" style="padding:4px 18px;"><div id="rows"><p class="muted">Loading…</p></div></div>
+      <div class="card" style="padding:6px 18px 14px;"><div id="rows"><p class="muted">Loading…</p></div></div>
     </div>
   </div>
 </form>
@@ -91,11 +100,11 @@
   (function () {
     var $ = function (id) { return document.getElementById(id); };
     var form = $('act-form'), rowsEl = $('rows'), psSel = $('page-size'), psHidden = $('ps-hidden');
-    var qInput = $('q-input'), qHidden = $('q-hidden'), dcHidden = $('dc-hidden');
-    var refreshSel = $('refresh-rate');
+    var qInput = $('q-input'), qHidden = $('q-hidden'), dcHidden = $('dc-hidden'), stHidden = $('st-hidden');
+    var refreshSel = $('refresh-rate'), liveDot = $('livedot'), liveText = $('livetext');
     var selAll = $('sel-all'), delBtn = $('del-btn'), clearBtn = $('clear-btn');
     var modal = $('rec-modal'), recBody = $('rec-body');
-    var page = 1, timer = null;
+    var page = 1, timer = null, currentStatus = {{ status | tojson }};
 
     function setHTML(el, html) {
       el.replaceChildren(document.createRange().createContextualFragment(html));
@@ -117,6 +126,7 @@
       p.set('page_size', psSel.value);
       if (searchText()) p.set('q', searchText());
       if (selectedDc()) p.set('dc', selectedDc());
+      if (currentStatus) p.set('status', currentStatus);
       if (extra) Object.keys(extra).forEach(function (k) { p.set(k, extra[k]); });
       return p;
     }
@@ -126,12 +136,28 @@
       psHidden.value = psSel.value;            // keep the delete/clear form in sync with the view
       qHidden.value = searchText();
       dcHidden.value = selectedDc();
-      clearBtn.textContent = (selectedKinds().length || selectedDc() || searchText()) ? 'Clear filtered' : 'Clear all';
+      stHidden.value = currentStatus;
+      clearBtn.textContent =
+        (selectedKinds().length || selectedDc() || searchText() || currentStatus) ? 'Clear filtered' : 'Clear all';
+    }
+    // Relative timestamps ("12s ago"), refreshed with each load + on a timer.
+    function rel(iso) {
+      var d = new Date(iso), s = (Date.now() - d.getTime()) / 1000;
+      if (s < 0) s = 0;
+      if (s < 60) return Math.floor(s) + 's ago';
+      if (s < 3600) return Math.floor(s / 60) + 'm ago';
+      if (s < 86400) return Math.floor(s / 3600) + 'h ago';
+      return d.toLocaleDateString();
+    }
+    function updateTimes() {
+      rowsEl.querySelectorAll('.act-time[data-ts]').forEach(function (el) {
+        el.textContent = rel(el.getAttribute('data-ts'));
+      });
     }
     function load() {
       fetch('/activity/rows?' + query({ page: page }).toString())
         .then(function (r) { return r.text(); })
-        .then(function (html) { setHTML(rowsEl, html); selAll.checked = false; syncDel(); })
+        .then(function (html) { setHTML(rowsEl, html); selAll.checked = false; syncDel(); updateTimes(); })
         .catch(function () {});
     }
     function reload() { page = 1; syncState(); load(); }
@@ -152,12 +178,18 @@
     });
     psSel.addEventListener('change', reload);
 
+    // Status quick-filter chips.
+    document.querySelector('.sfilter').addEventListener('click', function (e) {
+      var chip = e.target.closest('.schip');
+      if (!chip) return;
+      currentStatus = chip.getAttribute('data-status') || '';
+      this.querySelectorAll('.schip').forEach(function (c) { c.classList.toggle('active', c === chip); });
+      reload();
+    });
+
     // Debounced live search.
     var qTimer = null;
-    qInput.addEventListener('input', function () {
-      clearTimeout(qTimer);
-      qTimer = setTimeout(reload, 300);
-    });
+    qInput.addEventListener('input', function () { clearTimeout(qTimer); qTimer = setTimeout(reload, 300); });
 
     function openRecord(id) {
       setHTML(recBody, '<p class="muted">Loading…</p>');
@@ -171,16 +203,23 @@
     document.addEventListener('keydown', function (e) { if (e.key === 'Escape') modal.hidden = true; });
 
     // Auto-refresh at the configured rate (Off = paused). Newest page only, never while reading.
+    function setLive() {
+      var ms = parseInt(refreshSel.value, 10) || 0;
+      liveDot.className = 'livedot ' + (ms > 0 ? 'on' : 'off');
+      liveText.textContent = ms > 0 ? 'Live · ' + (ms / 1000) + 's' : 'Paused';
+    }
     function applyRefresh() {
       if (timer) { clearInterval(timer); timer = null; }
       var ms = parseInt(refreshSel.value, 10) || 0;
       if (ms > 0) timer = setInterval(function () { if (page === 1 && modal.hidden) load(); }, ms);
+      setLive();
     }
     refreshSel.addEventListener('change', applyRefresh);
 
     syncState();
     load();
     applyRefresh();
+    setInterval(updateTimes, 15000);
   })();
 </script>
 {% endblock %}
