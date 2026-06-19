@@ -2,14 +2,6 @@
 {% block title %}Activity log{% endblock %}
 {% block main_class %}wide{% endblock %}
 {% block content %}
-<div class="row" style="align-items:flex-start;">
-  <div class="grow">
-    <h1>Activity log</h1>
-    <p class="muted">Every gateway feed poll, mock API call, Scenario mutation, and layer apply — with the real request &amp; response. Live; secrets redacted. Click a row to inspect it.</p>
-  </div>
-  <span class="livewrap"><span class="livedot on" id="livedot"></span><span id="livetext">Live</span></span>
-</div>
-
 <form method="post" action="/activity/delete" id="act-form">
   <input type="hidden" name="page_size" id="ps-hidden" value="{{ page_size }}">
   <input type="hidden" name="q" id="q-hidden" value="{{ q }}">
@@ -30,6 +22,7 @@
           <option value="10000">10s</option><option value="30000">30s</option>
         </select>
       </label>
+      <span class="livewrap" style="margin-left:2px;"><span class="livedot on" id="livedot"></span><span id="livetext">Live</span></span>
     </div>
     <div class="cmdrow" style="margin-top:11px;">
       <div class="msel" id="msel-status">

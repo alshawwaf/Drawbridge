@@ -32,10 +32,12 @@ class Settings(BaseSettings):
     # Default Generic DC poll interval hint shown in the UI (seconds). Min 10 per sk167210.
     default_gdc_interval: int = 10
 
-    # SIEM receiver: the TCP+UDP port the built-in Log Exporter listener binds (0 = disabled).
-    # Use a high port (e.g. 5514) to avoid needing root for the privileged 514; point Check Point's
-    # cp_log_export target-port here. Must also be published by docker-compose / the host firewall.
-    syslog_port: int = 0
+    # SIEM receiver: the TCP+UDP port the built-in Log Exporter listener binds. On by default (5514,
+    # a high port that needs no root); set 0 to disable. Binding is best-effort — if the port is taken
+    # the app still runs. For *external* gateways to reach it, the port must also be published at the
+    # deployment edge (docker-compose does; on Dokploy add a TCP+UDP entrypoint). Point Check Point's
+    # cp_log_export target-port here.
+    syslog_port: int = 5514
 
 
 @lru_cache
