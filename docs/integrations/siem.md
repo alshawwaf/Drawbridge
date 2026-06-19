@@ -52,11 +52,18 @@ Set `DCSIM_SYSLOG_PORT=0` to disable the listener.
 > UDP**. Dokploy's Traefik only publishes HTTP/443, so 5514 has to be exposed explicitly — three layers,
 > like Nutanix's 9440.
 
-**1. Publish 5514 (TCP + UDP) from the app container.** The app already listens on 5514 inside the
-container; map it to the host. Preferred — in Dokploy's app **Advanced → Ports**, add `5514:5514/tcp`
-and `5514:5514/udp`. If that UI isn't available, run a socat sidecar **on the app's Docker network**
-(find the names with `docker network ls` / `docker ps`) that publishes to the host and forwards to the
-app — note it targets the **app container's 5514**, never 443:
+**1. Publish 5514 (TCP *and* UDP) from the app.** The app already listens on 5514 inside the container.
+In Dokploy → your app → **Advanced → Ports → Create**, add an entry: **Published Port** `5514`,
+**Target Port** `5514`, **Protocol** `TCP`, **Mode** `Host`. Then add a **second** entry, identical but
+**Protocol** `UDP` (the dialog is one protocol at a time; Log Exporter commonly uses UDP). Choose
+**Host** mode, *not* Ingress: Host publishes the port on the node, works reliably for UDP, and
+**preserves the gateway's real source IP** so the SIEM page's *Source* column is meaningful. Ingress
+routes through Swarm's mesh, which SNATs the source (every log shows the same mesh IP) and is flaky for
+UDP. With this, **no socat is needed**.
+
+_Fallback only if that Ports UI is unavailable_ — a socat sidecar **on the app's Docker network** (find
+the names with `docker network ls` / `docker ps`) that publishes to the host and forwards to the **app
+container's 5514**, never 443:
 
 ```bash
 NET=<dokploy-app-network>; APP=<app-container-name>     # from docker network ls / docker ps
