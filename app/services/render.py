@@ -108,6 +108,7 @@ def render_ioc(feed: Feed) -> tuple[str, str]:
     desc = " ".join((feed.description or feed.name or "").split())
     if desc:
         buf.write(f"#! DESCRIPTION = {desc}\n")
+    buf.write("#UNIQ-NAME,VALUE,TYPE,CONFIDENCE,SEVERITY,PRODUCT,COMMENT\n")  # documented header line
     writer = csv.writer(buf, lineterminator="\n")
     for ind in feed.content.get("indicators", []):
         writer.writerow([ind.get(col, "") for col in _IOC_COLUMNS])
