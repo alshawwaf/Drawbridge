@@ -39,8 +39,47 @@ ports:
   - "${DCSIM_SYSLOG_PORT:-5514}:${DCSIM_SYSLOG_PORT:-5514}/tcp"
 ```
 
-On a Dokploy/Traefik host, add a TCP **and** UDP entrypoint for the port (or a `socat` passthrough),
-the same way the Nutanix `9440` port is exposed. Set `DCSIM_SYSLOG_PORT=0` to disable the listener.
+Set `DCSIM_SYSLOG_PORT=0` to disable the listener.
 
 > A high port (5514) avoids needing root for the privileged 514. Plain syslog is unencrypted; Log
 > Exporter's TLS option terminates at a real syslog/TLS endpoint, which this demo receiver doesn't do.
+
+## Exposing 5514 end-to-end (Dokploy/Traefik + cloud edge)
+
+> ⚠️ **This is *not* the Nutanix `socat 9440→443` trick.** Nutanix is HTTPS, so 9440 could piggyback
+> on the already-published 443. Syslog is **raw** (and usually **UDP**) — 443 is the web server and
+> can't parse it. The traffic must reach the app's **own 5514 listener**, and you need **both TCP and
+> UDP**. Dokploy's Traefik only publishes HTTP/443, so 5514 has to be exposed explicitly — three layers,
+> like Nutanix's 9440.
+
+**1. Publish 5514 (TCP + UDP) from the app container.** The app already listens on 5514 inside the
+container; map it to the host. Preferred — in Dokploy's app **Advanced → Ports**, add `5514:5514/tcp`
+and `5514:5514/udp`. If that UI isn't available, run a socat sidecar **on the app's Docker network**
+(find the names with `docker network ls` / `docker ps`) that publishes to the host and forwards to the
+app — note it targets the **app container's 5514**, never 443:
+
+```bash
+NET=<dokploy-app-network>; APP=<app-container-name>     # from docker network ls / docker ps
+docker run -d --name dcsim-siem-tcp --restart unless-stopped --network "$NET" -p 5514:5514/tcp \
+  alpine/socat TCP-LISTEN:5514,fork,reuseaddr "TCP:$APP:5514"
+docker run -d --name dcsim-siem-udp --restart unless-stopped --network "$NET" -p 5514:5514/udp \
+  alpine/socat UDP-LISTEN:5514,fork,reuseaddr "UDP:$APP:5514"
+```
+
+**2. The host firewall** (if `ufw` is active):
+```bash
+sudo ufw allow 5514/tcp
+sudo ufw allow 5514/udp
+```
+
+**3. The cloud / CloudShare edge.** Open inbound **TCP 5514 *and* UDP 5514** at the same perimeter
+where you opened 9440 (security group / NSG / CloudShare networking) — this is the layer that bites:
+443 is forwarded there, 5514 stays dropped until you add it.
+
+**Verify** from a host outside the VM's LAN:
+```bash
+printf '<134>CEF:0|Test|Test|1|1|probe|1|msg=hello\n' | nc -u -w1 <portal-host> 5514   # UDP
+printf '<134>CEF:0|Test|Test|1|1|probe|1|msg=hello\n' | nc    -w1 <portal-host> 5514   # TCP
+```
+The line should appear on the **SIEM** page. No gateway handy? **Send test log** on that page exercises
+the parser + viewer without any of the above.
