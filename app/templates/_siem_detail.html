@@ -1,0 +1,18 @@
+<div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom:14px;">
+  <span class="pill">{{ log.fmt|upper }}</span>
+  <span class="pill faint">{{ log.transport }}</span>
+  {% if log.severity %}<span class="pill">severity {{ log.severity }}</span>{% endif %}
+  <span class="muted" style="font-size:12px;">from {{ log.source_ip or '—' }}{% if log.host %} · host <b>{{ log.host }}</b>{% endif %} · {{ log.at.strftime('%Y-%m-%d %H:%M:%S') }} UTC</span>
+</div>
+
+<h4 style="margin:0 0 6px;">Parsed fields</h4>
+{% if log.fields %}
+<div class="tablewrap">
+<table class="acttable"><tbody>
+  {% for k, v in log.fields.items() %}<tr><td style="white-space:nowrap; font-weight:600; vertical-align:top;">{{ k }}</td><td><code style="word-break:break-all;">{{ v }}</code></td></tr>{% endfor %}
+</tbody></table>
+</div>
+{% else %}<p class="muted">No structured fields parsed from this line.</p>{% endif %}
+
+<h4 style="margin:18px 0 6px;">Raw line</h4>
+<pre style="white-space:pre-wrap; word-break:break-all;">{{ log.raw }}</pre>

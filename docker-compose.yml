@@ -10,6 +10,13 @@ services:
       - DCSIM_ADMIN_USERNAME=${DCSIM_ADMIN_USERNAME:-admin}
       - DCSIM_ADMIN_PASSWORD=${DCSIM_ADMIN_PASSWORD}
       - DCSIM_DATABASE_URL=sqlite:////data/dcsim.db
+      # SIEM receiver port (Check Point Log Exporter target). 0 disables the listener.
+      - DCSIM_SYSLOG_PORT=${DCSIM_SYSLOG_PORT:-5514}
+    ports:
+      # Raw syslog/CEF/LEEF from Log Exporter isn't HTTP, so it bypasses Caddy and is published
+      # straight from the app. Point cp_log_export target-port at this port (host = container).
+      - "${DCSIM_SYSLOG_PORT:-5514}:${DCSIM_SYSLOG_PORT:-5514}/udp"
+      - "${DCSIM_SYSLOG_PORT:-5514}:${DCSIM_SYSLOG_PORT:-5514}/tcp"
     volumes:
       - dcsim-data:/data
     restart: unless-stopped
