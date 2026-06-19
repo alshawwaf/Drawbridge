@@ -2,7 +2,7 @@
 {% block title %}{{ dc.name }}{% endblock %}
 {% import "_macros.html" as cp %}
 {% block content %}
-<div id="dc-meta" data-dc-id="{{ dc.id }}" hidden></div>
+<div id="inline-edit-meta" data-quick-edit-url="/datacenters/{{ dc.id }}/quick-edit" hidden></div>
 {% if dc.provider == 'vcenter' %}
 <div class="row">
   <div class="grow"><h1><span class="dc-name">{{ dc.name }}</span> <span class="pill">{{ dc.provider }}</span> <button type="button" class="copybtn cf-edit-name" title="Rename this datacenter" style="vertical-align:middle; font-size:12px;">Rename</button></h1>
@@ -313,92 +313,5 @@ curl -s {{ keystone_url[:-3] }}/nova/v2.1/servers/detail -H "X-Auth-Token: $TOKE
 </div>
 {% endif %}
 
-<script>
-  /* Inline quick-edit for the detail page: rename, and set/change/clear credentials in place. Each
-     save POSTs to /datacenters/{id}/quick-edit and reloads so the whole page reflects the change. */
-  (function () {
-    var meta = document.getElementById('dc-meta');
-    if (!meta) return;
-    var dcId = meta.dataset.dcId;
-
-    function save(field, value) {
-      return fetch('/datacenters/' + dcId + '/quick-edit', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ field: field, value: value })
-      }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); });
-    }
-    function mkbtn(text) { var b = document.createElement('button'); b.type = 'button'; b.className = 'copybtn'; b.textContent = text; return b; }
-    function showErr(container, msg) {
-      var e = container.querySelector('.cf-err');
-      if (!e) { e = document.createElement('span'); e.className = 'cf-err'; e.style.cssText = 'color:var(--danger); font-size:12px;'; container.appendChild(e); }
-      e.textContent = msg || 'Update failed';
-    }
-
-    document.querySelectorAll('.copyfield[data-cf-field] .cf-edit').forEach(function (editBtn) {
-      var row = editBtn.closest('.copyfield');
-      editBtn.addEventListener('click', function () {
-        if (row.querySelector('.cf-editor')) return;
-        var field = row.getAttribute('data-cf-field');
-        var secret = field === 'password';
-        var valEl = row.querySelector('.cf-val');
-        var cur = secret ? '' : (valEl ? valEl.textContent.trim() : '');
-        if (cur === 'any') cur = '';
-        var hidden = [];
-        Array.prototype.forEach.call(row.children, function (c) {
-          if (!c.classList.contains('cf-label')) { hidden.push(c); c.style.display = 'none'; }
-        });
-        var ed = document.createElement('span');
-        ed.className = 'cf-editor';
-        ed.style.cssText = 'display:flex; gap:6px; align-items:center; flex:1 1 auto; min-width:0; flex-wrap:wrap;';
-        var input = document.createElement('input');
-        input.type = secret ? 'password' : 'text';
-        input.value = cur;
-        if (secret) { input.placeholder = 'New password'; input.autocomplete = 'new-password'; }
-        input.style.cssText = 'flex:1 1 160px; min-width:0; margin:0;';
-        var saveB = mkbtn('Save'), cancelB = mkbtn('Cancel');
-        ed.appendChild(input); ed.appendChild(saveB); ed.appendChild(cancelB);
-        var clearB = secret ? mkbtn('Clear') : null;
-        if (clearB) ed.appendChild(clearB);
-        row.appendChild(ed);
-        input.focus();
-        function restore() { ed.remove(); hidden.forEach(function (c) { c.style.display = ''; }); }
-        function commit(v) { saveB.disabled = true; save(field, v).then(function (res) { if (res.ok) location.reload(); else { saveB.disabled = false; showErr(ed, res.j.error); } }); }
-        saveB.addEventListener('click', function () { commit(input.value.trim()); });
-        if (clearB) clearB.addEventListener('click', function () { commit(''); });
-        cancelB.addEventListener('click', restore);
-        input.addEventListener('keydown', function (e) {
-          if (e.key === 'Enter') { e.preventDefault(); commit(input.value.trim()); }
-          else if (e.key === 'Escape') { restore(); }
-        });
-      });
-    });
-
-    var nameBtn = document.querySelector('.cf-edit-name');
-    var nameEl = document.querySelector('.dc-name');
-    if (nameBtn && nameEl) {
-      nameBtn.addEventListener('click', function () {
-        if (document.querySelector('.dc-name-edit')) return;
-        var wrap = document.createElement('span');
-        wrap.className = 'dc-name-edit';
-        wrap.style.cssText = 'display:inline-flex; gap:6px; align-items:center; flex-wrap:wrap;';
-        var input = document.createElement('input');
-        input.type = 'text'; input.value = nameEl.textContent.trim();
-        input.style.cssText = 'font:inherit; max-width:380px; margin:0;';
-        var saveB = mkbtn('Save'), cancelB = mkbtn('Cancel');
-        wrap.appendChild(input); wrap.appendChild(saveB); wrap.appendChild(cancelB);
-        nameEl.style.display = 'none'; nameBtn.style.display = 'none';
-        nameEl.parentNode.insertBefore(wrap, nameEl);
-        input.focus(); input.select();
-        function restore() { wrap.remove(); nameEl.style.display = ''; nameBtn.style.display = ''; }
-        function commit() { saveB.disabled = true; save('name', input.value.trim()).then(function (res) { if (res.ok) location.reload(); else { saveB.disabled = false; showErr(wrap, res.j.error); } }); }
-        saveB.addEventListener('click', commit);
-        cancelB.addEventListener('click', restore);
-        input.addEventListener('keydown', function (e) {
-          if (e.key === 'Enter') { e.preventDefault(); commit(); }
-          else if (e.key === 'Escape') { restore(); }
-        });
-      });
-    }
-  })();
-</script>
+{% include "_inline_edit_js.html" %}
 {% endblock %}

@@ -1,11 +1,11 @@
 {% extends "base.html" %}
-{% block title %}New IoC Feed{% endblock %}
+{% block title %}{{ 'Edit' if editing|default(false) else 'New' }} IoC Feed{% endblock %}
 {% block content %}
-<h1>New IoC Feed <span class="pill">Custom Intelligence</span></h1>
+<h1>{{ 'Edit' if editing|default(false) else 'New' }} IoC Feed <span class="pill">Custom Intelligence</span></h1>
 <p class="muted">A threat-intel feed Anti-Bot / Anti-Virus (or IPS, for Snort) fetch and enforce. Pick the wire format the gateway expects, fill in the content, then Create.</p>
 {% if error %}<div class="err" style="margin:12px 0;">{{ error }}</div>{% endif %}
 
-<form method="post" action="/feeds/new/ioc" class="card">
+<form method="post" action="{{ action|default('/feeds/new/ioc') }}" class="card">
   <label>Feed name</label>
   <input name="name" value="{{ form.name }}" placeholder="Threat-intel-IoC" required>
 
@@ -66,12 +66,12 @@
   <p class="muted">IoC feeds authenticate with a username/password (<code>ioc_feeds --user_name</code>, R81.20+). Leave blank for an open feed.</p>
   <div class="row">
     <div class="grow"><label>Username</label><input name="basic_user" value="{{ form.basic_user }}" placeholder="feeduser"></div>
-    <div class="grow"><label>Password</label><input name="basic_pass" type="password" placeholder="(secret)"></div>
+    <div class="grow"><label>Password</label><input name="basic_pass" type="password" placeholder="{{ 'Leave blank to keep the saved password' if editing|default(false) else '(secret)' }}"></div>
   </div>
 
   <div style="margin-top:20px;" class="row">
-    <button type="submit">Create feed</button>
-    <a class="btn secondary" href="/">Cancel</a>
+    <button type="submit">{{ 'Save changes' if editing|default(false) else 'Create feed' }}</button>
+    <a class="btn secondary" href="{{ cancel|default('/') }}">Cancel</a>
   </div>
 </form>
 
