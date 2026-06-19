@@ -9,7 +9,7 @@ qemu-guest-agent), **Nodes**, an optional **Cluster**, and **Tags**. It authenti
 This is the first cut, built to the documented endpoints + the Proxmox API shape; the exact calls
 CloudGuard makes are confirmed from the portal Activity log and the responses tuned to match.
 """
-from ..security import verify_password
+from . import dc_creds
 
 _NODE = "pve"  # single-node cluster — Clusters are optional for single-node setups (per R82.10 doc)
 
@@ -149,12 +149,12 @@ def _parse_token(authorization: str):
 def auth_ok(dc, authorization: str) -> bool:
     """Validate the API token against the datacenter's configured one; permissive if none set."""
     cfg = (dc.content or {}).get("auth") or {}
-    if not cfg.get("secret_hash"):
+    if not dc_creds.configured(cfg, "secret"):
         return True                                   # open lab — accept any (or no) token
     token_id, secret = _parse_token(authorization)
     if not token_id:
         return False
-    return token_id == cfg.get("token_id") and verify_password(secret, cfg["secret_hash"])
+    return token_id == cfg.get("token_id") and bool(dc_creds.matches(cfg, secret, "secret"))
 
 
 def authorized(dc, authorization: str = "") -> bool:

@@ -23,7 +23,7 @@ import socket
 import ssl
 import uuid
 
-from ..security import verify_password
+from . import dc_creds
 
 _NS_DEFAULT = "default"
 
@@ -174,10 +174,10 @@ def _bearer(authorization: str) -> str:
 def auth_ok(dc, authorization: str) -> bool:
     """Validate the bearer token against the datacenter's configured one; permissive if none set."""
     cfg = (dc.content or {}).get("auth") or {}
-    if not cfg.get("token_hash"):
+    if not dc_creds.configured(cfg, "token"):
         return True                                   # open lab — accept any (or no) token
     token = _bearer(authorization)
-    return bool(token) and verify_password(token, cfg["token_hash"])
+    return bool(token) and bool(dc_creds.matches(cfg, token, "token"))
 
 
 def authorized(dc, authorization: str = "") -> bool:

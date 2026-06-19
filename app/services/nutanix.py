@@ -23,7 +23,7 @@ v4** first and falls back to **v3** (both modeled here so either path works). Au
 import base64
 import uuid
 
-from ..security import verify_password
+from . import dc_creds
 
 _UID_NS = uuid.UUID("00000000-0000-0000-0000-0000000c0ffe")
 
@@ -163,12 +163,12 @@ def _basic(authorization: str):
 def auth_ok(dc, authorization: str) -> bool:
     """Validate Basic credentials against the datacenter's configured ones; permissive if none set."""
     cfg = (dc.content or {}).get("auth") or {}
-    if not cfg.get("password_hash"):
+    if not dc_creds.configured(cfg):
         return True                                   # open lab — accept any (or no) credentials
     user, pwd = _basic(authorization)
     if user is None:
         return False
-    return user == cfg.get("username") and verify_password(pwd, cfg["password_hash"])
+    return user == cfg.get("username") and bool(dc_creds.matches(cfg, pwd))
 
 
 def authorized(dc, authorization: str = "") -> bool:

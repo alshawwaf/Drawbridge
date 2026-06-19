@@ -18,7 +18,7 @@ import datetime as dt
 import re
 import uuid
 
-from ..security import verify_password
+from . import dc_creds
 
 VIM_NS = "urn:vim25"
 
@@ -122,9 +122,9 @@ def auth_ok(dc, username: str, password: str) -> bool:
     """Validate the SOAP Login credentials against the datacenter's configured ones; permissive
     if none are configured."""
     cfg = (dc.content or {}).get("auth") or {}
-    if not cfg.get("password_hash"):
+    if not dc_creds.configured(cfg):
         return True
-    return username == cfg.get("username") and verify_password(password, cfg["password_hash"])
+    return username == cfg.get("username") and bool(dc_creds.matches(cfg, password))
 
 
 def login_fault() -> str:
