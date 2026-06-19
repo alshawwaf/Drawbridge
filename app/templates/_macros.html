@@ -1,0 +1,27 @@
+{# Copyable connection-field rows for the detail pages. #}
+{% macro cval(label, value, hint="") %}
+<div class="copyfield">
+  <span class="cf-label">{{ label }}</span>
+  <span class="copy cf-val">{{ value }}</span>
+  <button class="copybtn" type="button" data-copy="{{ value }}">Copy</button>
+  {% if hint %}<div class="cf-hint muted">{{ hint }}</div>{% endif %}
+</div>
+{% endmacro %}
+
+{# Masked secret: copies the real value; "Show" reveals it (kept hidden by default for screen-shares). #}
+{% macro csecret(label, value, hint="") %}
+<div class="copyfield">
+  <span class="cf-label">{{ label }}</span>
+  <span class="copy cf-val cf-secret" data-secret="{{ value }}">••••••••</span>
+  <button class="copybtn" type="button" data-copy="{{ value }}">Copy</button>
+  <button class="copybtn cf-reveal" type="button">Show</button>
+  {% if hint %}<div class="cf-hint muted">{{ hint }}</div>{% endif %}
+</div>
+{% endmacro %}
+{# A plain, non-recoverable note (e.g. a hashed password the portal can't reveal). #}
+{% macro cnote(label, value) %}
+<div class="copyfield">
+  <span class="cf-label">{{ label }}</span>
+  <span class="cf-val muted" style="font-style:italic;">{{ value }}</span>
+</div>
+{% endmacro %}
