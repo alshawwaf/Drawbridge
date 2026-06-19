@@ -1,11 +1,11 @@
 {% extends "base.html" %}
-{% block title %}New NSX-T datacenter{% endblock %}
+{% block title %}{{ 'Edit' if editing|default(false) else 'New' }} NSX-T datacenter{% endblock %}
 {% block content %}
-<h1>New NSX-T datacenter</h1>
+<h1>{{ 'Edit' if editing|default(false) else 'New' }} NSX-T datacenter</h1>
 <p class="muted">Define the inventory the mock VMware NSX-T Manager (Policy Mode REST API) will serve. Point a SmartConsole <i>VMware NSX-T</i> Data Center object at the portal to import Groups, VMs, and Tags.</p>
 {% if error %}<div class="err" style="margin:12px 0;">{{ error }}</div>{% endif %}
 
-<form method="post" action="/datacenters/new/nsxt" class="card">
+<form method="post" action="{{ action|default('/datacenters/new/nsxt') }}" class="card">
   <label>Name</label>
   <input name="name" value="{{ form.name }}" placeholder="NSX-T-lab" required>
 
@@ -24,12 +24,13 @@
   <label>Username</label>
   <input name="nsxt_username" value="{{ form.nsxt_username }}" placeholder="admin">
   <label>Password <span class="muted" style="font-weight:400;">— optional</span></label>
-  <input name="nsxt_password" type="password" autocomplete="new-password" placeholder="Leave blank to accept any read-only credentials (open lab)">
-  <p class="muted">If set, the mock validates the username + password on login and returns <code>403</code> on mismatch. Stored only as a one-way hash. Enter these in the SmartConsole NSX-T object (NSX-T role: Auditor or higher).</p>
+  <input name="nsxt_password" type="password" autocomplete="new-password" placeholder="{{ 'Leave blank to keep the saved password' if editing|default(false) else 'Leave blank to accept any read-only credentials (open lab)' }}">
+  {% if editing|default(false) and creds_set|default(false) %}<div class="check" style="margin-top:8px;"><input type="checkbox" id="clear_creds" name="clear_creds" value="1"><label for="clear_creds">Clear saved credentials (revert to an open lab)</label></div>{% endif %}
+  <p class="muted">If set, the mock validates the username + password on login and returns <code>403</code> on mismatch. Stored encrypted at rest (AES-256-GCM; a one-way hash only if encryption is unavailable). Enter these in the SmartConsole NSX-T object (NSX-T role: Auditor or higher).</p>
 
   <div class="row" style="margin-top:18px;">
-    <button type="submit">Create datacenter</button>
-    <a class="btn secondary" href="/datacenters">Cancel</a>
+    <button type="submit">{{ 'Save changes' if editing|default(false) else 'Create datacenter' }}</button>
+    <a class="btn secondary" href="{{ cancel|default('/datacenters') }}">Cancel</a>
   </div>
 </form>
 {% endblock %}

@@ -1,11 +1,11 @@
 {% extends "base.html" %}
-{% block title %}New Nutanix datacenter{% endblock %}
+{% block title %}{{ 'Edit' if editing|default(false) else 'New' }} Nutanix datacenter{% endblock %}
 {% block content %}
-<h1>New Nutanix datacenter</h1>
+<h1>{{ 'Edit' if editing|default(false) else 'New' }} Nutanix datacenter</h1>
 <p class="muted">Define the inventory the mock <b>Nutanix Prism</b> (REST) will serve. Point a SmartConsole <i>Nutanix</i> Data Center object at the portal to import <b>VMs</b> (with their IPs) and the <b>Categories</b> (Prism key/value tags) applied to them. Serves both Prism <b>v3</b> and <b>v4</b> (CloudGuard probes v4, falls back to v3).</p>
 {% if error %}<div class="err" style="margin:12px 0;">{{ error }}</div>{% endif %}
 
-<form method="post" action="/datacenters/new/nutanix" class="card">
+<form method="post" action="{{ action|default('/datacenters/new/nutanix') }}" class="card">
   <label>Name</label>
   <input name="name" value="{{ form.name }}" placeholder="Nutanix-lab" required>
 
@@ -20,12 +20,13 @@
   <label>Username</label>
   <input name="nutanix_username" value="{{ form.nutanix_username }}" placeholder="admin">
   <label>Password <span class="muted" style="font-weight:400;">— optional</span></label>
-  <input name="nutanix_password" type="password" autocomplete="new-password" placeholder="Leave blank to accept any credentials (open lab)">
-  <p class="muted">If set, the mock validates the <code>Authorization: Basic</code> header and returns <code>401</code> on mismatch. Stored only as a one-way hash. A Prism Viewer role is enough.</p>
+  <input name="nutanix_password" type="password" autocomplete="new-password" placeholder="{{ 'Leave blank to keep the saved password' if editing|default(false) else 'Leave blank to accept any credentials (open lab)' }}">
+  {% if editing|default(false) and creds_set|default(false) %}<div class="check" style="margin-top:8px;"><input type="checkbox" id="clear_creds" name="clear_creds" value="1"><label for="clear_creds">Clear saved credentials (revert to an open lab)</label></div>{% endif %}
+  <p class="muted">If set, the mock validates the <code>Authorization: Basic</code> header and returns <code>401</code> on mismatch. Stored encrypted at rest (AES-256-GCM; a one-way hash only if encryption is unavailable). A Prism Viewer role is enough.</p>
 
   <div class="row" style="margin-top:18px;">
-    <button type="submit">Create datacenter</button>
-    <a class="btn secondary" href="/datacenters">Cancel</a>
+    <button type="submit">{{ 'Save changes' if editing|default(false) else 'Create datacenter' }}</button>
+    <a class="btn secondary" href="{{ cancel|default('/datacenters') }}">Cancel</a>
   </div>
 </form>
 {% endblock %}
