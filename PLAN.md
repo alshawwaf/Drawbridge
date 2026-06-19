@@ -9,7 +9,9 @@ dynamic-object analog of the RADIUS/TACACS simulator.
 - **Hosting:** cloud-hosted via **Dokploy** (Traefik handles domain + Let's Encrypt TLS; panel
   at https://dokploy.ai.alshawwaf.ca/) **and** Docker-portable (Caddy/compose) for local/
   air-gapped labs. See `DEPLOY.md`.
-- **v1 scope:** three file feeds (Generic DC, IoC, Network Feed) **+ one cloud-API mock.**
+- **v1 scope:** three file feeds (Generic DC, IoC, Network Feed) **+ one cloud-API mock** — all
+  shipped, and since extended well beyond: **8 datacenter mocks**, the **Dynamic Layers** push side,
+  a **SIEM receiver**, and PoV **seed / bundle** tooling. See `ASSESSMENT.md` for the current state.
 - **Stack:** Python · FastAPI · Pydantic · SQLAlchemy 2.0 · SQLite · Jinja2 + HTMX · Caddy.
 
 ## Verified feed formats (from the docs — the foundation)
@@ -37,15 +39,18 @@ dynamic-object analog of the RADIUS/TACACS simulator.
   login (PBKDF2), poll logging, Dockerfile + Caddyfile + compose, docs.
 - **M1 Generic DC** ✅ — schema + range validator, CRUD API, public JSON endpoint, custom-header
   auth, live-poll UI, unit tests.
-- **M2 IoC** — CSV generator (header `#`, column/enum validation), `/ioc/<token>.csv`.
-- **M3 Network Feed** — flat-list + JSON/JQ modes, basic auth, `/netfeed/<token>`, surface the
-  JQ query to paste into SmartConsole.
-- **M4 Scenario engine** — scheduled/randomized mutations, one-click presets (blocklist grows,
-  autoscale, threat-intel burst), live request-log panel.
-- **M5 Cloud-API mock** — decide OpenStack (Keystone+Nova+Neutron, clean self-contained mock)
-  vs Kubernetes API. Mock the exact REST surface CP's datacenter connector calls.
-- **M6 Polish** — Check Point branding, feed templates/presets, import-from-real-source
-  (AWS/Atlassian ranges), export/share, demo-prereqs doc (port 18208, cert trust).
+- **M2 IoC** ✅ — CSV generator (header `#`, column/enum validation), `/ioc/<token>.csv`; later
+  extended with **STIX 1.x**, **Custom CSV**, and **Snort** formats.
+- **M3 Network Feed** ✅ — flat-list + JSON/JQ modes, basic auth, `/netfeed/<token>`, JQ query
+  surfaced for SmartConsole.
+- **M4 Scenario engine** ✅ — live mutations, one-click presets (quarantine / scale-out / blocklist),
+  **server-side timed runner** + live timeline + per-preset **talk-tracks**, baseline/reset.
+- **M5 Cloud-API mock** ✅ — OpenStack chosen, then extended to **8 datacenter providers** built to
+  each connector's exact REST/SOAP/XML surface.
+- **M6 Polish** ⏳ — **done:** one-click **seed**, PoV **bundle export/import**, talk-tracks, full
+  edit/inline-edit. **Pending:** Check Point **branding/logo**.
+- _Beyond the plan:_ **Dynamic Layers** push (`set-dynamic-content`, real + mock gateway), saved
+  **Gateways** (AES-GCM creds + trust-on-first-use), and a **SIEM receiver** (Log Exporter sink).
 
 ## Notes / prerequisites for the demo
 - Generic DC pushes updates over port **18208** (Management → Gateway) — customer-side.
