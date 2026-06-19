@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}{{ feed.name }}{% endblock %}
+{% import "_macros.html" as cp %}
 {% block content %}
 <div class="row">
   <div class="grow">
@@ -41,6 +42,13 @@
     <p class="muted"><b>In SmartConsole:</b> create a <i>Network Feed</i> object, set the URL above, Format = <b>{{ fmt }}</b>, Data type = <b>{{ dtypes[feed.content.data_type] }}</b>{% if feed.content.format == 'json' %}, JSON Query = <code>{{ feed.content.jq_query }}</code>{% endif %}{% if feed.auth_header_key %}, and the username/password under Authentication{% endif %}.</p>
     <h2>Test from a shell</h2>
     <pre>curl -s {% if feed.auth_header_key %}-u "{{ feed.auth_header_key }}:&lt;password&gt;" {% endif %}{{ url }}</pre>
+  {% endif %}
+  {% if feed.auth_header_key %}
+  <h3 style="margin:16px 0 8px;">{{ 'Custom Header' if feed.type.value == 'generic_dc' else 'Basic auth' }} — paste into SmartConsole</h3>
+  {{ cp.cval('Header name' if feed.type.value == 'generic_dc' else 'Username', feed.auth_header_key) }}
+  {{ cp.csecret('Header value' if feed.type.value == 'generic_dc' else 'Password', feed.auth_header_value) }}
+  {% else %}
+  <p class="muted" style="margin-top:12px;">Open feed — no authentication required.</p>
   {% endif %}
 </div>
 

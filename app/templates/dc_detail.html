@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}{{ dc.name }}{% endblock %}
+{% import "_macros.html" as cp %}
 {% block content %}
 {% if dc.provider == 'vcenter' %}
 <div class="row">
@@ -19,10 +20,15 @@
     <button class="copybtn" type="button" data-copy="{{ apex_host }}">Copy</button>
   </div>
   <p class="muted" style="margin:6px 0 0; font-size:12px;">vCenter connects to <code>https://{{ apex_host }}/sdk</code>. The portal serves one vCenter at this host — if you have several, the most recently created is the one CloudGuard reaches.</p>
+  <h3 style="margin:16px 0 8px;">Credentials</h3>
   {% if dc_auth and dc_auth.username %}
-  <p class="muted" style="margin-top:10px;">Username <code>{{ dc_auth.username }}</code> · Password <code>(the one you set)</code> — the mock validates these on Login and returns <b>InvalidLogin</b> on anything else. Role: Auditor or higher. Click <i>Test Connection</i>, then import the VMs.</p>
+  {{ cp.cval("Username", dc_auth.username) }}
+  {{ cp.cnote("Password", "the one you set — stored hashed, not recoverable") }}
+  <p class="muted" style="margin-top:6px;">Validated on Login (<b>InvalidLogin</b> on mismatch). Role: Auditor or higher. Click <i>Test Connection</i>, then import the VMs.</p>
   {% else %}
-  <p class="muted" style="margin-top:10px;">Username <code>any</code> · Password <code>any</code> — the mock accepts any read-only credentials (no password set). Click <i>Test Connection</i>, then import the VMs.</p>
+  {{ cp.cval("Username", "any") }}
+  {{ cp.cval("Password", "any") }}
+  <p class="muted" style="margin-top:6px;">No password set — the mock accepts any read-only credentials. Click <i>Test Connection</i>, then import the VMs.</p>
   {% endif %}
 </div>
 
@@ -54,10 +60,15 @@
     <button class="copybtn" type="button" data-copy="{{ apex_host }}">Copy</button>
   </div>
   <p class="muted" style="margin:6px 0 0; font-size:12px;">The controller connects to <code>https://{{ apex_host }}/api/...</code> and <code>{{ "/global-manager/api/v1/global-infra/..." if is_global else "/policy/api/v1/..." }}</code>. The portal serves one {{ "Global NSX-T" if is_global else "NSX-T" }} at this host — if you have several, the most recently created is the one CloudGuard reaches.</p>
+  <h3 style="margin:16px 0 8px;">Credentials</h3>
   {% if dc_auth and dc_auth.username %}
-  <p class="muted" style="margin-top:10px;">Username <code>{{ dc_auth.username }}</code> · Password <code>(the one you set)</code> — the mock validates these and returns <b>403</b> on anything else. NSX-T role: Auditor or higher. Click <i>Test Connection</i>, then import.</p>
+  {{ cp.cval("Username", dc_auth.username) }}
+  {{ cp.cnote("Password", "the one you set — stored hashed, not recoverable") }}
+  <p class="muted" style="margin-top:6px;">Validated on every call (<b>403</b> on mismatch). NSX-T role: Auditor or higher. Click <i>Test Connection</i>, then import.</p>
   {% else %}
-  <p class="muted" style="margin-top:10px;">Username <code>any</code> · Password <code>any</code> — the mock accepts any read-only credentials (no password set). Click <i>Test Connection</i>, then import.</p>
+  {{ cp.cval("Username", "any") }}
+  {{ cp.cval("Password", "any") }}
+  <p class="muted" style="margin-top:6px;">No password set — the mock accepts any read-only credentials. Click <i>Test Connection</i>, then import.</p>
   {% endif %}
   <p class="muted"><b>Heads-up:</b> {{ "Global NSX-T" if is_global else "NSX-T" }} responses are tuned iteratively. If Test Connection or import isn't fully working yet, every call CloudGuard makes is captured in the <a href="/activity?kind=datacenter">Activity log</a>{% if is_global %} — Regions in particular are modeled from the first real trace{% endif %}, so the Policy-Mode responses can be matched.</p>
 </div>
@@ -89,10 +100,15 @@
     <button class="copybtn" type="button" data-copy="{{ apex_host }}:443">Copy</button>
   </div>
   <p class="muted" style="margin:6px 0 0; font-size:12px;"><b>The <code>:443</code> matters.</b> Proxmox defaults to port <b>8006</b>, but the portal answers on <b>443</b> — so set the port to 443 or CloudGuard won't reach it. It then calls <code>https://{{ apex_host }}:443/api2/json/...</code>. The portal serves one Proxmox at this host (most recently created wins).</p>
+  <h3 style="margin:16px 0 8px;">Credentials</h3>
   {% if dc_auth and dc_auth.token_id %}
-  <p class="muted" style="margin-top:10px;">API Token ID <code>{{ dc_auth.token_id }}</code> · Secret <code>(the one you set)</code> — the mock validates the <code>PVEAPIToken</code> header and returns <b>401</b> on mismatch. Token role: <code>PVEAuditor</code> (Sys.Audit / VM.Audit / VM.Monitor). Click <i>Test Connection</i>, then import.</p>
+  {{ cp.cval("Token ID", dc_auth.token_id) }}
+  {{ cp.cnote("Secret", "the one you set — stored hashed, not recoverable") }}
+  <p class="muted" style="margin-top:6px;">Validated via the <code>PVEAPIToken</code> header (<b>401</b> on mismatch). Token role: <code>PVEAuditor</code> (Sys.Audit / VM.Audit / VM.Monitor). Click <i>Test Connection</i>, then import.</p>
   {% else %}
-  <p class="muted" style="margin-top:10px;">No token set — the mock accepts any token. <b>But SmartConsole still needs a real-format Token ID</b> like <code>root@pam!cloudguard</code> (any Secret will do); a bare value such as <code>any</code> makes CloudGuard fail with <i>“Data Center service problem”</i> because it can't parse the token. Click <i>Test Connection</i>, then import.</p>
+  {{ cp.cval("Token ID", "root@pam!cloudguard") }}
+  {{ cp.cval("Secret", "any") }}
+  <p class="muted" style="margin-top:6px;">No token set — the mock accepts any token, but SmartConsole needs a <b>real-format Token ID</b> (above). A bare value like <code>any</code> makes CloudGuard fail with <i>“Data Center service problem”</i> — it can't parse the token. Click <i>Test Connection</i>, then import.</p>
   {% endif %}
   <p class="muted"><b>Heads-up:</b> Proxmox is a new R82.10 scanner and responses are tuned iteratively. Every <code>/api2/json</code> call CloudGuard makes is captured in the <a href="/activity?kind=datacenter">Activity log</a>, so the exact endpoints/shapes can be matched.</p>
 </div>
@@ -119,10 +135,15 @@
     <button class="copybtn" type="button" data-copy="{{ aci_url }}">Copy</button>
   </div>
   <p class="muted" style="margin:6px 0 0; font-size:12px;"><b>Just the host</b> (scheme required) — CloudGuard's APIC client uses only the host and calls <code>{{ aci_url }}/api/aaaLogin.xml</code> then <code>…/api/node/class/&lt;class&gt;.xml</code> at the root. It <i>ignores any path</i>, so this mock is served at the apex: the portal answers one ACI here (most recently created). Responses are APIC <b>XML</b> (the client unmarshals XML, not JSON).</p>
+  <h3 style="margin:16px 0 8px;">Credentials</h3>
   {% if dc_auth and dc_auth.username %}
-  <p class="muted" style="margin-top:10px;">Username <code>{{ dc_auth.username }}</code> · Password <code>(the one you set)</code> — validated on <code>aaaLogin</code>, returns <b>401</b> on mismatch. APIC role: read on Tenant/EPG. Click <i>Test Connection</i>, then import.</p>
+  {{ cp.cval("Username", dc_auth.username) }}
+  {{ cp.cnote("Password", "the one you set — stored hashed, not recoverable") }}
+  <p class="muted" style="margin-top:6px;">Validated on <code>aaaLogin</code> (<b>401</b> on mismatch). APIC role: read on Tenant/EPG. Click <i>Test Connection</i>, then import.</p>
   {% else %}
-  <p class="muted" style="margin-top:10px;">Username <code>any</code> · Password <code>any</code> — the mock accepts any credentials (none set). Click <i>Test Connection</i>, then import.</p>
+  {{ cp.cval("Username", "any") }}
+  {{ cp.cval("Password", "any") }}
+  <p class="muted" style="margin-top:6px;">No password set — the mock accepts any credentials. Click <i>Test Connection</i>, then import.</p>
   {% endif %}
   <p class="muted"><b>Heads-up:</b> Cisco ACI is a freshly-built mock, tuned iteratively. Every <code>/api/...</code> class query CloudGuard makes is captured in the <a href="/activity?kind=datacenter">Activity log</a> (filter → Data Center), so the responses can be matched to the first real trace.</p>
 </div>
@@ -195,10 +216,15 @@
     <button class="copybtn" type="button" data-copy="{{ apex_host }}">Copy</button>
   </div>
   <p class="muted" style="margin:6px 0 0; font-size:12px;"><b>Bare host only.</b> Nutanix's field rejects a scheme or <code>:port</code> (<i>"must be a valid IP address or DNS name"</i>), and the connector <b>hardcodes Prism Central's port 9440</b>. So the portal must be reachable at <code>{{ apex_host }}:9440</code> — the bundled <code>docker-compose.yml</code>/<code>Caddyfile</code> publish 9440; on a Dokploy/Traefik host add a 9440 TLS entrypoint (or a <code>socat 9440→443</code> passthrough). CloudGuard then probes v4 (<code>/api/vmm/v4.1/…</code>) and falls back to v3 (<code>/api/nutanix/v3/…</code>). One Nutanix per host (most recent wins).</p>
+  <h3 style="margin:16px 0 8px;">Credentials</h3>
   {% if dc_auth and dc_auth.username %}
-  <p class="muted" style="margin-top:10px;">Username <code>{{ dc_auth.username }}</code> · Password <code>(the one you set)</code> — Basic auth, validated on every call (<b>401</b> on mismatch). Prism <i>Viewer</i> role is enough. Click <i>Test Connection</i>, then import.</p>
+  {{ cp.cval("Username", dc_auth.username) }}
+  {{ cp.cnote("Password", "the one you set — stored hashed, not recoverable") }}
+  <p class="muted" style="margin-top:6px;">Basic auth, validated on every call (<b>401</b> on mismatch). Prism <i>Viewer</i> role is enough. Click <i>Test Connection</i>, then import.</p>
   {% else %}
-  <p class="muted" style="margin-top:10px;">Username <code>any</code> · Password <code>any</code> — the mock accepts any credentials (none set). Click <i>Test Connection</i>, then import.</p>
+  {{ cp.cval("Username", "any") }}
+  {{ cp.cval("Password", "any") }}
+  <p class="muted" style="margin-top:6px;">No password set — the mock accepts any credentials. Click <i>Test Connection</i>, then import.</p>
   {% endif %}
   <p class="muted"><b>Heads-up:</b> every <code>/api/nutanix</code>, <code>/api/vmm</code>, <code>/api/prism</code> call CloudGuard makes is captured in the <a href="/activity?kind=datacenter">Activity log</a> (filter → Data Center → Nutanix), so the responses can be matched to the first real trace.</p>
 </div>
@@ -227,10 +253,19 @@
     <span class="copy grow">{{ keystone_url }}</span>
     <button class="copybtn" type="button" data-copy="{{ keystone_url }}">Copy</button>
   </div>
+  <h3 style="margin:16px 0 8px;">Credentials</h3>
   {% if os_auth and os_auth.username %}
-  <p class="muted" style="margin-top:10px;">Username <code>{{ os_auth.username }}</code> · Password <code>(the one you set)</code> · Project <code>{{ os_auth.project or 'demo' }}</code> · Domain <code>Default</code> — the mock validates these and returns <b>401</b> on anything else. Click <i>Test Connection</i>, then import Instances, Security Groups, and Subnets.</p>
+  {{ cp.cval("Username", os_auth.username) }}
+  {{ cp.cnote("Password", "the one you set — stored hashed, not recoverable") }}
+  {{ cp.cval("Project", os_auth.project or 'demo') }}
+  {{ cp.cval("Domain", "Default") }}
+  <p class="muted" style="margin-top:6px;">Validated on auth (<b>401</b> on mismatch). Click <i>Test Connection</i>, then import Instances, Security Groups, and Subnets.</p>
   {% else %}
-  <p class="muted" style="margin-top:10px;">Username <code>admin</code> · Password <code>any</code> · Domain <code>Default</code> — the mock accepts any credentials (no password set). Click <i>Test Connection</i>, then import Instances, Security Groups, and Subnets.</p>
+  {{ cp.cval("Username", "admin") }}
+  {{ cp.cval("Password", "any") }}
+  {{ cp.cval("Project", "demo") }}
+  {{ cp.cval("Domain", "Default") }}
+  <p class="muted" style="margin-top:6px;">No password set — the mock accepts any credentials. Click <i>Test Connection</i>, then import Instances, Security Groups, and Subnets.</p>
   {% endif %}
   <h2>Test from a shell</h2>
   <pre>TOKEN=$(curl -sik {{ keystone_url }}/auth/tokens -H 'Content-Type: application/json' \
