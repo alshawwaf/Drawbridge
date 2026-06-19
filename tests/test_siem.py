@@ -70,7 +70,7 @@ def test_listener_receives_udp_and_tcp():
         s.bind(("127.0.0.1", 0))
         port = s.getsockname()[1]
         s.close()
-        rx = SyslogReceiver(port, lambda ip, transport, line: received.append((transport, line)))
+        rx = SyslogReceiver(port, received.extend)  # store callback now takes a batch (list of tuples)
         await rx.start()
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.sendto(b"<134>udp hello\n", ("127.0.0.1", port))
@@ -83,15 +83,20 @@ def test_listener_receives_udp_and_tcp():
         await rx.stop()
 
     asyncio.run(go())
-    assert {t for t, _ in received} == {"udp", "tcp"}
+    assert {t for _, t, _ in received} == {"udp", "tcp"}   # items are (ip, transport, line)
 
 
-def test_store_trims_to_cap():
+def test_store_trims_to_cap(monkeypatch):
+    monkeypatch.setattr(siem, "_max_records", lambda: 5)
     db = _session()
-    siem._LOG_CAP = 5  # shrink for the test
-    try:
-        for i in range(12):
-            siem.store_log(db, "1.1.1.1", "tcp", f"<134>msg {i}")
-        assert (db.scalar(select(func.count()).select_from(SiemLog)) or 0) == 5
-    finally:
-        siem._LOG_CAP = 2000
+    for i in range(12):
+        siem.store_log(db, "1.1.1.1", "tcp", f"<134>msg {i}")
+    assert (db.scalar(select(func.count()).select_from(SiemLog)) or 0) == 5
+
+
+def test_store_batch_persists_and_trims(monkeypatch):
+    monkeypatch.setattr(siem, "_max_records", lambda: 5)
+    db = _session()
+    n = siem.store_batch(db, [("1.1.1.1", "udp", f"<134>line {i}") for i in range(12)])
+    assert n == 12  # all parsed + inserted in one transaction
+    assert (db.scalar(select(func.count()).select_from(SiemLog)) or 0) == 5  # then trimmed to the cap

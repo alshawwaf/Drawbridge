@@ -9,7 +9,8 @@ from collections.abc import Callable
 
 log = logging.getLogger("dcsim.syslog")
 
-StoreFn = Callable[[str, str, str], None]  # (source_ip, transport, raw_line)
+StoreBatchFn = Callable[[list], None]  # (list of (source_ip, transport, raw_line) tuples)
+_BATCH_MAX = 500  # drain up to this many queued lines into one DB transaction
 
 
 class _UDPProtocol(asyncio.DatagramProtocol):
@@ -26,9 +27,9 @@ class _UDPProtocol(asyncio.DatagramProtocol):
 class SyslogReceiver:
     """Listens on udp+tcp/<port>; calls ``store_cb(ip, transport, line)`` per received log line."""
 
-    def __init__(self, port: int, store_cb: StoreFn):
+    def __init__(self, port: int, store_batch: StoreBatchFn):
         self.port = port
-        self.store_cb = store_cb
+        self.store_batch = store_batch
         self._queue: asyncio.Queue | None = None
         self._udp = None
         self._tcp: asyncio.AbstractServer | None = None
@@ -64,11 +65,16 @@ class SyslogReceiver:
     async def _consume(self) -> None:
         assert self._queue is not None
         while True:
-            ip, transport, line = await self._queue.get()
+            batch = [await self._queue.get()]  # block for the first, then drain what's waiting
+            while len(batch) < _BATCH_MAX:
+                try:
+                    batch.append(self._queue.get_nowait())
+                except asyncio.QueueEmpty:
+                    break
             try:
-                await asyncio.to_thread(self.store_cb, ip, transport, line)
+                await asyncio.to_thread(self.store_batch, batch)
             except Exception:  # noqa: BLE001
-                log.exception("SIEM receiver: failed to store a log line")
+                log.exception("SIEM receiver: failed to store a log batch")
 
     async def start(self) -> None:
         loop = asyncio.get_running_loop()

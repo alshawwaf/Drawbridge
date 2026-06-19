@@ -39,6 +39,10 @@ class Settings(BaseSettings):
     # cp_log_export target-port here.
     syslog_port: int = 5514
 
+    # SIEM receiver retention: keep only the newest N log records (a flooding gateway can't fill the
+    # disk — older rows are trimmed). It's a live demo viewer, not a log archive.
+    syslog_max_records: int = 2000
+
 
 @lru_cache
 def get_settings() -> Settings:

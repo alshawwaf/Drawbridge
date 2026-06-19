@@ -13,10 +13,20 @@
 <div class="card">
   <h2 style="margin-top:0;">Point Log Exporter here</h2>
   {% if enabled %}
-  <p class="muted">On the Management Server, add an export target (CEF over UDP shown; <code>tcp</code> and <code>syslog</code>/<code>leef</code>/<code>json</code> also work):</p>
+  <p class="muted">On the Management Server, add an export target. The receiver <b>auto-detects all of these</b> — pick whichever your SIEM expects and the command updates:</p>
+  <div class="row" style="gap:20px; margin:0 0 11px; flex-wrap:wrap; align-items:center;">
+    <span class="cmdpick" data-cmd="cmd-fmt" style="display:inline-flex; gap:6px; align-items:center;">
+      <span class="muted" style="font-size:11px; font-weight:700; letter-spacing:.5px;">FORMAT</span>
+      {% for f in ['cef', 'leef', 'json', 'syslog'] %}<button type="button" class="chip {{ 'active' if f == 'cef' else '' }}" data-val="{{ f }}">{{ f|upper }}</button>{% endfor %}
+    </span>
+    <span class="cmdpick" data-cmd="cmd-proto" style="display:inline-flex; gap:6px; align-items:center;">
+      <span class="muted" style="font-size:11px; font-weight:700; letter-spacing:.5px;">PROTOCOL</span>
+      {% for p in ['udp', 'tcp'] %}<button type="button" class="chip {{ 'active' if p == 'udp' else '' }}" data-val="{{ p }}">{{ p|upper }}</button>{% endfor %}
+    </span>
+  </div>
   <pre>cp_log_export add name dcsim-siem \
   target-server {{ host }} target-port {{ port }} \
-  protocol udp format cef
+  protocol <span id="cmd-proto">udp</span> format <span id="cmd-fmt">cef</span>
 cp_log_export restart name dcsim-siem</pre>
   <p class="muted" style="font-size:12px;">Listening on <code>{{ host }}:{{ port }}</code> (TCP + UDP). On a hosted instance, make sure that port is reachable from the Management Server — the bundled <code>docker-compose.yml</code> publishes it; on Dokploy add a TCP+UDP entrypoint (see <a href="https://github.com/alshawwaf/Datacenter-Integration-Simulator/blob/main/docs/integrations/siem.md">deployment notes</a>). No gateway yet? Click <b>Send test log</b>.</p>
   {% else %}
@@ -71,6 +81,17 @@ cp_log_export restart name dcsim-siem</pre>
     $('siem-close').addEventListener('click', function () { modal.hidden = true; });
     modal.addEventListener('click', function (e) { if (e.target === modal) modal.hidden = true; });
     document.addEventListener('keydown', function (e) { if (e.key === 'Escape') modal.hidden = true; });
+    // Format / protocol pickers rewrite the cp_log_export command (the receiver auto-detects all).
+    document.querySelectorAll('.cmdpick').forEach(function (grp) {
+      var out = document.getElementById(grp.getAttribute('data-cmd'));
+      grp.addEventListener('click', function (e) {
+        var c = e.target.closest('.chip'); if (!c) return;
+        grp.querySelectorAll('.chip').forEach(function (x) { x.classList.remove('active'); });
+        c.classList.add('active');
+        if (out) out.textContent = c.getAttribute('data-val');
+      });
+    });
+
     load();
     timer = setInterval(function () { if (modal.hidden) load(); }, 3000);
   })();
