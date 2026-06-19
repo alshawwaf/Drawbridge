@@ -65,8 +65,10 @@ def test_shell_renders_checkbox_filters_page_size_and_modal():
     assert 'input[type="checkbox"], input[type="radio"]' in html
     # new: search bar, auto-refresh control, and the Data Center sub-filter (vCenter, Proxmox…)
     assert 'id="q-input"' in html and 'id="refresh-rate"' in html
-    assert 'name="dcfilter" value="vcenter"' in html and 'name="dcfilter" value="proxmox"' in html
-    # new: status-class quick-filter chips
+    # data-center type is a dropdown (vCenter, Proxmox…) folded into the top toolbar
+    assert 'id="dc-select"' in html
+    assert 'value="vcenter"' in html and 'value="proxmox"' in html
+    # status-class quick-filter chips
     assert 'data-status="4xx"' in html and 'data-status=""' in html
 
 
