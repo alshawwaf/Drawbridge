@@ -1,8 +1,41 @@
+{% if stats %}
+<div class="statbar">
+  <div class="stat"><div class="stat-n">{{ stats.total }}</div><div class="stat-l">events</div></div>
+  <div class="stat"><div class="stat-n ok">{{ stats.ok }}</div><div class="stat-l">2xx success</div></div>
+  <div class="stat"><div class="stat-n {{ 'bad' if stats.err else '' }}">{{ stats.err }}</div><div class="stat-l">errors ≥ 400</div></div>
+  <div class="stat"><div class="stat-n">{{ stats.avg_ms }}<span class="stat-u">ms</span></div><div class="stat-l">avg latency</div></div>
+  <div class="stat"><div class="stat-n">{{ stats.sources }}</div><div class="stat-l">sources</div></div>
+</div>
+{% endif %}
+
 {% if not rows %}
-<p class="muted" style="padding:12px 0;">No activity yet. Poll a feed, curl the mock Gaia API, or apply a Dynamic Layer — it shows up here.</p>
+<p class="muted" style="padding:14px 2px;">No activity matches this view. Poll a feed, curl the mock Gaia API, run a Scenario, or apply a Dynamic Layer — it shows up here live.</p>
 {% else %}
+<div class="tablewrap">
+<table class="acttable">
+  <thead><tr>
+    <th style="width:22px;"></th><th>Time</th><th>Method</th><th>Status</th><th>Kind</th>
+    <th>Path</th><th>Source</th><th class="act-num">Latency</th>
+  </tr></thead>
+  <tbody>
+  {% for r in rows %}
+  <tr class="act-row" data-id="{{ r.id }}">
+    <td><input type="checkbox" name="ids" value="{{ r.id }}" class="row-cb" title="Select this record"></td>
+    <td><span class="act-time" data-ts="{{ r.at.isoformat() }}" title="{{ r.at.strftime('%Y-%m-%d %H:%M:%S') }} UTC">{{ r.at.strftime('%H:%M:%S') }}</span></td>
+    <td><span class="method m-{{ (r.method or '')|lower }}">{{ r.method or '—' }}</span></td>
+    <td>{% if r.status %}<span class="pill {{ 'ok' if 200 <= r.status < 300 else ('bad' if r.status >= 400 else 'faint') }}">{{ r.status }}</span>{% else %}<span class="muted">—</span>{% endif %}</td>
+    <td><span class="pill faint">{{ kind_labels.get(r.kind, r.kind) }}</span></td>
+    <td class="tcell-path"><span class="act-pathtext" title="{{ r.path }}">{{ r.path or '—' }}</span></td>
+    <td><span class="muted" style="font-size:12px; white-space:nowrap;">{{ r.source_ip or '—' }}</span></td>
+    <td class="act-num">{{ r.duration_ms }} ms</td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+
 {% if pages > 1 %}
-<div class="pager" style="flex-wrap:wrap;">
+<div class="pager" style="flex-wrap:wrap; padding-top:14px;">
   <button type="button" class="secondary" data-page="1"{% if page <= 1 %} disabled{% endif %}>« First</button>
   <button type="button" class="secondary" data-page="{{ page - 1 }}"{% if page <= 1 %} disabled{% endif %}>← Newer</button>
   {% set lo = [1, page - 2] | max %}
@@ -14,19 +47,7 @@
   {% if hi < pages %}{% if hi < pages - 1 %}<span class="muted">…</span>{% endif %}<button type="button" class="secondary" data-page="{{ pages }}">{{ pages }}</button>{% endif %}
   <button type="button" class="secondary" data-page="{{ page + 1 }}"{% if page >= pages %} disabled{% endif %}>Older →</button>
   <button type="button" class="secondary" data-page="{{ pages }}"{% if page >= pages %} disabled{% endif %}>Last »</button>
-  <span class="muted" style="margin-left:6px;">Page {{ page }} of {{ pages }} · {{ total }} events</span>
+  <span class="muted" style="margin-left:6px;">Page {{ page }} of {{ pages }}</span>
 </div>
 {% endif %}
-{% for r in rows %}
-<div class="act-row itemrow" data-id="{{ r.id }}" style="display:flex; align-items:center; gap:10px; cursor:pointer;">
-  <input type="checkbox" name="ids" value="{{ r.id }}" class="row-cb" title="Select this record">
-  <span class="muted" style="font-family:ui-monospace,monospace; font-size:12px;">{{ r.at.strftime('%Y-%m-%d %H:%M:%S') }}</span>
-  <span class="pill">{{ kind_labels.get(r.kind, r.kind) }}</span>
-  <code style="font-size:12px;">{{ r.method }} {{ r.path }}</code>
-  {% if r.source_ip %}<span class="muted" style="font-size:11px;">from {{ r.source_ip }}</span>{% endif %}
-  <span class="grow"></span>
-  {% if r.status %}<span class="pill {{ 'ok' if r.status == 200 else ('bad' if r.status >= 400 else '') }}">{{ r.status }}</span>{% endif %}
-  <span class="muted" style="font-size:11px;">{{ r.duration_ms }} ms</span>
-</div>
-{% endfor %}
 {% endif %}
