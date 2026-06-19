@@ -36,6 +36,30 @@ def canonical_type(value: str) -> str:
     return t
 
 
+# R81.20+: PRODUCT (Software Blade) must match the observable type, or the indicator won't load
+# (sk132193). IP/IP Range → Anti-Bot only; hashes → Anti-Virus only; URL/Domain/Mail-* → either.
+_TYPE_BLADES = {
+    "URL": {"AV", "AB"}, "Domain": {"AV", "AB"},
+    "IP": {"AB"}, "IP Range": {"AB"},
+    "MD5": {"AV"}, "SHA1": {"AV"}, "SHA256": {"AV"},
+    "Mail-subject": {"AV", "AB"}, "Mail-from": {"AV", "AB"}, "Mail-to": {"AV", "AB"},
+    "Mail-cc": {"AV", "AB"}, "Mail-reply-to": {"AV", "AB"},
+}
+_BLADE_CANON = {"av": "AV", "ab": "AB", "anti-virus": "AV", "antivirus": "AV",
+                "anti-bot": "AB", "antibot": "AB"}
+
+
+def canonical_blade(value: str) -> str:
+    """Map a PRODUCT token to AV or AB (empty stays empty), or raise ValueError."""
+    v = (value or "").strip()
+    if not v:
+        return ""
+    b = _BLADE_CANON.get(v.lower())
+    if b is None:
+        raise ValueError(f"product (Software Blade) must be AV or AB — got {value!r}")
+    return b
+
+
 def _check_value_for_type(value: str, type_: str) -> None:
     """Light, type-specific sanity checks for the structured types; loose for URL/Domain/Mail-*."""
     if type_ in _HASH_LEN:
@@ -67,10 +91,15 @@ class IndicatorIn(BaseModel):
     product: str = ""
     comment: str = ""
 
-    @field_validator("name", "value", "product", "comment", mode="before")
+    @field_validator("name", "value", "comment", mode="before")
     @classmethod
     def _strip(cls, v: object) -> str:
         return str(v or "").strip()
+
+    @field_validator("product", mode="before")
+    @classmethod
+    def _product(cls, v: object) -> str:
+        return canonical_blade(str(v or ""))
 
     @field_validator("name")
     @classmethod
@@ -102,4 +131,8 @@ class IndicatorIn(BaseModel):
     @model_validator(mode="after")
     def _value_matches_type(self) -> "IndicatorIn":
         _check_value_for_type(self.value, self.type)
+        if self.product and self.product not in _TYPE_BLADES[self.type]:
+            allowed = " / ".join(sorted(_TYPE_BLADES[self.type]))
+            raise ValueError(
+                f"{self.type} can only be enforced by {allowed} — product {self.product!r} won't load")
         return self

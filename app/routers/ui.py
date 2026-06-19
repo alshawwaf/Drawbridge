@@ -108,7 +108,7 @@ def _default_ioc_form() -> dict:
         "description": DEFAULT_IOC_DESCRIPTION,
         "indicators_text": DEFAULT_IOC_INDICATORS_TEXT,
         "interval_seconds": 3600,
-        "auth_header_key": "",
+        "basic_user": "",
     }
 
 
@@ -404,8 +404,8 @@ def create_ioc(
     name: str = Form(...),
     description: str = Form(""),
     interval_seconds: int = Form(3600),
-    auth_header_key: str = Form(""),
-    auth_header_value: str = Form(""),
+    basic_user: str = Form(""),
+    basic_pass: str = Form(""),
     indicators_text: str = Form(""),
     db: Session = Depends(get_db),
 ):
@@ -420,7 +420,7 @@ def create_ioc(
             "feed_new_ioc.html",
             {"error": str(exc), "ioc_types": IOC_TYPES, "ioc_levels": IOC_LEVELS, "form": {
                 "name": name, "description": description, "interval_seconds": interval_seconds,
-                "auth_header_key": auth_header_key, "indicators_text": indicators_text,
+                "basic_user": basic_user, "indicators_text": indicators_text,
             }},
             status_code=400,
         )
@@ -431,8 +431,8 @@ def create_ioc(
         description=description,
         content=content,
         interval_seconds=interval_seconds,
-        auth_header_key=auth_header_key or None,
-        auth_header_value=auth_header_value or None,
+        auth_header_key=basic_user or None,
+        auth_header_value=basic_pass or None,
         owner_id=user.id,
     )
     db.add(feed)

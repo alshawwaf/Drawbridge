@@ -42,7 +42,7 @@
       </td>
       <td class="nowrap">{{ r.count }}</td>
       <td class="nowrap">{{ r.feed.interval_seconds }}s</td>
-      <td>{% if r.feed.auth_header_key %}<span class="pill">{{ 'basic' if r.feed.type.value == 'network_feed' else 'header' }}</span>{% else %}<span class="pill faint">open</span>{% endif %}</td>
+      <td>{% if r.feed.auth_header_key %}<span class="pill">{{ 'header' if r.feed.type.value == 'generic_dc' else 'basic' }}</span>{% else %}<span class="pill faint">open</span>{% endif %}</td>
       <td>
         <div class="urlcell">
           <span class="urltext" title="{{ r.url }}">{{ r.url }}</span>

@@ -32,11 +32,11 @@
   <input name="interval_seconds" type="number" min="1" value="{{ form.interval_seconds }}" style="width:140px">
   <p class="muted">SmartConsole's IoC feed "Check feed interval" is in minutes (default 60).</p>
 
-  <h2>Optional: Custom Header auth</h2>
-  <p class="muted">The gateway sends this header when fetching the feed. Leave blank for an open feed (the unguessable token in the URL is the guard).</p>
+  <h2>Optional: HTTP Basic auth</h2>
+  <p class="muted">IoC feeds authenticate with a username/password (<code>ioc_feeds --user_name</code>, R81.20+). Leave blank for an open feed — the unguessable token in the URL is the guard.</p>
   <div class="row">
-    <div class="grow"><label>Header name</label><input name="auth_header_key" value="{{ form.auth_header_key }}" placeholder="X-Feed-Token"></div>
-    <div class="grow"><label>Header value</label><input name="auth_header_value" type="password" placeholder="(secret)"></div>
+    <div class="grow"><label>Username</label><input name="basic_user" value="{{ form.basic_user }}" placeholder="feeduser"></div>
+    <div class="grow"><label>Password</label><input name="basic_pass" type="password" placeholder="(secret)"></div>
   </div>
 
   <div style="margin-top:20px;" class="row">

@@ -51,6 +51,18 @@ def test_per_type_value_validation():
         IndicatorIn(name="x", value="", type="IP")              # value required
 
 
+def test_product_blade_must_match_type():
+    IndicatorIn(name="a", value="203.0.113.5", type="IP", product="AB")            # IP → Anti-Bot ok
+    assert IndicatorIn(name="a", value="x.example.com", type="URL", product="Anti-Virus").product == "AV"
+    with pytest.raises(ValidationError):
+        IndicatorIn(name="a", value="203.0.113.5", type="IP", product="AV")        # IP can't be AV
+    with pytest.raises(ValidationError):
+        IndicatorIn(name="a", value=EICAR_MD5, type="MD5", product="AB")           # hashes can't be AB
+    with pytest.raises(ValidationError):
+        IndicatorIn(name="a", value="x.example.com", type="Domain", product="IPS")  # not a valid blade
+    assert IndicatorIn(name="a", value="x.example.com", type="Domain", product="").product == ""  # blank ok
+
+
 def test_normalize_shape_dedup_and_empty():
     c = normalize_ioc_content([{"name": "a", "value": "203.0.113.5", "type": "IP"}], "desc")
     assert c == {"indicators": [{"name": "a", "value": "203.0.113.5", "type": "IP",
@@ -72,8 +84,9 @@ def test_render_native_checkpoint_csv():
     assert media == "text/csv; charset=utf-8"
     lines = body.splitlines()
     assert lines[0] == "#! DESCRIPTION = My Feed"               # metadata line
-    assert lines[1] == 'ioc-1,203.0.113.66,IP,high,high,AB,"C2, beacon"'   # comma in comment is quoted
-    assert lines[2] == f"ioc-2,{EICAR_MD5},MD5,,high,AV,"       # empty confidence + trailing comment
+    assert lines[1] == "#UNIQ-NAME,VALUE,TYPE,CONFIDENCE,SEVERITY,PRODUCT,COMMENT"   # header line
+    assert lines[2] == 'ioc-1,203.0.113.66,IP,high,high,AB,"C2, beacon"'   # comma in comment is quoted
+    assert lines[3] == f"ioc-2,{EICAR_MD5},MD5,,high,AV,"       # empty confidence + trailing comment
 
 
 def test_quick_entry_parser():
