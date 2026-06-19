@@ -18,9 +18,9 @@
   target-server {{ host }} target-port {{ port }} \
   protocol udp format cef
 cp_log_export restart name dcsim-siem</pre>
-  <p class="muted" style="font-size:12px;">Receiving on <code>{{ host }}:{{ port }}</code> (TCP + UDP). The port must be published by the host/compose and reachable from the gateway or Management Server.</p>
+  <p class="muted" style="font-size:12px;">Listening on <code>{{ host }}:{{ port }}</code> (TCP + UDP). On a hosted instance, make sure that port is reachable from the Management Server — the bundled <code>docker-compose.yml</code> publishes it; on Dokploy add a TCP+UDP entrypoint (see <a href="https://github.com/alshawwaf/Datacenter-Integration-Simulator/blob/main/docs/integrations/siem.md">deployment notes</a>). No gateway yet? Click <b>Send test log</b>.</p>
   {% else %}
-  <div class="err" style="margin:0 0 12px;">The receiver isn't listening. Set <code>DCSIM_SYSLOG_PORT</code> (e.g. <code>5514</code>) and publish that TCP/UDP port, then restart. You can still preview the viewer below with <b>Send test log</b>.</div>
+  <p class="muted" style="margin:0 0 12px;">The listener is turned off (<code>DCSIM_SYSLOG_PORT=0</code>). Set it to a port like <code>5514</code> and restart to receive logs — or just click <b>Send test log</b> to preview the viewer.</p>
   {% endif %}
   <div class="row" style="gap:8px; margin-top:12px;">
     <form method="post" action="/siem/test" style="margin:0;"><button class="copybtn" type="submit">Send test log</button></form>
