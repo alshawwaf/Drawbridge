@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}New IoC Feed{% endblock %}
+{% block content %}
+<h1>New IoC Feed <span class="pill">Custom Intelligence</span></h1>
+<p class="muted">A threat-intel feed in Check Point's native CSV format. Anti-Bot / Anti-Virus fetch it and block matching traffic. Pre-filled with a safe demo set — edit or replace it, then Create.</p>
+{% if error %}<div class="err" style="margin:12px 0;">{{ error }}</div>{% endif %}
+
+<form method="post" action="/feeds/new/ioc" class="card">
+  <label>Feed name</label>
+  <input name="name" value="{{ form.name }}" placeholder="Threat-intel-IoC" required>
+
+  <label>Description (optional)</label>
+  <input name="description" value="{{ form.description }}" placeholder="Demo indicators">
+  <p class="muted">Emitted as a <code>#! DESCRIPTION</code> metadata line at the top of the feed.</p>
+
+  <label>Indicators — one per line</label>
+  <textarea name="indicators_text" style="min-height:170px;" placeholder="203.0.113.66, IP, high, high, AB, C2 beacon">{{ form.indicators_text }}</textarea>
+  <p class="muted">Format: <code>value, type[, confidence, severity, product, comment]</code>. Only <b>value</b> and <b>type</b> are required; a unique name is auto-assigned. The comment is the last field, so it may contain commas. <code>#</code> lines and blanks are ignored.</p>
+
+  <div class="row" style="gap:24px; flex-wrap:wrap;">
+    <div>
+      <label style="margin-bottom:4px;">Valid types</label>
+      <div>{% for t in ioc_types %}<span class="pill" style="margin:2px;">{{ t }}</span>{% endfor %}</div>
+    </div>
+    <div>
+      <label style="margin-bottom:4px;">Confidence / Severity</label>
+      <div>{% for l in ioc_levels %}<span class="pill faint" style="margin:2px;">{{ l }}</span>{% endfor %}</div>
+    </div>
+  </div>
+
+  <label style="margin-top:16px;">Poll interval (seconds)</label>
+  <input name="interval_seconds" type="number" min="1" value="{{ form.interval_seconds }}" style="width:140px">
+  <p class="muted">SmartConsole's IoC feed "Check feed interval" is in minutes (default 60).</p>
+
+  <h2>Optional: Custom Header auth</h2>
+  <p class="muted">The gateway sends this header when fetching the feed. Leave blank for an open feed (the unguessable token in the URL is the guard).</p>
+  <div class="row">
+    <div class="grow"><label>Header name</label><input name="auth_header_key" value="{{ form.auth_header_key }}" placeholder="X-Feed-Token"></div>
+    <div class="grow"><label>Header value</label><input name="auth_header_value" type="password" placeholder="(secret)"></div>
+  </div>
+
+  <div style="margin-top:20px;" class="row">
+    <button type="submit">Create feed</button>
+    <a class="btn secondary" href="/">Cancel</a>
+  </div>
+</form>
+{% endblock %}
