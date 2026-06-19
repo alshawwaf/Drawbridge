@@ -10,78 +10,60 @@
   <span class="livewrap"><span class="livedot on" id="livedot"></span><span id="livetext">Live</span></span>
 </div>
 
-<div class="card" style="padding:14px 16px; margin:14px 0;">
-  <input type="search" id="q-input" value="{{ q }}" autocomplete="off"
-         placeholder="Search — path, method, status, source IP… (e.g. /global-infra/sites, 403, 38.104.95.242)">
-  <div class="sfilter" style="margin-top:12px;">
-    <span class="muted" style="font-size:12px; margin-right:2px;">Status</span>
-    <button type="button" class="schip {{ 'active' if not status else '' }}" data-status="">All</button>
-    {% for s in status_classes %}
-    <button type="button" class="schip {{ 'active' if status == s else '' }}" data-status="{{ s }}">{{ s }}</button>
-    {% endfor %}
-  </div>
-</div>
-
 <form method="post" action="/activity/delete" id="act-form">
   <input type="hidden" name="page_size" id="ps-hidden" value="{{ page_size }}">
   <input type="hidden" name="q" id="q-hidden" value="{{ q }}">
   <input type="hidden" name="dc" id="dc-hidden" value="{{ dc }}">
   <input type="hidden" name="status" id="st-hidden" value="{{ status }}">
-  <div style="display:flex; gap:18px; align-items:flex-start; flex-wrap:wrap;">
-    <aside class="card filterpanel">
-      <div class="fsection-h">Filter by type</div>
-      {% for k, label in kind_labels.items() %}
-      <label class="fitem">
-        <input type="checkbox" name="kinds" value="{{ k }}" class="kind-cb" {{ 'checked' if k in selected else '' }}>
-        <span>{{ label }}</span><span class="fcount">{{ counts.get(k, 0) }}</span>
-      </label>
-      {% if k == 'datacenter' %}
-      <details class="fsub" {{ 'open' if dc else '' }}>
-        <summary style="font-size:12px;">by data center type</summary>
-        <label class="fitem">
-          <input type="radio" name="dcfilter" value="" class="dc-rb" {{ 'checked' if not dc else '' }}>
-          <span>Any type</span>
-        </label>
-        {% for prov, plabel in provider_labels.items() %}
-        <label class="fitem">
-          <input type="radio" name="dcfilter" value="{{ prov }}" class="dc-rb" {{ 'checked' if dc == prov else '' }}>
-          <span>{{ plabel }}</span><span class="fcount">{{ dc_counts.get(prov, 0) }}</span>
-        </label>
-        {% endfor %}
-      </details>
-      {% endif %}
-      {% endfor %}
-      <p class="muted" style="font-size:11.5px; margin:10px 0 0;">No type checked = show all ({{ counts.get('all', 0) }}). A data center type overrides the checkboxes.</p>
-      <div class="fdivider"></div>
-      <button class="danger" type="submit" formaction="/activity/clear" id="clear-btn" style="width:100%;"
-              data-confirm="Clear all log entries matching the current view? This cannot be undone.">Clear all</button>
-    </aside>
 
-    <div style="flex:1; min-width:0;">
-      <div class="row" style="align-items:center; gap:12px; margin-bottom:12px; flex-wrap:wrap;">
-        <label class="check" style="margin:0;"><input type="checkbox" id="sel-all"> <span class="muted">Select all</span></label>
-        <div class="grow"></div>
-        <label class="ctl">Show
-          <select id="page-size">{% for n in page_sizes %}<option value="{{ n }}" {{ 'selected' if n == page_size else '' }}>{{ n }}</option>{% endfor %}</select>
-        </label>
-        <label class="ctl" title="Only the newest page auto-refreshes — pause or page back to read without rows shifting">Refresh
-          <select id="refresh-rate">
-            <option value="0">Off</option>
-            <option value="2000">2s</option>
-            <option value="5000" selected>5s</option>
-            <option value="10000">10s</option>
-            <option value="30000">30s</option>
-          </select>
-        </label>
-        <button class="danger" type="submit" id="del-btn" disabled style="padding:9px 12px;"
-                title="Delete selected" aria-label="Delete selected"
-                data-confirm="Delete the selected log record(s)? This cannot be undone.">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
-        </button>
-      </div>
-      <div class="card" style="padding:6px 18px 14px;"><div id="rows"><p class="muted">Loading…</p></div></div>
+  <div class="card" style="padding:14px 16px;">
+    <input type="search" id="q-input" value="{{ q }}" autocomplete="off"
+           placeholder="Search — path, method, status, source IP… (e.g. /global-infra/sites, 403, 38.104.95.242)">
+    <div class="sfilter" style="margin-top:12px;">
+      <span class="frlabel">Status</span>
+      <button type="button" class="schip {{ 'active' if not status else '' }}" data-status="">All</button>
+      {% for s in status_classes %}
+      <button type="button" class="schip {{ 'active' if status == s else '' }}" data-status="{{ s }}">{{ s }}</button>
+      {% endfor %}
     </div>
+    <div class="sfilter" style="margin-top:10px;">
+      <span class="frlabel">Type</span>
+      {% for k, label in kind_labels.items() %}
+      <label class="tchip"><input type="checkbox" name="kinds" value="{{ k }}" class="kind-cb" {{ 'checked' if k in selected else '' }} hidden>{{ label }} <span class="tcount">{{ counts.get(k, 0) }}</span></label>
+      {% endfor %}
+      <span class="grow"></span>
+      <label class="ctl">Data center
+        <select id="dc-select">
+          <option value="">Any</option>
+          {% for prov, plabel in provider_labels.items() %}<option value="{{ prov }}" {{ 'selected' if dc == prov else '' }}>{{ plabel }} ({{ dc_counts.get(prov, 0) }})</option>{% endfor %}
+        </select>
+      </label>
+    </div>
+    <p class="muted" style="font-size:11px; margin:10px 0 0;">No type selected = all ({{ counts.get('all', 0) }}). A data center type narrows to that provider and overrides the type chips.</p>
   </div>
+
+  <div class="row" style="align-items:center; gap:12px; margin:14px 0 12px; flex-wrap:wrap;">
+    <label class="check" style="margin:0;"><input type="checkbox" id="sel-all"> <span class="muted">Select all</span></label>
+    <div class="grow"></div>
+    <label class="ctl">Show
+      <select id="page-size">{% for n in page_sizes %}<option value="{{ n }}" {{ 'selected' if n == page_size else '' }}>{{ n }}</option>{% endfor %}</select>
+    </label>
+    <label class="ctl" title="Only the newest page auto-refreshes — pause or page back to read without rows shifting">Refresh
+      <select id="refresh-rate">
+        <option value="0">Off</option><option value="2000">2s</option><option value="5000" selected>5s</option>
+        <option value="10000">10s</option><option value="30000">30s</option>
+      </select>
+    </label>
+    <button class="secondary" type="submit" formaction="/activity/clear" id="clear-btn" style="padding:9px 14px;"
+            data-confirm="Clear all log entries matching the current view? This cannot be undone.">Clear all</button>
+    <button class="danger" type="submit" id="del-btn" disabled style="padding:9px 12px;"
+            title="Delete selected" aria-label="Delete selected"
+            data-confirm="Delete the selected log record(s)? This cannot be undone.">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
+    </button>
+  </div>
+
+  <div class="card" style="padding:6px 18px 14px;"><div id="rows"><p class="muted">Loading…</p></div></div>
 </form>
 
 <div class="modal-overlay" id="rec-modal" hidden>
@@ -97,7 +79,7 @@
     var $ = function (id) { return document.getElementById(id); };
     var form = $('act-form'), rowsEl = $('rows'), psSel = $('page-size'), psHidden = $('ps-hidden');
     var qInput = $('q-input'), qHidden = $('q-hidden'), dcHidden = $('dc-hidden'), stHidden = $('st-hidden');
-    var refreshSel = $('refresh-rate'), liveDot = $('livedot'), liveText = $('livetext');
+    var dcSel = $('dc-select'), refreshSel = $('refresh-rate'), liveDot = $('livedot'), liveText = $('livetext');
     var selAll = $('sel-all'), delBtn = $('del-btn'), clearBtn = $('clear-btn');
     var modal = $('rec-modal'), recBody = $('rec-body');
     var page = 1, timer = null, currentStatus = {{ status | tojson }};
@@ -109,10 +91,7 @@
       return Array.prototype.slice.call(form.querySelectorAll('.kind-cb'))
         .filter(function (c) { return c.checked; }).map(function (c) { return c.value; });
     }
-    function selectedDc() {
-      var r = form.querySelector('input[name="dcfilter"]:checked');
-      return r ? r.value : '';
-    }
+    function selectedDc() { return dcSel.value || ''; }
     function searchText() { return (qInput.value || '').trim(); }
     function rowCbs() { return Array.prototype.slice.call(rowsEl.querySelectorAll('.row-cb')); }
     function syncDel() { delBtn.disabled = !rowCbs().some(function (c) { return c.checked; }); }
@@ -169,8 +148,9 @@
     rowsEl.addEventListener('change', function (e) { if (e.target.classList.contains('row-cb')) syncDel(); });
     selAll.addEventListener('change', function () { rowCbs().forEach(function (c) { c.checked = selAll.checked; }); syncDel(); });
 
+    // Type chips (kind checkboxes) and the Data Center dropdown both re-query.
     form.addEventListener('change', function (e) {
-      if (e.target.classList.contains('kind-cb') || e.target.classList.contains('dc-rb')) reload();
+      if (e.target.classList.contains('kind-cb') || e.target.id === 'dc-select') reload();
     });
     psSel.addEventListener('change', reload);
 
@@ -183,8 +163,9 @@
       reload();
     });
 
-    // Debounced live search.
+    // Debounced live search; Enter must not submit the (delete) form.
     var qTimer = null;
+    qInput.addEventListener('keydown', function (e) { if (e.key === 'Enter') e.preventDefault(); });
     qInput.addEventListener('input', function () { clearTimeout(qTimer); qTimer = setTimeout(reload, 300); });
 
     function openRecord(id) {

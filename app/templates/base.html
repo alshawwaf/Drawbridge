@@ -319,19 +319,14 @@
       white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:block; }
     .act-time { font-family:ui-monospace,monospace; font-size:12px; color:var(--muted); white-space:nowrap; }
     .act-num { text-align:right; font-variant-numeric:tabular-nums; color:var(--muted); font-size:12px; white-space:nowrap; }
-    /* Activity filter sidebar + table controls */
-    .filterpanel { width:248px; flex:0 0 248px; padding:18px; align-self:flex-start; }
-    .fsection-h { font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:.6px; color:var(--faint); margin:0 0 8px; }
-    .fitem { display:flex; align-items:center; gap:10px; padding:7px 9px; margin:1px -9px; border-radius:8px;
-      cursor:pointer; font-size:13px; color:var(--text-2); transition:background .12s, color .12s; }
-    .fitem:hover { background:var(--hover); color:var(--text); }
-    .fitem:has(input:checked) { color:var(--text); font-weight:600; }
-    .fcount { margin-left:auto; font-size:11px; font-weight:600; color:var(--faint); background:var(--subtle-bg);
-      border:1px solid var(--line); padding:1px 8px; border-radius:var(--r-pill); }
-    .fitem:has(input:checked) .fcount { color:var(--accent); border-color:transparent; background:var(--accent-soft); }
-    .fdivider { height:1px; background:var(--line); margin:16px 0; }
-    .fsub { margin:2px 0 6px 26px; }
-    .fsub .fitem { font-size:12.5px; padding:5px 9px; }
+    /* Activity filters (top toolbar) + table controls */
+    .frlabel { font-size:12px; font-weight:600; color:var(--muted); margin-right:2px; }
+    .tchip { display:inline-flex; align-items:center; gap:6px; background:var(--surface); color:var(--muted);
+      border:1px solid var(--line); border-radius:var(--r-pill); padding:5px 12px; font-size:12px;
+      font-weight:650; cursor:pointer; transition:.12s; }
+    .tchip:hover { border-color:var(--line-strong); color:var(--text); }
+    .tchip:has(input:checked) { background:var(--accent-soft); color:var(--accent); border-color:transparent; }
+    .tchip .tcount { font-size:10.5px; font-weight:600; opacity:.7; }
     .ctl { display:inline-flex; align-items:center; gap:7px; font-size:12px; font-weight:600; color:var(--muted); }
     .ctl select { width:auto; min-width:84px; padding:7px 30px 7px 11px; font-size:12.5px; }
   </style>
