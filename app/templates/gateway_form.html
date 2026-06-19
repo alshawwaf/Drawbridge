@@ -2,18 +2,20 @@
 {% block title %}{{ 'Edit gateway' if gw else 'New gateway' }}{% endblock %}
 {% block content %}
 <h1>{{ 'Edit gateway' if gw else 'New gateway' }}</h1>
-<p class="muted">A reusable connection profile for applying Dynamic Layers. Optionally save the login password (encrypted); otherwise it's entered each time you apply or fetch.</p>
-{% if error %}<div class="err" style="margin:12px 0;">{{ error }}</div>{% endif %}
+<p class="muted" style="max-width:620px;">A reusable connection profile for applying Dynamic Layers. Optionally save the login password (encrypted); otherwise it's entered each time you apply or fetch.</p>
+{% if error %}<div class="err" style="margin:12px 0; max-width:620px;">{{ error }}</div>{% endif %}
 
-<form method="post" action="{{ action }}" class="card">
+<form method="post" action="{{ action }}" class="card" style="max-width:620px;">
+  <div class="form-sec">Connection</div>
   <label>Name</label>
   <input name="name" value="{{ gw.name if gw else '' }}" placeholder="Boston-GW-01" required>
-
   <div class="row">
     <div class="grow"><label>Gateway address</label><input name="host" id="gw_host" value="{{ gw.host if gw else '' }}" placeholder="10.1.1.1" required></div>
     <div style="width:120px;"><label>Port</label><input name="port" id="gw_port" value="{{ gw.port if gw else 443 }}"></div>
   </div>
 
+  <hr>
+  <div class="form-sec">Credentials</div>
   <label>Username</label>
   <input name="username" value="{{ gw.username if gw else '' }}" placeholder="admin">
   <p class="muted">Used to log in when applying or fetching a Dynamic Layer.</p>
@@ -33,15 +35,23 @@
   <p class="muted">Storing a password needs the encryption library, which isn't available in this environment. The password is entered per apply/fetch for now.</p>
   {% endif %}
 
-  <div class="row" style="align-items:flex-end;">
-    <div class="grow"><label>Pinned certificate (PEM, optional — to trust a self-signed gateway)</label></div>
-    <button type="button" class="secondary" id="fetch-cert">Fetch &amp; trust certificate</button>
+  <hr>
+  <div class="form-sec">TLS certificate <span class="muted" style="font-weight:600; text-transform:none; letter-spacing:0;">· optional</span></div>
+  <p class="muted">Pin a self-signed gateway's certificate so apply &amp; fetch trust it — TLS verification stays on. Fetch it once (review the fingerprint) or paste the PEM.</p>
+  <div class="subpanel">
+    <div class="row" style="align-items:center; gap:10px;">
+      <button type="button" class="secondary" id="fetch-cert">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/></svg>
+        <span id="fetch-label">Fetch &amp; trust certificate</span>
+      </button>
+      <span class="muted" style="font-size:12px;">from the address above</span>
+    </div>
+    <div id="cert-fp" class="fp" style="margin-top:11px;{{ '' if (gw and gw.cert_pem) else ' display:none;' }}">{% if gw and gw.cert_pem %}<b>Pinned</b> certificate saved with this gateway.{% endif %}</div>
+    <textarea name="cert_pem" id="gw_cert" style="min-height:88px; margin-top:11px;" placeholder="-----BEGIN CERTIFICATE-----  (or click Fetch above)">{{ gw.cert_pem if gw else '' }}</textarea>
   </div>
-  <textarea name="cert_pem" id="gw_cert" style="min-height:90px;" placeholder="-----BEGIN CERTIFICATE-----">{{ gw.cert_pem if gw else '' }}</textarea>
-  <div id="cert-fp" class="fp" style="margin-top:8px;{{ '' if (gw and gw.cert_pem) else ' display:none;' }}">{% if gw and gw.cert_pem %}<b>Pinned</b> certificate saved with this gateway.{% endif %}</div>
-  <p class="muted">Fetch the certificate once here — review the fingerprint and it's pinned &amp; saved with this gateway, so every apply and fetch reuses it (no re-fetching). TLS verification stays on.</p>
 
-  <div class="row" style="margin-top:18px;">
+  <hr>
+  <div class="row">
     <button type="submit">{{ 'Save changes' if gw else 'Add gateway' }}</button>
     <a class="btn secondary" href="/gateways">Cancel</a>
   </div>
@@ -51,24 +61,25 @@
   (function () {
     var btn = document.getElementById('fetch-cert');
     if (!btn) return;
+    var label = document.getElementById('fetch-label');
     btn.addEventListener('click', function () {
       var host = document.getElementById('gw_host').value;
       var fp = document.getElementById('cert-fp');
       if (!host) { fp.style.display = ''; fp.textContent = 'Enter the gateway address first.'; return; }
       var body = new URLSearchParams();
       body.set('host', host); body.set('port', document.getElementById('gw_port').value || '443');
-      btn.textContent = 'Fetching…'; btn.disabled = true;
+      label.textContent = 'Fetching…'; btn.disabled = true;
       fetch('/gateways/fetch-cert', { method: 'POST', body: body })
         .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
         .then(function (res) {
-          btn.textContent = 'Fetch & trust certificate'; btn.disabled = false;
+          label.textContent = 'Fetch & trust certificate'; btn.disabled = false;
           fp.style.display = '';
           if (!res.ok) { fp.textContent = res.j.error || 'Failed to fetch certificate.'; return; }
           document.getElementById('gw_cert').value = res.j.pem;
           fp.innerHTML = '<b>Pinned</b> · SHA-256 ' + res.j.fingerprint + ' — saved when you ' +
             ({{ 'true' if gw else 'false' }} ? 'save changes.' : 'add the gateway.');
         })
-        .catch(function () { btn.textContent = 'Fetch & trust certificate'; btn.disabled = false; });
+        .catch(function () { label.textContent = 'Fetch & trust certificate'; btn.disabled = false; });
     });
   })();
 </script>
