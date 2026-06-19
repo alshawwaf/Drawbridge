@@ -43,7 +43,7 @@
     <label for="auto_trust">Trust this gateway's certificate automatically <span class="muted" style="font-weight:400;">— pin it on first connect</span></label>
   </div>
   <p class="muted">Recommended for self-signed lab gateways. On the first apply or fetch the portal pins whatever certificate the gateway presents, then verifies against that pinned certificate on every connect after — TLS verification is never turned off. Untick to pin a specific certificate yourself below instead.</p>
-  <div class="subpanel">
+  <div class="subpanel" id="tls-subpanel">
     <div class="row" style="align-items:center; gap:10px;">
       <button type="button" class="secondary" id="fetch-cert">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/></svg>
@@ -86,6 +86,21 @@
         })
         .catch(function () { label.textContent = 'Fetch & review certificate now'; btn.disabled = false; });
     });
+  })();
+
+  // When auto-trust is on, the manual fetch/paste panel is just an optional override — grey it out.
+  // The textarea is set readonly (not disabled) so an already-pinned cert is still submitted, not wiped.
+  (function () {
+    var auto = document.getElementById('auto_trust');
+    var panel = document.getElementById('tls-subpanel');
+    var cert = document.getElementById('gw_cert');
+    if (!auto || !panel) return;
+    function sync() {
+      panel.classList.toggle('is-locked', auto.checked);
+      if (cert) cert.readOnly = auto.checked;
+    }
+    auto.addEventListener('change', sync);
+    sync();
   })();
 </script>
 {% endblock %}
