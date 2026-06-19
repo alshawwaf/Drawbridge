@@ -10,7 +10,7 @@ policy updates in ~30s" moment, on demand.
 - Server-side timed runner: [`app/services/scenario_runner.py`](../../app/services/scenario_runner.py)
 - UI: [`scenarios.html`](../../app/templates/scenarios.html) · timeline fragment [`scenario_timeline.html`](../../app/templates/scenario_timeline.html)
 
-Open it at **Scenarios** in the nav (`/scenarios`).
+Open it under **Data Centers ▾ → Scenarios** in the nav (`/scenarios`).
 
 ## Use it
 

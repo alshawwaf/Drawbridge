@@ -71,8 +71,9 @@ category value resolves to the VMs carrying it (how CloudGuard enforces policy o
 
 ## Auth
 
-Basic credentials set on the portal DC are stored only as a one-way hash and validated on every call
-(`401` on mismatch). Leave them blank for an open lab.
+Basic credentials set on the portal DC are **encrypted at rest (AES-256-GCM)** and validated on every
+call (`401` on mismatch); the DC page can show the password back as a copyable masked field. Leave
+them blank for an open lab.
 
 ## Gotchas / pending
 
