@@ -1,7 +1,7 @@
 """Datacenter edit: the create forms are reused for editing, so content must serialize back to the
 quick-entry text format and re-parse to the same inventory. Also covers the edit-mode credential
 rules (blank keeps the stored secret, a new value replaces it, 'clear_creds' reverts to open)."""
-from app.routers.datacenters import _dc_build_form, _dc_parse_edit, _edit_auth
+from app.routers.datacenters import _dc_build_form, _dc_parse_edit, _edit_auth, _quick_set_secret
 from app.services import dc_creds
 
 
@@ -92,3 +92,33 @@ def test_kubernetes_has_no_credentials():
     dc = FakeDC("kubernetes", dict(INVENTORY["kubernetes"]))
     content = _dc_parse_edit(dc, _dc_build_form(dc))
     assert "auth" not in content  # K8s uses a generated SA token, never a stored secret
+
+
+# --- inline quick-edit: setting/clearing the password keeps the auth block coherent ---
+
+def test_quick_set_password_on_open_lab_seeds_default_identity():
+    content = {"vms": []}  # open nutanix lab, no auth
+    _quick_set_secret(content, "nutanix", "newpw", "password")
+    assert content["auth"]["username"] == "admin"          # provider default seeded
+    assert dc_creds.configured(content["auth"], "password")  # secret stored
+
+
+def test_quick_set_password_preserves_openstack_project():
+    content = {"instances": [], "auth": {"username": "osadmin", "project": "myproj", "password_enc": "v1.OLD"}}
+    _quick_set_secret(content, "openstack", "rotated", "password")
+    assert content["auth"]["username"] == "osadmin"   # existing identity kept
+    assert content["auth"]["project"] == "myproj"     # OpenStack project survives a password change
+    assert content["auth"].get("password_enc") != "v1.OLD"
+
+
+def test_quick_set_password_seeds_proxmox_token_id():
+    content = {"vms": []}
+    _quick_set_secret(content, "proxmox", "tok", "secret")
+    assert content["auth"]["token_id"] == "root@pam!cloudguard"
+    assert dc_creds.configured(content["auth"], "secret")
+
+
+def test_quick_clear_password_reverts_to_open_lab():
+    content = {"vms": [], "auth": {"username": "admin", "password_enc": "v1.X"}}
+    _quick_set_secret(content, "nutanix", "", "password")
+    assert "auth" not in content

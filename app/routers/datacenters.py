@@ -3,7 +3,7 @@ Currently OpenStack (Keystone + Nova + Neutron); other providers follow the same
 import json
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -784,6 +784,28 @@ _DC_EDIT_TEMPLATE = {
     "kubernetes": "dc_new_kubernetes.html", "nutanix": "dc_new_nutanix.html",
 }
 
+# Identity fields stored alongside the secret, with sensible defaults seeded when a password is first
+# set on an open lab. Kubernetes is absent (no stored credential — it uses a generated SA token).
+_DC_IDENTITY = {
+    "openstack": {"username": "admin", "project": "demo"},
+    "vcenter": {"username": "administrator@vsphere.local"},
+    "nsxt": {"username": "admin"}, "globalnsxt": {"username": "admin"},
+    "aci": {"username": "admin"}, "nutanix": {"username": "admin"},
+    "proxmox": {"token_id": "root@pam!cloudguard"},
+}
+
+
+def _quick_set_secret(content: dict, provider: str, value: str, secret_key: str) -> None:
+    """Inline password edit: a value (re)encrypts the secret — keeping existing identity fields or
+    seeding provider defaults (so OpenStack's project / Proxmox's token-id survive) — while an empty
+    value drops auth entirely (reverting to an open lab)."""
+    auth = dict(content.get("auth") or {})
+    if value:
+        ident = {k: auth.get(k, dflt) for k, dflt in _DC_IDENTITY[provider].items()}
+        content["auth"] = {**ident, **dc_creds.store(secret_key, value)}
+    else:
+        content.pop("auth", None)
+
 
 def _dc_build_form(dc: Datacenter) -> dict:
     """Serialize a datacenter's content into the create-form's text fields (for prefill / re-render)."""
@@ -912,6 +934,54 @@ async def dc_edit_save(dc_id: int, request: Request, db: Session = Depends(get_d
     db.commit()
     _flash(request, f"Datacenter “{name}” updated.")
     return RedirectResponse(f"/datacenters/{dc.id}", status_code=303)
+
+
+@router.post("/datacenters/{dc_id}/quick-edit")
+async def dc_quick_edit(dc_id: int, request: Request, db: Session = Depends(get_db)):
+    """Inline single-field edit from the detail page (JSON {field, value}): rename, or set/change/clear
+    the credentials. Keeps the auth block coherent — preserves provider-specific identity (OpenStack
+    project, Proxmox token-id) and seeds defaults when a password is first set on an open lab."""
+    user = get_user_or_none(request, db)
+    if user is None:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    dc = _owned(db, dc_id, user)
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    field = (data.get("field") or "").strip()
+    value = (data.get("value") or "").strip()
+
+    if field == "name":
+        if not value:
+            return JSONResponse({"error": "Name can’t be empty."}, status_code=400)
+        dc.name = value
+        db.commit()
+        return JSONResponse({"ok": True, "value": dc.name})
+
+    if dc.provider not in _DC_IDENTITY:
+        return JSONResponse({"error": "This datacenter type has no editable credentials."}, status_code=400)
+    secret_key = "secret" if dc.provider == "proxmox" else "password"
+    id_key = "token_id" if dc.provider == "proxmox" else "username"
+    content = dict(dc.content or {})
+    auth = dict(content.get("auth") or {})
+
+    if field == "password":
+        _quick_set_secret(content, dc.provider, value, secret_key)
+        dc.content = content
+        db.commit()
+        return JSONResponse({"ok": True, "configured": dc_creds.configured(content.get("auth") or {}, secret_key)})
+
+    if field in ("username", "token_id"):
+        if not dc_creds.configured(auth, secret_key):
+            return JSONResponse({"error": "Set a password first to enable authentication."}, status_code=400)
+        auth[id_key] = value or _DC_IDENTITY[dc.provider][id_key]
+        content["auth"] = auth
+        dc.content = content
+        db.commit()
+        return JSONResponse({"ok": True, "value": auth[id_key]})
+
+    return JSONResponse({"error": "Unknown field."}, status_code=400)
 
 
 @router.post("/datacenters/{dc_id}/delete")
