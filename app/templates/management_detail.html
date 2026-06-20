@@ -17,6 +17,7 @@
   <div class="row" style="align-items:center; gap:10px; flex-wrap:wrap;">
     <span class="muted" style="font-size:11px; font-weight:700; letter-spacing:.5px;">ACCESS LAYER</span>
     <span id="layer-picker" class="filterbar" style="margin:0;"><span class="muted">Loading layers…</span></span>
+    <a id="export-link" class="btn secondary" href="/management/{{ ms.id }}/export" style="margin-left:auto;">Export to IaC →</a>
   </div>
   <div id="rulebase" style="margin-top:14px;"><p class="muted">Pick a layer to pull its rulebase.</p></div>
 </div>
@@ -70,6 +71,8 @@
       view.innerHTML = h + '</tbody></table></div>';
     }
     function loadRulebase(name) {
+      var link = document.getElementById('export-link');
+      if (link) link.href = '/management/' + id + '/export?layer=' + encodeURIComponent(name);
       view.innerHTML = '<p class="muted">Pulling “' + esc(name) + '” over web_api…</p>';
       fetch('/management/' + id + '/rulebase?name=' + encodeURIComponent(name))
         .then(function (r) { return r.json(); }).then(renderRulebase)
