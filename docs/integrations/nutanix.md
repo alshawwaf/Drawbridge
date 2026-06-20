@@ -6,9 +6,10 @@ and **Categories** (Prism's key/value tags), and resolves a category to the VMs 
 - Service: [`app/services/nutanix.py`](../../app/services/nutanix.py)
 - Router: [`app/routers/nutanix_mock.py`](../../app/routers/nutanix_mock.py)
 
-> **Status:** Built to the **decompiled scanner contract** (`cms.jar` →
-> `com/checkpoint/datacenter/scanner/nutanix`), serving **both Prism v3 and v4**. Verified end-to-end
-> via TestClient (v3 POST + v4 GET + Basic auth). Pending first live-CloudGuard confirmation.
+> **Status:** ✅ **Confirmed live against CloudGuard Controller R82.10 (2026-06-19)** — Test Connection
+> succeeds and the object viewer imports VMs + Categories (folders for each category Key, VMs under
+> `/VMs`). Built to the **decompiled scanner contract** (`cms.jar` →
+> `com/checkpoint/datacenter/scanner/nutanix`), serving **both Prism v3 and v4**.
 
 ## Decompiled contract (what CloudGuard actually does)
 
@@ -86,6 +87,13 @@ them blank for an open lab.
   the host is perfect.
 - **v4 vs v3** — both are served, so it works whichever CloudGuard picks; the v4 probe is
   `…/ahv/config/vms?$limit=1`.
+- **Pagination (the v4 trap that stalls the object viewer).** CloudGuard pages the v4 list endpoints
+  with `$page`/`$limit`. The mock **must slice** to the requested page and report `hasMorePages`
+  honestly — returning the full list on every page makes the scanner loop forever on categories and
+  **never reach the VMs**, so *Select objects* sits on **"Loading…"** (you'll see thousands of identical
+  `…/config/categories` calls in the Activity log, all 200). Connectivity looks perfect; nothing loads.
+  Fixed in `nutanix.py` (`page_limit` + a slicing `_v4_envelope`) and regression-tested
+  (`tests/test_nutanix.py::test_v4_pagination_terminates`).
 - First-cut to the decompiled contract; any call beyond these is in the
   [Activity log](/activity?kind=datacenter) (filter → Data Center → Nutanix) to model next. After a
   change, **delete + re-add** the object in SmartConsole so it re-syncs.
@@ -110,6 +118,12 @@ sudo ss -tlnp 'sport = :9440'      # confirm: socat LISTEN 0.0.0.0:9440
 sudo ufw allow 9440/tcp
 sudo ufw status | grep 9440        # confirm: 9440/tcp ALLOW
 ```
+> ⚠️ `ufw status` listing the rule is **not** proof it's enforced. If `sudo ufw reload` says *"Firewall
+> not enabled"*, the rules never loaded — usually a stray line after `COMMIT` in `/etc/ufw/after.rules`
+> (remove it, then `sudo ufw disable && sudo ufw enable`). And a `DOCKER-USER` deny-by-default lockdown
+> in `after.rules` can drop external→container 9440 even with ufw allowing it — which is exactly why the
+> 9440 listener in step 1 is a **host-network** socat (it never takes the guarded forward path). Both
+> traps bit this lab; the full ladder is in [siem.md → Troubleshooting](siem.md).
 
 **3. The cloud / hosting edge — the layer people miss.** Whatever publishes `:443` to the internet must
 also pass `:9440`. 443 works only because the edge forwards it; 9440 stays dropped until you add it.
@@ -127,7 +141,10 @@ curl -skI https://dcsim.ai.alshawwaf.ca:9440/healthz   # a response (not a timeo
 ```
 Then in SmartConsole enter the **bare** hostname (`dcsim.ai.alshawwaf.ca`) → Test Connection.
 
-> **Status (2026-06-18):** layers 1 + 2 confirmed open on `YUL-SKUNK`; **layer 3 (the CloudShare edge
-> for 9440) is the remaining gate** — a public SYN to `:9440` still times out while `:443` returns 200,
-> and the SMS reaches the portal via its public IP, so Nutanix is blocked until the edge passes 9440.
-> Every other DC type + both feeds + dynamic layers work on 443, so this gates **only** Nutanix.
+> **Status (2026-06-19): ✅ working end-to-end on `YUL-SKUNK`** — Test Connection passes and the object
+> viewer imports the VMs + Categories. Beyond opening 9440 at all three layers, the real blockers were
+> (1) a **host-firewall trap** — `ufw` in a zombie state (a stray line after `COMMIT` in `after.rules`
+> stopped it loading) plus a `DOCKER-USER` deny-by-default that dropped external→container traffic, so a
+> direct/host-mode publish failed and the **host-network socat** in step 1 was required; and (2) the
+> **v4 pagination loop** (see Gotchas) that left the viewer on "Loading…". Both fixed. Full firewall
+> diagnostic ladder: [siem.md → Troubleshooting](siem.md).
