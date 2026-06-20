@@ -1,227 +1,217 @@
-"""Coverage matrices: which Check Point objects/commands are supported by the **web_api**, the
-**Terraform** provider (CheckPointSW/checkpoint) and the **Ansible** collections (check_point.mgmt /
-check_point.gaia) — and which of them the **portal** currently exports.
+"""Serve the bundled, spec-generated coverage artifacts to the /coverage page.
 
-This powers the /coverage page: a colour-coded API | Terraform | Ansible comparison so the gaps are
-visible at a glance. Data is from the official docs/sources (TF v3.2.0 = 248 management + ~119 gaia
-resources; Ansible check_point.mgmt = 274 modules, check_point.gaia = 53 config modules). The
-``exported`` flag per row is derived from the live exporter specs, so it never drifts from reality.
+Reads the versioned JSON produced by ``tools/build_coverage.py`` (in ``app/coverage_data/``): every
+object/command, its full field set with per-field **API / Terraform / Ansible** support, and a web_api
+JSON example. Provides the object list (grouped + with object-level support), and, per object, the
+field-level diff + the **four** example forms (web_api JSON / mgmt_cli / Terraform / Ansible).
 """
 from __future__ import annotations
 
-from . import gaia_export, mgmt_export
+import functools
+import json
+import os
+
+ART_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "coverage_data")
 
 
-def _r(name, api, tf, ans, note=""):
-    """A matrix row. tf/ans = exact resource/module name, or None when that tool has no equivalent."""
-    return {"name": name, "api": api, "tf": tf, "ans": ans, "note": note}
+# --- artifact loading -------------------------------------------------------------------------
+
+@functools.lru_cache(maxsize=1)
+def _index() -> list[dict]:
+    try:
+        with open(os.path.join(ART_DIR, "index.json")) as f:
+            return json.load(f).get("artifacts", [])
+    except (OSError, ValueError):
+        return []
 
 
-# --- Management API ---------------------------------------------------------------------------
-_MGMT_GROUPS = [
-    ("Network objects", [
-        _r("host", "add-host", "checkpoint_management_host", "cp_mgmt_host"),
-        _r("network", "add-network", "checkpoint_management_network", "cp_mgmt_network"),
-        _r("group", "add-group", "checkpoint_management_group", "cp_mgmt_group"),
-        _r("address-range", "add-address-range", "checkpoint_management_address_range", "cp_mgmt_address_range"),
-        _r("group-with-exclusion", "add-group-with-exclusion", "checkpoint_management_group_with_exclusion", "cp_mgmt_group_with_exclusion"),
-        _r("multicast-address-range", "add-multicast-address-range", "checkpoint_management_multicast_address_range", "cp_mgmt_multicast_address_range"),
-        _r("wildcard", "add-wildcard", "checkpoint_management_wildcard", "cp_mgmt_wildcard"),
-        _r("dns-domain", "add-dns-domain", "checkpoint_management_dns_domain", "cp_mgmt_dns_domain"),
-        _r("security-zone", "add-security-zone", "checkpoint_management_security_zone", "cp_mgmt_security_zone"),
-        _r("tag", "add-tag", "checkpoint_management_tag", "cp_mgmt_tag"),
-        _r("dynamic-object", "add-dynamic-object", "checkpoint_management_dynamic_object", "cp_mgmt_dynamic_object"),
-        _r("simple-gateway", "add-simple-gateway", "checkpoint_management_simple_gateway", "cp_mgmt_simple_gateway"),
-        _r("simple-cluster", "add-simple-cluster", "checkpoint_management_simple_cluster", "cp_mgmt_simple_cluster"),
-        _r("checkpoint-host", "add-checkpoint-host", "checkpoint_management_checkpoint_host", "cp_mgmt_checkpoint_host"),
-        _r("interoperable-device", "add-interoperable-device", "checkpoint_management_interoperable_device", "cp_mgmt_interoperable_device"),
-        _r("updatable-object", "add-updatable-object", "checkpoint_management_add_updatable_object", "cp_mgmt_add_updatable_object", "verb-style in both (no plain CRUD resource)"),
-    ]),
-    ("Services", [
-        _r("service-tcp", "add-service-tcp", "checkpoint_management_service_tcp", "cp_mgmt_service_tcp"),
-        _r("service-udp", "add-service-udp", "checkpoint_management_service_udp", "cp_mgmt_service_udp"),
-        _r("service-icmp", "add-service-icmp", "checkpoint_management_service_icmp", "cp_mgmt_service_icmp"),
-        _r("service-icmp6", "add-service-icmp6", "checkpoint_management_service_icmp6", "cp_mgmt_service_icmp6"),
-        _r("service-sctp", "add-service-sctp", "checkpoint_management_service_sctp", "cp_mgmt_service_sctp"),
-        _r("service-other", "add-service-other", "checkpoint_management_service_other", "cp_mgmt_service_other"),
-        _r("service-dce-rpc", "add-service-dce-rpc", "checkpoint_management_service_dce_rpc", "cp_mgmt_service_dce_rpc"),
-        _r("service-rpc", "add-service-rpc", "checkpoint_management_service_rpc", "cp_mgmt_service_rpc"),
-        _r("service-gtp", "add-service-gtp", "checkpoint_management_service_gtp", None, "no Ansible GTP-service module"),
-        _r("service-citrix-tcp", "add-service-citrix-tcp", "checkpoint_management_service_citrix_tcp", "cp_mgmt_service_citrix_tcp"),
-        _r("service-compound-tcp", "add-service-compound-tcp", "checkpoint_management_service_compound_tcp", "cp_mgmt_service_compound_tcp"),
-        _r("service-group", "add-service-group", "checkpoint_management_service_group", "cp_mgmt_service_group"),
-    ]),
-    ("Applications", [
-        _r("application-site", "add-application-site", "checkpoint_management_application_site", "cp_mgmt_application_site"),
-        _r("application-site-category", "add-application-site-category", "checkpoint_management_application_site_category", "cp_mgmt_application_site_category"),
-        _r("application-site-group", "add-application-site-group", "checkpoint_management_application_site_group", "cp_mgmt_application_site_group"),
-    ]),
-    ("Times", [
-        _r("time", "add-time", "checkpoint_management_time", "cp_mgmt_time"),
-        _r("time-group", "add-time-group", "checkpoint_management_time_group", "cp_mgmt_time_group"),
-    ]),
-    ("Access policy", [
-        _r("access-layer", "add-access-layer", "checkpoint_management_access_layer", "cp_mgmt_access_layer"),
-        _r("access-section", "add-access-section", "checkpoint_management_access_section", "cp_mgmt_access_section"),
-        _r("access-rule", "add-access-rule", "checkpoint_management_access_rule", "cp_mgmt_access_rule"),
-    ]),
-    ("NAT", [
-        _r("nat-section", "add-nat-section", "checkpoint_management_nat_section", "cp_mgmt_nat_section"),
-        _r("nat-rule", "add-nat-rule", "checkpoint_management_nat_rule", "cp_mgmt_nat_rule"),
-    ]),
-    ("Threat Prevention", [
-        _r("threat-rule", "add-threat-rule", "checkpoint_management_threat_rule", "cp_mgmt_threat_rule"),
-        _r("threat-exception", "add-threat-exception", "checkpoint_management_threat_exception", "cp_mgmt_threat_exception"),
-        _r("threat-profile", "add-threat-profile", "checkpoint_management_threat_profile", "cp_mgmt_threat_profile"),
-        _r("threat-layer", "add-threat-layer", "checkpoint_management_threat_layer", "cp_mgmt_threat_layer"),
-        _r("exception-group", "add-exception-group", "checkpoint_management_exception_group", "cp_mgmt_exception_group"),
-        _r("ips-protection", "add-threat-protections", None, None, "no discrete CRUD resource in TF or Ansible"),
-        _r("threat-ioc-feed", "add-threat-ioc-feed", "checkpoint_management_threat_ioc_feed", None, "Ansible has only the check verb"),
-        _r("network-feed", "add-network-feed", "checkpoint_management_network_feed", "cp_mgmt_network_feed"),
-    ]),
-    ("HTTPS Inspection", [
-        _r("https-rule", "add-https-rule", "checkpoint_management_https_rule", "cp_mgmt_https_rule"),
-        _r("https-section", "add-https-section", "checkpoint_management_https_section", "cp_mgmt_https_section"),
-        _r("https-layer", "add-https-layer", "checkpoint_management_https_layer", "cp_mgmt_https_layer"),
-    ]),
-    ("VPN", [
-        _r("vpn-community-meshed", "add-vpn-community-meshed", "checkpoint_management_vpn_community_meshed", "cp_mgmt_vpn_community_meshed"),
-        _r("vpn-community-star", "add-vpn-community-star", "checkpoint_management_vpn_community_star", "cp_mgmt_vpn_community_star"),
-        _r("vpn-community-remote-access", "set-vpn-community-remote-access", "checkpoint_management_vpn_community_remote_access", "cp_mgmt_set_vpn_community_remote_access", "set-only"),
-    ]),
-    ("Identity / users / servers", [
-        _r("access-role", "add-access-role", "checkpoint_management_access_role", "cp_mgmt_access_role", "users/machines structure differs across all 3"),
-        _r("identity-tag", "add-identity-tag", "checkpoint_management_identity_tag", "cp_mgmt_identity_tag"),
-        _r("user", "add-user", "checkpoint_management_user", "cp_mgmt_user"),
-        _r("user-group", "add-user-group", "checkpoint_management_user_group", "cp_mgmt_user_group"),
-        _r("administrator", "add-administrator", "checkpoint_management_administrator", "cp_mgmt_administrator"),
-        _r("ldap-group", "add-ldap-group", "checkpoint_management_ldap_group", "cp_mgmt_ldap_group"),
-        _r("radius-server", "add-radius-server", "checkpoint_management_radius_server", "cp_mgmt_radius_server"),
-        _r("tacacs-server", "add-tacacs-server", "checkpoint_management_tacacs_server", "cp_mgmt_tacacs_server"),
-        _r("opsec-application", "add-opsec-application", "checkpoint_management_opsec_application", None, "no Ansible module"),
-    ]),
-    ("Data Center (CloudGuard)", [
-        _r("data-center-object", "add-data-center-object", "checkpoint_management_add_data_center_object", "cp_mgmt_add_data_center_object", "verb-style in both"),
-        _r("data-center-query", "add-data-center-query", "checkpoint_management_data_center_query", "cp_mgmt_add_data_center_query"),
-        _r("vmware/aws/azure/… data-center-server", "add-data-center-server", "checkpoint_management_*_data_center_server", None, "entire typed DC-server family missing from Ansible"),
-    ]),
-]
-
-# Field-level gaps surfaced by the research (shown under the management matrix).
-_MGMT_FIELD_GAPS = [
-    "access-rule · vpn: API/Ansible use one polymorphic `vpn`; Terraform splits it into "
-    "`vpn` / `vpn_communities` / `vpn_directional{from,to}`.",
-    "access-rule · `service-resource` is settable in API/Ansible but absent from the Terraform resource.",
-    "access-role · users/machines: Ansible uses `users`+`users_list` / `machines`+`machines_list`; "
-    "Terraform uses repeatable `users`/`machines` blocks; the API show-output is fully-resolved and "
-    "must be collapsed to {source, selection, base-dn} before re-add.",
-    "host/network/group/services · `groups` (set membership at create) and `details_level` exist in "
-    "Ansible + API but NOT in Terraform — the portal captures membership via each group's `members`.",
-    "host/network · generic `ip-address` / `subnet` / `mask-length` / `subnet-mask` exist in API+Ansible; "
-    "Terraform forces the numbered `*4`/`*6` variants (the portal emits those).",
-]
+@functools.lru_cache(maxsize=32)
+def _artifact(api_type: str, version: str) -> dict:
+    for a in _index():
+        if a["api_type"] == api_type and a["version"] == version:
+            with open(os.path.join(ART_DIR, a["file"])) as f:
+                return json.load(f)
+    return {}
 
 
-# --- Gaia OS API ------------------------------------------------------------------------------
-_GAIA_GROUPS = [
-    ("System", [
-        _r("hostname", "set-hostname", "checkpoint_gaia_hostname", "cp_gaia_hostname"),
-        _r("dns", "set-dns", "checkpoint_gaia_dns", "cp_gaia_dns"),
-        _r("domain name (dns suffix)", "set-dns (suffix)", "checkpoint_gaia_dns", "cp_gaia_dns"),
-        _r("ntp", "set-ntp", "checkpoint_gaia_ntp", "cp_gaia_ntp"),
-        _r("time / date / timezone", "set-time-and-date", "checkpoint_gaia_time_and_date", "cp_gaia_time_and_date"),
-        _r("proxy", "set-proxy", "checkpoint_gaia_proxy", "cp_gaia_proxy"),
-        _r("banner", "set-banner", "checkpoint_gaia_banner", "cp_gaia_banner"),
-        _r("message-of-the-day", "set-message-of-the-day", "checkpoint_gaia_message_of_the_day", "cp_gaia_message_of_the_day"),
-    ]),
-    ("Interfaces", [
-        _r("physical-interface", "set-physical-interface", "checkpoint_gaia_physical_interface", "cp_gaia_physical_interface"),
-        _r("vlan-interface", "add-vlan-interface", "checkpoint_gaia_vlan_interface", "cp_gaia_vlan_interface"),
-        _r("bond-interface", "add-bond-interface", "checkpoint_gaia_bond_interface", "cp_gaia_bond_interface"),
-        _r("bridge-interface", "add-bridge-interface", "checkpoint_gaia_bridge_interface", "cp_gaia_bridge_interface"),
-        _r("loopback-interface", "add-loopback-interface", "checkpoint_gaia_loopback_interface", "cp_gaia_loopback_interface"),
-        _r("alias-interface", "add-alias-interface", "checkpoint_gaia_alias_interface", "cp_gaia_alias_interface"),
-        _r("ipv6 state", "set-ipv6", "checkpoint_gaia_ipv6", "cp_gaia_ipv6"),
-    ]),
-    ("Routing", [
-        _r("static-route", "set-static-route", "checkpoint_gaia_static_route", "cp_gaia_static_route"),
-        _r("static-mroute", "set-static-mroute", "checkpoint_gaia_static_mroute", None, "no Ansible module"),
-        _r("aggregate-route", "set-aggregate-route", "checkpoint_gaia_route_redistribution_*", None, "Ansible read-only (facts)"),
-        _r("BGP", "add/set-bgp-*", "checkpoint_gaia_bgp_*", None, "Ansible dynamic routing is read-only"),
-        _r("OSPF", "set-ospf-*", "checkpoint_gaia_*ospf*", None, "Ansible dynamic routing is read-only"),
-        _r("RIP", "set-rip-*", "checkpoint_gaia_*rip*", None, "Ansible dynamic routing is read-only"),
-        _r("PIM / IGMP / MLD / ISIS", "set-pim / set-igmp / …", "checkpoint_gaia_pim_* / igmp_* / isis_*", None, "no Ansible modules"),
-        _r("PBR (policy routing)", "add-pbr-rule / set-pbr-table", "checkpoint_gaia_pbr_rule / _pbr_table", None, "no Ansible modules"),
-    ]),
-    ("Services", [
-        _r("dhcp-server", "set-dhcp-server", "checkpoint_gaia_dhcp_server", "cp_gaia_dhcp_server"),
-        _r("dhcp6", "set-dhcp6-server", "checkpoint_gaia_dhcp6_server", None, "no Ansible module"),
-        _r("snmp (agent)", "set-snmp", "checkpoint_gaia_snmp", "cp_gaia_snmp", "TF `version` vs Ansible `ver`"),
-        _r("snmp-user", "add-snmp-user", "checkpoint_gaia_snmp_user", "cp_gaia_snmp_user"),
-        _r("snmp-trap-receiver", "add-snmp-trap-receiver", "checkpoint_gaia_snmp_trap_receiver", "cp_gaia_snmp_trap_receiver"),
-        _r("syslog (local)", "set-syslog", "checkpoint_gaia_syslog", "cp_gaia_syslog"),
-        _r("remote-syslog", "add-remote-syslog", "checkpoint_gaia_remote_syslog", "cp_gaia_remote_syslog"),
-        _r("arp (static)", "set-arp", "checkpoint_gaia_arp", None, "no Ansible module"),
-        _r("lldp", "set-lldp", "checkpoint_gaia_lldp", None, "no Ansible module"),
-    ]),
-    ("AAA / users / access", [
-        _r("user", "add-user", "checkpoint_gaia_user", "cp_gaia_user"),
-        _r("role", "add-role", "checkpoint_gaia_role", "cp_gaia_role"),
-        _r("system-group", "add-system-group", "checkpoint_gaia_system_group", "cp_gaia_system_group"),
-        _r("radius", "set-radius", "checkpoint_gaia_radius", "cp_gaia_radius_server", "TF `radius` vs Ansible `radius_server`"),
-        _r("tacacs", "set-tacacs", "checkpoint_gaia_tacacs", "cp_gaia_tacacs_server", "TF `tacacs` vs Ansible `tacacs_server`"),
-        _r("allowed-clients", "set-allowed-clients", "checkpoint_gaia_allowed_clients", "cp_gaia_allowed_clients"),
-        _r("password-policy", "set-password-policy", "checkpoint_gaia_password_policy", "cp_gaia_password_policy"),
-        _r("ssh-server-settings", "set-ssh-server-settings", "checkpoint_gaia_ssh_server_settings", "cp_gaia_ssh_server_settings"),
-    ]),
-    ("Misc / not in any tool", [
-        _r("static /etc/hosts entries", None, None, None, "no Gaia-API verb / TF resource / Ansible module (clish-only)"),
-        _r("scheduled-job", "add-scheduled-job", "checkpoint_gaia_scheduled_job", "cp_gaia_scheduled_job"),
-        _r("VSX / VSNext", "add-virtual-gateway / -switch", "checkpoint_gaia_virtual_gateway / _switch", "cp_gaia_virtual_gateway / _switch"),
-        _r("Maestro", "set-maestro-*", "checkpoint_gaia_maestro_*", "cp_gaia_maestro_*", "TF singular vs Ansible plural names"),
-    ]),
-]
-
-_GAIA_FIELD_GAPS = [
-    "Ansible's recurring hole is **dynamic routing** (BGP/OSPF/RIP/PIM/ISIS) + static-mroute, aggregate-route, "
-    "arp, lldp, dhcp6, PBR — read-only there; Terraform covers them and is the broadest Gaia target.",
-    "physical/vlan/bond interface `dhcp`: Terraform models it as a bool; Ansible/API as an object "
-    "(enabled, server_timeout, retry, leasetime, reacquire_timeout).",
-    "vlan/bond/bridge identity differs: Ansible/API use `name` (eth0.100 / bond0); Terraform uses "
-    "`parent`+`resource_id`.",
-    "Static `/etc/hosts` host entries are unsupported in ALL THREE tools (clish `add host` only).",
-]
-
-
-def _exported_mgmt() -> set[str]:
-    return set(mgmt_export.OBJ_SPECS) | {"access-layer", "access-section", "access-rule"}
-
-
-def _exported_gaia() -> set[str]:
-    # the Gaia areas the exporter renders today (gaia_export._SECTIONS), mapped to matrix row names
-    mapped = {"hostname", "dns", "domain name (dns suffix)", "ntp", "time / date / timezone",
-              "proxy", "physical-interface", "static-route"}
-    return mapped
-
-
-def _annotate(groups, exported: set[str]) -> list[dict]:
-    out = []
-    for title, rows in groups:
-        annotated, covered = [], 0
-        for row in rows:
-            r = dict(row, exported=row["name"] in exported)
-            if r["exported"]:
-                covered += 1
-            annotated.append(r)
-        out.append({"title": title, "rows": annotated, "covered": covered, "total": len(rows)})
+def versions() -> dict[str, list[str]]:
+    """Available versions per api_type, newest first."""
+    out: dict[str, list[str]] = {}
+    for a in _index():
+        out.setdefault(a["api_type"], []).append(a["version"])
+    for k in out:
+        out[k] = sorted(set(out[k]), reverse=True)
     return out
 
 
-def build() -> dict:
-    """The colour-coded matrices for the /coverage page."""
-    return {
-        "mgmt": _annotate(_MGMT_GROUPS, _exported_mgmt()),
-        "mgmt_field_gaps": _MGMT_FIELD_GAPS,
-        "gaia": _annotate(_GAIA_GROUPS, _exported_gaia()),
-        "gaia_field_gaps": _GAIA_FIELD_GAPS,
-    }
+def latest(api_type: str) -> str:
+    v = versions().get(api_type, [])
+    return v[0] if v else ""
+
+
+# --- categorisation (group the flat object list) ----------------------------------------------
+
+_MGMT_CATS = [
+    ("Services", lambda n: n.startswith("service-")),
+    ("Applications", lambda n: n.startswith("application-")),
+    ("Access policy", lambda n: n.startswith("access-") and n != "access-role"),
+    ("NAT", lambda n: n.startswith("nat-")),
+    ("Threat Prevention", lambda n: n.startswith(("threat-", "ips-")) or n == "exception-group"),
+    ("HTTPS Inspection", lambda n: n.startswith("https-")),
+    ("VPN", lambda n: n.startswith("vpn-")),
+    ("Identity / users / servers", lambda n: n in {"access-role", "identity-tag", "identity-provider",
+        "user", "user-group", "user-template", "administrator", "ldap-group", "radius-group",
+        "radius-server", "tacacs-group", "tacacs-server", "securid-server", "trusted-client", "api-key"}),
+    ("Data Center", lambda n: "data-center" in n),
+    ("Network objects", lambda n: n in {"host", "network", "group", "address-range", "group-with-exclusion",
+        "multicast-address-range", "wildcard", "dns-domain", "security-zone", "tag", "dynamic-object",
+        "dynamic-global-network-object", "simple-gateway", "simple-cluster", "checkpoint-host",
+        "interoperable-device", "gsn-handover-group", "updatable-object", "logical-server", "time", "time-group"}),
+]
+_GAIA_CATS = [
+    ("Interfaces", lambda n: "interface" in n or n == "ipv6"),
+    ("Routing", lambda n: any(x in n for x in ("route", "bgp", "ospf", "rip", "pim", "isis", "igmp", "mld", "pbr"))),
+    ("Services", lambda n: n in {"dns", "ntp", "proxy", "dhcp-server", "dhcp6-server", "dhcp6-config",
+        "snmp", "snmp-user", "snmp-trap-receiver", "snmp-custom-trap", "syslog", "remote-syslog", "arp", "lldp"}),
+    ("AAA / access", lambda n: n in {"user", "role", "system-group", "radius", "tacacs", "allowed-clients",
+        "password-policy", "ssh-server-settings", "expert-password", "grub-password", "authentication-order"}),
+    ("System", lambda n: n in {"hostname", "hostname-on-login-page", "time-and-date", "banner",
+        "message-of-the-day", "domainname"}),
+]
+
+
+def _category(api_type: str, name: str) -> str:
+    cats = _MGMT_CATS if api_type == "management" else _GAIA_CATS
+    for label, match in cats:
+        if match(name):
+            return label
+    return "Other"
+
+
+def object_groups(api_type: str, version: str) -> list[dict]:
+    """Objects grouped by category, each with object-level API/TF/Ansible support + field counts."""
+    art = _artifact(api_type, version)
+    buckets: dict[str, list] = {}
+    for o in art.get("objects", []):
+        stored = [f for f in o["fields"] if not f.get("request_only")]
+        row = {
+            "name": o["name"], "command": o["command"],
+            "has_tf": o["terraform"] is not None, "has_ansible": o["ansible"] is not None,
+            "fields": len(stored),
+            "tf_fields": sum(1 for f in stored if f["tf"]),
+            "ansible_fields": sum(1 for f in stored if f["ansible"]),
+        }
+        buckets.setdefault(_category(api_type, o["name"]), []).append(row)
+    order = [c[0] for c in (_MGMT_CATS if api_type == "management" else _GAIA_CATS)] + ["Other"]
+    out = []
+    for cat in order:
+        rows = sorted(buckets.get(cat, []), key=lambda r: r["name"])
+        if rows:
+            out.append({"title": cat, "rows": rows, "total": len(rows),
+                        "gaps": sum(1 for r in rows if not (r["has_tf"] and r["has_ansible"]))})
+    return out
+
+
+# --- per-object detail: field diff + the four example forms -----------------------------------
+
+def _u(name: str) -> str:
+    return name.replace("-", "_")
+
+
+def _hcl(v) -> str:
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, (int, float)):
+        return str(v)
+    if isinstance(v, list):
+        return "[" + ", ".join(_hcl(x) for x in v) + "]"
+    if isinstance(v, dict):
+        return "{ " + ", ".join(f"{_u(k)} = {_hcl(x)}" for k, x in v.items()) + " }"
+    return '"' + str(v).replace('"', '\\"') + '"'
+
+
+def _yaml(v) -> str:
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, (int, float)):
+        return str(v)
+    if isinstance(v, list):
+        return "[" + ", ".join(_yaml(x) for x in v) + "]"
+    if isinstance(v, dict):
+        return "{ " + ", ".join(f"{_u(k)}: {_yaml(x)}" for k, x in v.items()) + " }"
+    return '"' + str(v).replace('"', '\\"') + '"'
+
+
+def _cli_arg(key, v) -> list[str]:
+    if isinstance(v, list):
+        return [f'{key}.{i} {_cli_scalar(x)}' for i, x in enumerate(v, 1)]
+    if isinstance(v, dict):
+        out = []
+        for k, x in v.items():
+            out += _cli_arg(f"{key}.{k}", x)
+        return out
+    return [f"{key} {_cli_scalar(v)}"]
+
+
+def _cli_scalar(v) -> str:
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, (int, float)):
+        return str(v)
+    return '"' + str(v).replace('"', '\\"') + '"'
+
+
+def _examples(obj: dict) -> dict:
+    cmd, ex = obj["command"], obj.get("example", {})
+    verb_obj = cmd.replace("-", " ", 1)   # add-host -> "add host"; set-dns -> "set dns"
+    tf_skip = {f["name"] for f in obj["fields"] if not f["tf"]}
+    ans_skip = {f["name"] for f in obj["fields"] if not f["ansible"]}
+
+    web = (f"POST /web_api/{cmd}\nContent-Type: application/json\nX-chkp-sid: <session id>\n\n"
+           + json.dumps(ex, indent=2))
+
+    cli_parts = []
+    for k, v in ex.items():
+        cli_parts += _cli_arg(k, v)
+    cli = f"mgmt_cli {verb_obj} " + " ".join(cli_parts) + " -s id.txt" if obj["terraform"] or True else ""
+
+    if obj["terraform"]:
+        tf_lines = [f'resource "{obj["terraform"]}" "example" {{']
+        for k, v in ex.items():
+            if k not in tf_skip:
+                tf_lines.append(f"  {_u(k)} = {_hcl(v)}")
+        tf_lines.append("}")
+        tf = "\n".join(tf_lines)
+    else:
+        tf = f"# No Terraform resource for {obj['name']}."
+
+    if obj["ansible"]:
+        ans_lines = [f"- name: Add {obj['name']}", f"  {obj['ansible']}:"]
+        for k, v in ex.items():
+            if k not in ans_skip:
+                ans_lines.append(f"    {_u(k)}: {_yaml(v)}")
+        ans_lines.append("    state: present")
+        ans = "\n".join(ans_lines)
+    else:
+        ans = f"# No Ansible module for {obj['name']}."
+
+    return {"web_api": web, "mgmt_cli": cli, "terraform": tf, "ansible": ans}
+
+
+def object_detail(api_type: str, version: str, name: str) -> dict:
+    art = _artifact(api_type, version)
+    obj = next((o for o in art.get("objects", []) if o["name"] == name), None)
+    if not obj:
+        return {"error": "Object not found."}
+    fields = [{"name": f["name"], "type": f.get("type", "string"), "required": f.get("required", False),
+               "request_only": f.get("request_only", False),
+               "api": f["api"], "tf": f["tf"], "ansible": f["ansible"]} for f in obj["fields"]]
+    return {"name": obj["name"], "command": obj["command"], "terraform": obj["terraform"],
+            "ansible": obj["ansible"], "fields": fields, "examples": _examples(obj)}
+
+
+def page_context(api_type: str, version: str) -> dict:
+    art = _artifact(api_type, version)
+    return {"api_type": api_type, "version": version, "versions": versions(),
+            "tool_versions": art.get("tool_versions", {}), "object_count": art.get("object_count", 0),
+            "groups": object_groups(api_type, version)}

@@ -34,11 +34,24 @@ POLL_PREVIEW = 6
 
 
 @router.get("/coverage", response_class=HTMLResponse)
-def coverage_page(request: Request, db: Session = Depends(get_db)):
-    """API vs Terraform vs Ansible coverage comparison (Management + Gaia) — the export gaps at a glance."""
+def coverage_page(request: Request, api: str = "management", version: str = "",
+                  db: Session = Depends(get_db)):
+    """Spec-driven API vs Terraform vs Ansible coverage, per API version, with expandable examples."""
     if get_user_or_none(request, db) is None:
         return RedirectResponse("/login", status_code=303)
-    return templates.TemplateResponse(request, "coverage.html", coverage.build())
+    if api not in ("management", "gaia"):
+        api = "management"
+    version = version or coverage.latest(api)
+    return templates.TemplateResponse(request, "coverage.html", coverage.page_context(api, version))
+
+
+@router.get("/coverage/object")
+def coverage_object(request: Request, api: str, version: str, name: str,
+                    db: Session = Depends(get_db)):
+    """JSON: one object's field-level API/TF/Ansible diff + the four example forms (lazy-loaded)."""
+    if get_user_or_none(request, db) is None:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    return JSONResponse(coverage.object_detail(api, version, name))
 
 # --- Generic Data Center default (the canonical sk167210 sample) -----------------------
 DEFAULT_FEED_NAME = "Generic-DC-Example"

@@ -3,74 +3,140 @@
 {% block main_class %}wide{% endblock %}
 {% block content %}
 <style>
-  table.cov { table-layout:fixed; width:100%; border-collapse:collapse; margin:6px 0 4px; }
-  table.cov th, table.cov td { padding:6px 9px; text-align:left; vertical-align:top; border-bottom:1px solid var(--line);
-    font-size:12px; word-break:break-word; }
-  table.cov th { font-size:10.5px; letter-spacing:.4px; text-transform:uppercase; color:var(--subtle-fg); }
-  table.cov col.c-name { width:16%; } table.cov col.c-tool { width:19%; } table.cov col.c-port { width:7%; } table.cov col.c-note { width:20%; }
-  .cov code { font-size:11px; }
-  .cov .yes { color:var(--ok-fg, #1a7f37); }
-  .cov .no  { color:var(--bad-fg, #c4314b); font-weight:600; }
-  .cov td.yescell { background:color-mix(in srgb, var(--ok-fg, #1a7f37) 9%, transparent); }
-  .cov td.nocell  { background:color-mix(in srgb, var(--bad-fg, #c4314b) 11%, transparent); }
-  .cov td.note { color:var(--faint); font-size:11px; }
-  .covgroup { margin:18px 0 4px; font-weight:700; }
-  .covgroup .cnt { font-weight:500; color:var(--faint); font-size:12px; margin-left:6px; }
-  .leg { display:flex; gap:16px; flex-wrap:wrap; align-items:center; font-size:12.5px; margin:8px 0 4px; }
+  .cov-tabs { display:flex; gap:6px; margin:4px 0 12px; }
+  .cov-tabs a { padding:7px 16px; border:1px solid var(--line); border-radius:9px; text-decoration:none;
+    color:var(--fg); font-weight:600; font-size:13px; }
+  .cov-tabs a.active { background:var(--accent); color:#fff; border-color:var(--accent); }
+  .cov-bar { display:flex; gap:14px; align-items:center; flex-wrap:wrap; margin:6px 0 14px; font-size:13px; }
+  .cov-bar select, .cov-bar input { padding:6px 9px; }
+  .leg { display:flex; gap:16px; flex-wrap:wrap; font-size:12.5px; }
   .leg span { display:inline-flex; align-items:center; gap:6px; }
-  .swatch { width:13px; height:13px; border-radius:3px; display:inline-block; }
+  .yes { color:var(--ok-fg,#1a7f37); font-weight:700; } .no { color:var(--bad-fg,#c4314b); font-weight:700; }
+  table.cov { table-layout:fixed; width:100%; border-collapse:collapse; }
+  table.cov th, table.cov td { padding:6px 9px; text-align:left; border-bottom:1px solid var(--line); font-size:12.5px; }
+  table.cov col.c-obj { width:34%; } table.cov col.c-sup { width:11%; } table.cov col.c-cnt { width:11%; }
+  table.cov th:nth-child(n+2), table.cov td:nth-child(n+2) { text-align:center; }
+  .covgroup { margin:18px 0 4px; font-weight:700; } .covgroup .cnt { font-weight:500; color:var(--faint); font-size:12px; margin-left:6px; }
+  tr.obj { cursor:pointer; } tr.obj:hover td { background:var(--header-hover); }
+  tr.obj .tw { color:var(--faint); font-family:ui-monospace,monospace; font-size:11px; }
+  .detail { background:var(--subtle-bg); }
+  .detail pre { background:var(--surface); border:1px solid var(--line); border-radius:8px; padding:12px;
+    font-size:12px; line-height:1.5; overflow:auto; max-height:46vh; margin:0; white-space:pre; }
+  .ftab { border-collapse:collapse; width:100%; margin-bottom:12px; }
+  .ftab td, .ftab th { padding:3px 8px; border-bottom:1px solid var(--line); font-size:12px; text-align:left; }
+  .ftab th { font-size:10.5px; text-transform:uppercase; color:var(--subtle-fg); }
+  .ftab td.req { color:var(--faint); }
+  .extabs { display:flex; gap:6px; margin:4px 0 8px; flex-wrap:wrap; }
+  .extabs button { font-size:12px; padding:4px 10px; }
 </style>
 
 <h1>Automation coverage <span class="pill">API · Terraform · Ansible</span></h1>
-<p class="muted">For each Check Point object/command: is it supported by the <b>web_api</b>, the <b>Terraform</b> provider
-(<code>CheckPointSW/checkpoint</code>), and the <b>Ansible</b> collection (<code>check_point.mgmt</code> / <code>check_point.gaia</code>) —
-and does this <b>portal</b> export it. Red = no equivalent in that tool; that's a gap. Field-level gaps are listed under each matrix.</p>
-<div class="leg">
-  <span><span class="swatch" style="background:color-mix(in srgb, var(--ok-fg,#1a7f37) 22%, transparent);"></span> supported</span>
-  <span><span class="swatch" style="background:color-mix(in srgb, var(--bad-fg,#c4314b) 22%, transparent);"></span> missing in that tool</span>
-  <span><b class="yes">✓</b> exported by this portal</span>
+<p class="muted">Every object/command from the Check Point API, compared with the Terraform provider and the Ansible collection — generated from the API spec and bundled per version. Expand a row for its full <b>web_api JSON</b>, <b>mgmt_cli</b>, <b>Terraform</b> and <b>Ansible</b> example, with each field colour-coded by where it's supported.</p>
+
+<div class="cov-tabs">
+  <a href="/coverage?api=management" class="{{ 'active' if api_type=='management' else '' }}">Management API</a>
+  <a href="/coverage?api=gaia" class="{{ 'active' if api_type=='gaia' else '' }}">Gaia API</a>
 </div>
 
-{% macro cell(v) %}
-  {% if v %}<td class="yescell"><code class="yes">{{ v }}</code></td>{% else %}<td class="nocell"><span class="no">—</span></td>{% endif %}
-{% endmacro %}
+<div class="cov-bar">
+  <label>API version
+    <select id="ver" style="margin-left:4px;">
+      {% for v in versions.get(api_type, []) %}<option value="{{ v }}" {{ 'selected' if v==version else '' }}>{{ v }}</option>{% endfor %}
+    </select>
+  </label>
+  <span class="muted">{{ object_count }} objects</span>
+  <span class="muted">vs Terraform <code>{{ tool_versions.get('terraform','') }}</code> · Ansible <code>{{ tool_versions.get('ansible_mgmt' if api_type=='management' else 'ansible_gaia','') }}</code></span>
+  <input id="filter" type="text" placeholder="filter objects…" style="margin-left:auto; min-width:180px;">
+</div>
+<div class="leg" style="margin-bottom:8px;">
+  <span><b class="yes">✓</b> supported</span><span><b class="no">✗</b> no equivalent (gap)</span>
+  <span class="muted">click a row for full example + field diff · web_api is authoritative</span>
+</div>
+<p class="muted" style="font-size:11.5px; margin:0 0 10px;">Object-level support is exact. Field-level Terraform/Ansible support is <b>derived</b> from the API schema + documented divergences (e.g. <code>groups</code>/<code>details-level</code> are TF gaps); a field renamed by a tool (e.g. host <code>ip-address</code> → TF <code>ipv4_address</code>) can show as a gap. Exact per-field parsing of the provider/collection schemas is a planned refinement.</p>
 
-{% macro matrix(groups) %}
-  {% for g in groups %}
-  <div class="covgroup">{{ g.title }}<span class="cnt">· {{ g.covered }}/{{ g.total }} exported by portal</span></div>
+<div id="cov-root" data-api="{{ api_type }}" data-version="{{ version }}">
+{% for g in groups %}
+  <div class="covgroup">{{ g.title }}<span class="cnt">· {{ g.total }} objects{% if g.gaps %} · {{ g.gaps }} with a tool gap{% endif %}</span></div>
   <table class="cov">
-    <colgroup><col class="c-name"><col class="c-tool"><col class="c-tool"><col class="c-tool"><col class="c-port"><col class="c-note"></colgroup>
-    <thead><tr><th>Object / command</th><th>web_api</th><th>Terraform</th><th>Ansible</th><th>Portal</th><th>Notes</th></tr></thead>
+    <colgroup><col class="c-obj"><col class="c-sup"><col class="c-sup"><col class="c-sup"><col class="c-cnt"></colgroup>
+    <thead><tr><th>Object / command</th><th>web_api</th><th>Terraform</th><th>Ansible</th><th>fields (TF/Ans)</th></tr></thead>
     <tbody>
     {% for r in g.rows %}
-      <tr>
-        <td><b>{{ r.name }}</b></td>
-        {{ cell(r.api) }}{{ cell(r.tf) }}{{ cell(r.ans) }}
-        {% if r.exported %}<td class="yescell" style="text-align:center;"><b class="yes">✓</b></td>{% else %}<td style="text-align:center;"><span class="faint">—</span></td>{% endif %}
-        <td class="note">{{ r.note }}</td>
+      <tr class="obj" data-name="{{ r.name }}">
+        <td><b>{{ r.name }}</b> <span class="tw">{{ r.command }}</span></td>
+        <td><span class="yes">✓</span></td>
+        <td>{% if r.has_tf %}<span class="yes">✓</span>{% else %}<span class="no">✗</span>{% endif %}</td>
+        <td>{% if r.has_ansible %}<span class="yes">✓</span>{% else %}<span class="no">✗</span>{% endif %}</td>
+        <td class="muted">{{ r.fields }} · {{ r.tf_fields }}/{{ r.ansible_fields }}</td>
       </tr>
     {% endfor %}
     </tbody>
   </table>
-  {% endfor %}
-{% endmacro %}
+{% endfor %}
+</div>
 
-{% macro gaps(items) %}
-  <div class="card" style="margin-top:10px; padding:12px 16px;">
-    <b style="font-size:13px;">Field-level gaps</b>
-    <ul class="muted" style="margin:8px 0 0; padding-left:18px; font-size:12.5px; line-height:1.55;">
-      {% for x in items %}<li>{{ x }}</li>{% endfor %}
-    </ul>
-  </div>
-{% endmacro %}
+<script>
+  (function () {
+    var root = document.getElementById('cov-root');
+    if (!root) return;
+    var api = root.getAttribute('data-api'), version = root.getAttribute('data-version');
+    document.getElementById('ver').addEventListener('change', function () {
+      window.location = '/coverage?api=' + api + '&version=' + encodeURIComponent(this.value);
+    });
+    document.getElementById('filter').addEventListener('input', function () {
+      var q = this.value.toLowerCase();
+      root.querySelectorAll('tr.obj').forEach(function (tr) {
+        tr.style.display = tr.getAttribute('data-name').indexOf(q) > -1 ? '' : 'none';
+        if (tr._detail) tr._detail.style.display = 'none';
+      });
+    });
+    function esc(s) { var d = document.createElement('div'); d.textContent = (s == null ? '' : s); return d.innerHTML; }
 
-<h2 style="margin-top:26px;">Management API</h2>
-<p class="muted" style="margin-top:0;">Policy &amp; objects (<code>web_api</code>). Terraform v3.2.0 ≈ 248 <code>checkpoint_management_*</code> resources; Ansible <code>check_point.mgmt</code> ≈ 274 modules.</p>
-{{ matrix(mgmt) }}
-{{ gaps(mgmt_field_gaps) }}
+    function fieldTable(fields) {
+      var h = '<table class="ftab"><thead><tr><th>Field</th><th>Type</th><th>API</th><th>Terraform</th><th>Ansible</th></tr></thead><tbody>';
+      fields.forEach(function (f) {
+        var cls = f.request_only ? ' class="req"' : '';
+        function c(ok) { return ok ? '<span class="yes">✓</span>' : '<span class="no">✗</span>'; }
+        h += '<tr' + cls + '><td>' + esc(f.name) + (f.required ? ' *' : '') + (f.request_only ? ' <span class="muted">(request)</span>' : '') +
+             '</td><td class="muted">' + esc(f.type) + '</td><td>' + c(f.api) + '</td><td>' + c(f.tf) + '</td><td>' + c(f.ansible) + '</td></tr>';
+      });
+      return h + '</tbody></table>';
+    }
+    function exampleBlock(ex) {
+      var forms = [['web_api', 'web_api JSON'], ['mgmt_cli', 'mgmt_cli'], ['terraform', 'Terraform'], ['ansible', 'Ansible']];
+      var tabs = '<div class="extabs">', panes = '';
+      forms.forEach(function (f, i) {
+        tabs += '<button type="button" class="copybtn ex-tab' + (i === 0 ? ' cb-active' : '') + '" data-k="' + f[0] + '">' + f[1] + '</button>';
+        panes += '<pre class="ex-pane" data-k="' + f[0] + '"' + (i ? ' hidden' : '') + '>' + esc(ex[f[0]] || '') + '</pre>';
+      });
+      return tabs + '</div>' + panes;
+    }
+    function bindTabs(box) {
+      box.querySelectorAll('.ex-tab').forEach(function (b) {
+        b.addEventListener('click', function () {
+          box.querySelectorAll('.ex-tab').forEach(function (x) { x.classList.remove('cb-active'); });
+          b.classList.add('cb-active');
+          box.querySelectorAll('.ex-pane').forEach(function (p) { p.hidden = p.getAttribute('data-k') !== b.getAttribute('data-k'); });
+        });
+      });
+    }
 
-<h2 style="margin-top:30px;">Gaia OS API</h2>
-<p class="muted" style="margin-top:0;">Appliance OS config (<code>gaia_api</code>). Terraform (<code>context = "gaia_api"</code>) ≈ 119 <code>checkpoint_gaia_*</code> resources; Ansible <code>check_point.gaia</code> ≈ 53 config modules. Terraform is the broadest Gaia target — Ansible's main hole is dynamic routing.</p>
-{{ matrix(gaia) }}
-{{ gaps(gaia_field_gaps) }}
+    root.querySelectorAll('tr.obj').forEach(function (tr) {
+      tr.addEventListener('click', function () {
+        if (tr._detail) { tr._detail.style.display = tr._detail.style.display === 'none' ? '' : 'none'; return; }
+        var dr = document.createElement('tr'); dr.className = 'detail';
+        var td = document.createElement('td'); td.colSpan = 5; td.innerHTML = '<p class="muted">Loading…</p>';
+        dr.appendChild(td); tr.parentNode.insertBefore(dr, tr.nextSibling); tr._detail = dr;
+        fetch('/coverage/object?api=' + api + '&version=' + encodeURIComponent(version) + '&name=' + encodeURIComponent(tr.getAttribute('data-name')))
+          .then(function (r) { return r.json(); })
+          .then(function (j) {
+            if (j.error) { td.innerHTML = '<div class="err">' + esc(j.error) + '</div>'; return; }
+            td.innerHTML = '<div style="padding:6px 2px 10px;">' + fieldTable(j.fields) + exampleBlock(j.examples) + '</div>';
+            bindTabs(td);
+          })
+          .catch(function () { td.innerHTML = '<div class="err">Failed to load.</div>'; });
+      });
+    });
+  })();
+</script>
 {% endblock %}
