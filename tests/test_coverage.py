@@ -1,5 +1,27 @@
 """Coverage matrix: structure + that `exported` flags are derived from the live exporter specs."""
+import json
+import os
+
 from app.services import coverage, mgmt_export
+
+_ART = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "app", "coverage_data")
+
+
+def test_generated_coverage_artifacts_are_complete_and_shaped():
+    """The bundled, spec-generated artifacts list every object with full fields + a web_api example
+    + per-field 3-way support flags."""
+    mg = json.load(open(os.path.join(_ART, "management-v2.0.1.json")))
+    assert mg["object_count"] == len(mg["objects"]) >= 100      # all add-* objects, not a subset
+    host = next(o for o in mg["objects"] if o["name"] == "host")
+    assert host["terraform"] == "checkpoint_management_host" and host["ansible"] == "cp_mgmt_host"
+    assert host["example"].get("name")                          # web_api JSON example present
+    f = {x["name"]: x for x in host["fields"]}
+    assert f["groups"]["tf"] is False and f["groups"]["ansible"] is True   # documented TF field gap
+    assert f["ip-address"]["tf"] is False                       # TF uses ipv4/ipv6 split
+    assert f["set-if-exists"]["request_only"] is True           # request flag, excluded from the diff
+    assert next(o for o in mg["objects"] if o["name"] == "service-gtp")["ansible"] is None  # Ansible gap
+    ga = json.load(open(os.path.join(_ART, "gaia-v1.8.json")))
+    assert ga["object_count"] == len(ga["objects"]) >= 100
 
 
 def _find(groups, name):

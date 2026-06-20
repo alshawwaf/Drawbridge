@@ -1,0 +1,16 @@
+{
+  "artifacts": [
+    {
+      "api_type": "gaia",
+      "version": "v1.8",
+      "file": "gaia-v1.8.json",
+      "object_count": 136
+    },
+    {
+      "api_type": "management",
+      "version": "v2.0.1",
+      "file": "management-v2.0.1.json",
+      "object_count": 130
+    }
+  ]
+}
