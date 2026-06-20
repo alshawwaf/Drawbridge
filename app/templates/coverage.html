@@ -101,28 +101,42 @@
     });
     function esc(s) { var d = document.createElement('div'); d.textContent = (s == null ? '' : s); return d.innerHTML; }
 
-    function fieldTable(fields) {
+    function link(inner, url) {
+      return url ? '<a href="' + esc(url) + '" target="_blank" rel="noopener" style="text-decoration:none;" title="Open the documentation">' + inner + '</a>' : inner;
+    }
+    function fieldTable(fields, docs) {
       var h = '<table class="ftab"><thead><tr><th>Field</th><th>Type</th><th>API</th><th>Terraform</th><th>Ansible</th></tr></thead><tbody>';
-      function tcell(ok, nm, apiName) {
-        if (!ok) return '<span class="no">✗</span>';
-        var u = apiName.replace(/-/g, '_');   // show the tool's real arg name only when it's renamed
-        return (nm && nm !== u) ? '<span class="yes">✓</span> <span class="muted" style="font-size:10.5px;">' + esc(nm) + '</span>'
-                                : '<span class="yes">✓</span>';
+      function tcell(ok, nm, apiName, url) {
+        var inner;
+        if (!ok) { inner = '<span class="no">✗</span>'; }
+        else {
+          var u = apiName.replace(/-/g, '_');   // show the tool's real arg name only when it's renamed
+          inner = (nm && nm !== u) ? '<span class="yes">✓</span> <span class="muted" style="font-size:10.5px;">' + esc(nm) + '</span>'
+                                   : '<span class="yes">✓</span>';
+        }
+        return link(inner, url);   // click any cell to open that tool's doc page for this object
       }
       fields.forEach(function (f) {
         var cls = f.request_only ? ' class="req"' : '';
         h += '<tr' + cls + '><td>' + esc(f.name) + (f.required ? ' *' : '') + (f.request_only ? ' <span class="muted">(request)</span>' : '') +
-             '</td><td class="muted">' + esc(f.type) + '</td><td><span class="yes">✓</span></td><td>' +
-             tcell(f.tf, f.tf_name, f.name) + '</td><td>' + tcell(f.ansible, f.ansible_name, f.name) + '</td></tr>';
+             '</td><td class="muted">' + esc(f.type) + '</td><td>' + link('<span class="yes">✓</span>', docs.api) + '</td><td>' +
+             tcell(f.tf, f.tf_name, f.name, docs.terraform) + '</td><td>' + tcell(f.ansible, f.ansible_name, f.name, docs.ansible) + '</td></tr>';
       });
       return h + '</tbody></table>';
     }
+    function refLine(docs) {
+      var parts = ['<a href="' + esc(docs.api) + '" target="_blank" rel="noopener">web_api ↗</a>'];
+      if (docs.terraform) parts.push('<a href="' + esc(docs.terraform) + '" target="_blank" rel="noopener">Terraform resource ↗</a>');
+      if (docs.ansible) parts.push('<a href="' + esc(docs.ansible) + '" target="_blank" rel="noopener">Ansible module ↗</a>');
+      return '<div class="muted" style="font-size:11.5px; margin-bottom:8px;">Docs: ' + parts.join(' · ') + '</div>';
+    }
     function exampleBlock(ex) {
-      var forms = [['web_api', 'web_api JSON'], ['mgmt_cli', 'mgmt_cli'], ['terraform', 'Terraform'], ['ansible', 'Ansible']];
+      var LABEL = { web_api: 'web_api JSON', mgmt_cli: 'mgmt_cli', clish: 'clish', terraform: 'Terraform', ansible: 'Ansible' };
+      var keys = ['web_api', 'mgmt_cli', 'clish', 'terraform', 'ansible'].filter(function (k) { return ex[k] != null; });
       var tabs = '<div class="extabs">', panes = '';
-      forms.forEach(function (f, i) {
-        tabs += '<button type="button" class="copybtn ex-tab' + (i === 0 ? ' cb-active' : '') + '" data-k="' + f[0] + '">' + f[1] + '</button>';
-        panes += '<pre class="ex-pane" data-k="' + f[0] + '"' + (i ? ' hidden' : '') + '>' + esc(ex[f[0]] || '') + '</pre>';
+      keys.forEach(function (k, i) {   // only the forms that apply (Gaia has no mgmt_cli)
+        tabs += '<button type="button" class="copybtn ex-tab' + (i === 0 ? ' cb-active' : '') + '" data-k="' + k + '">' + LABEL[k] + '</button>';
+        panes += '<pre class="ex-pane" data-k="' + k + '"' + (i ? ' hidden' : '') + '>' + esc(ex[k]) + '</pre>';
       });
       return tabs + '</div>' + panes;
     }
@@ -146,7 +160,7 @@
           .then(function (r) { return r.json(); })
           .then(function (j) {
             if (j.error) { td.innerHTML = '<div class="err">' + esc(j.error) + '</div>'; return; }
-            td.innerHTML = '<div style="padding:6px 2px 10px;">' + fieldTable(j.fields) + exampleBlock(j.examples) + '</div>';
+            td.innerHTML = '<div style="padding:6px 2px 10px;">' + refLine(j.docs) + fieldTable(j.fields, j.docs) + exampleBlock(j.examples) + '</div>';
             bindTabs(td);
           })
           .catch(function () { td.innerHTML = '<div class="err">Failed to load.</div>'; });
