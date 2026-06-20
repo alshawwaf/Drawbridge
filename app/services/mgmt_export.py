@@ -2,72 +2,279 @@
 Infrastructure-as-Code — **Terraform** (``CheckPointSW/checkpoint``), **Ansible**
 (``check_point.mgmt``) and a **mgmt_cli** shell script — as a config *backup-as-code*.
 
-Design notes (mirroring CP's own ExportImportPolicyPackage resilience):
-  * **Never fail on an unknown object type.** Types we don't have a spec for are counted and listed
-    under ``stats.skipped`` and annotated as comments, not dropped silently or crashed on.
-  * **Predefined objects** (the "Check Point Data" domain — ``Any``, ``Original``, predefined
-    services, the ``Accept``/``Drop`` actions, ``Log`` track …) exist on every SMS, so they are
-    referenced **by name** and never re-emitted as resources.
-  * **Order is preserved.** Sections and rules are emitted top→bottom and appended to the layer's
-    bottom on restore; Terraform additionally gets a ``depends_on`` chain so ``apply`` keeps order.
-  * Object↔object and rule→object references resolve to real Terraform resource addresses when the
-    target is in the export set, so ``terraform apply`` builds the dependency graph correctly;
-    Ansible / mgmt_cli reference by name (objects are created before the rules that use them).
+Goal: a faithful round-trip. For every supported object type we emit **all publicly-settable fields**
+(name, color, comments, tags, the type-specific fields, and nested blocks such as NAT settings,
+aggressive aging, host interfaces / server roles, time ranges) using the exact argument name each tool
+expects. Field maps were built from the official docs (Terraform provider, check_point.mgmt Ansible
+collection, web_api ``add-*`` reference) — see ``OBJ_SPECS``.
 
-These are pure functions over the bundle that ``mgmt_api.pull_for_export`` returns — no network — so
-they are fully unit-tested without a live SMS.
+Design notes (mirroring CP's ExportImportPolicyPackage resilience):
+  * **Never fail on an unknown object type** — it's counted under ``stats.skipped`` and commented, not
+    dropped silently or crashed on.
+  * **Predefined objects** (the read-only "Check Point Data" domain — ``Any``, predefined services, the
+    ``Accept``/``Drop`` actions, ``Log`` track …) exist on every SMS, so they're referenced by name and
+    never re-emitted.
+  * **Group membership** is captured from the group's ``members`` (not a ``groups`` arg on each object —
+    Terraform has no such arg, and it would be redundant), so the exported set is internally consistent.
+  * **Order is preserved** — sections/rules emit top→bottom and append to the layer's bottom on restore;
+    Terraform also gets a ``depends_on`` chain.
+  * Object↔object and rule→object references resolve to real Terraform resource addresses when the
+    target is in the export set, so ``terraform apply`` builds the dependency graph correctly; Ansible /
+    mgmt_cli reference by name (objects are created before the rules/groups that use them).
+
+Pure functions over the bundle ``mgmt_api.pull_for_export`` returns — no network — so fully unit-tested.
 """
 from __future__ import annotations
 
 import re
 
-# --- object type specs -----------------------------------------------------------------------
-# Per CP object type: the Terraform resource, the Ansible module, the mgmt_cli object, and the
-# fields to carry over as (cp-show-key, terraform-key, ansible-key, mgmt_cli-key, kind).
-# kind: "scalar" (quoted), "int" (bare when numeric), "members" (list of object references).
-OBJ_SPECS: dict[str, dict] = {
-    "host": {"tf": "checkpoint_management_host", "ansible": "cp_mgmt_host", "cli": "host",
-             "fields": [("ipv4-address", "ipv4_address", "ip_address", "ip-address", "scalar")]},
-    "network": {"tf": "checkpoint_management_network", "ansible": "cp_mgmt_network", "cli": "network",
-                "fields": [("subnet4", "subnet4", "subnet", "subnet4", "scalar"),
-                           ("mask-length4", "mask_length4", "mask_length4", "mask-length4", "int")]},
-    "address-range": {"tf": "checkpoint_management_address_range", "ansible": "cp_mgmt_address_range",
-                      "cli": "address-range",
-                      "fields": [("ipv4-address-first", "ipv4_address_first", "ip_address_first",
-                                  "ip-address-first", "scalar"),
-                                 ("ipv4-address-last", "ipv4_address_last", "ip_address_last",
-                                  "ip-address-last", "scalar")]},
-    "group": {"tf": "checkpoint_management_group", "ansible": "cp_mgmt_group", "cli": "group",
-              "fields": [("members", "members", "members", "members", "members")]},
-    "service-tcp": {"tf": "checkpoint_management_service_tcp", "ansible": "cp_mgmt_service_tcp",
-                    "cli": "service-tcp", "fields": [("port", "port", "port", "port", "scalar")]},
-    "service-udp": {"tf": "checkpoint_management_service_udp", "ansible": "cp_mgmt_service_udp",
-                    "cli": "service-udp", "fields": [("port", "port", "port", "port", "scalar")]},
-    "service-icmp": {"tf": "checkpoint_management_service_icmp", "ansible": "cp_mgmt_service_icmp",
-                     "cli": "service-icmp",
-                     "fields": [("icmp-type", "icmp_type", "icmp_type", "icmp-type", "int"),
-                                ("icmp-code", "icmp_code", "icmp_code", "icmp-code", "int")]},
-    "service-other": {"tf": "checkpoint_management_service_other", "ansible": "cp_mgmt_service_other",
-                      "cli": "service-other",
-                      "fields": [("ip-protocol", "ip_protocol", "ip_protocol", "ip-protocol", "int")]},
-    "service-group": {"tf": "checkpoint_management_service_group", "ansible": "cp_mgmt_service_group",
-                      "cli": "service-group",
-                      "fields": [("members", "members", "members", "members", "members")]},
-    "access-role": {"tf": "checkpoint_management_access_role", "ansible": "cp_mgmt_access_role",
-                    "cli": "access-role", "fields": [],
-                    "note": "access-role members (networks / users / machines) are not exported — "
-                            "re-add them before applying."},
-}
 
-# Object types that are part of every management database (predefined) — referenced, never emitted.
-_PREDEFINED_TYPES = {"CpmiAnyObject", "RulebaseAction", "Track", "Global",
-                     "CpmiGatewayPlain", "Track-Object"}
+# --- field model -----------------------------------------------------------------------------
+# A field maps one source key (what ``show-*`` returns, hyphenated) to its argument name in each tool.
+# kinds:
+#   str | int | bool          scalar value
+#   strlist                    list of plain strings (e.g. additional-ports, recurrence days)
+#   names                      list of object references → resolved to TF resource addresses
+#   namelist                   list of object names emitted as plain strings (tags — not ref-wired)
+#   ref                        single object reference → TF resource address when in the set
+#   weekdays                   list in Ansible/cli; comma-joined string in Terraform (TF arg is singular)
+#   nested                     a dict → a block (sub = field list)
+#   nestedlist                 a list of dicts → repeated blocks (sub = field list)
+# A tool key of ``None`` means that tool doesn't expose the field (skip it there).
+def F(src, tf, ans, cli, kind, sub=None):
+    return {"src": src, "tf": tf, "ans": ans, "cli": cli, "kind": kind, "sub": sub}
+
+
+# Common to (effectively) every object.
+_COMMON = [
+    F("color", "color", "color", "color", "str"),
+    F("comments", "comments", "comments", "comments", "str"),
+    F("tags", "tags", "tags", "tags", "namelist"),
+]
+
+# Shared nested blocks.
+_NAT = F("nat-settings", "nat_settings", "nat_settings", "nat-settings", "nested", [
+    F("auto-rule", "auto_rule", "auto_rule", "auto-rule", "bool"),
+    F("ipv4-address", "ipv4_address", "ipv4_address", "ipv4-address", "str"),
+    F("ipv6-address", "ipv6_address", "ipv6_address", "ipv6-address", "str"),
+    F("hide-behind", "hide_behind", "hide_behind", "hide-behind", "str"),
+    F("install-on", "install_on", "install_on", "install-on", "ref"),
+    F("method", "method", "method", "method", "str"),
+])
+_AGING = F("aggressive-aging", "aggressive_aging", "aggressive_aging", "aggressive-aging", "nested", [
+    F("enable", "enable", "enable", "enable", "bool"),
+    F("timeout", "timeout", "timeout", "timeout", "int"),
+    F("use-default-timeout", "use_default_timeout", "use_default_timeout", "use-default-timeout", "bool"),
+    F("default-timeout", "default_timeout", "default_timeout", "default-timeout", "int"),
+])
+_HOST_IFACES = F("interfaces", "interfaces", "interfaces", "interfaces", "nestedlist", [
+    F("name", "name", "name", "name", "str"),
+    F("subnet4", "subnet4", "subnet4", "subnet4", "str"),
+    F("subnet6", "subnet6", "subnet6", "subnet6", "str"),
+    F("mask-length4", "mask_length4", "mask_length4", "mask-length4", "int"),
+    F("mask-length6", "mask_length6", "mask_length6", "mask-length6", "int"),
+    F("color", "color", "color", "color", "str"),
+    F("comments", "comments", "comments", "comments", "str"),
+])
+_HOST_SERVERS = F("host-servers", "host_servers", "host_servers", "host-servers", "nested", [
+    F("dns-server", "dns_server", "dns_server", "dns-server", "bool"),
+    F("mail-server", "mail_server", "mail_server", "mail-server", "bool"),
+    F("web-server", "web_server", "web_server", "web-server", "bool"),
+    F("web-server-config", "web_server_config", "web_server_config", "web-server-config", "nested", [
+        F("additional-ports", "additional_ports", "additional_ports", "additional-ports", "strlist"),
+        F("application-engines", "application_engines", "application_engines", "application-engines", "strlist"),
+        F("listen-standard-port", "listen_standard_port", "listen_standard_port", "listen-standard-port", "bool"),
+        F("operating-system", "operating_system", "operating_system", "operating-system", "str"),
+        F("protected-by", "protected_by", "protected_by", "protected-by", "ref"),
+    ]),
+])
+_TIME_POINT = [   # shared by time.start / time.end
+    F("date", "date", "date", "date", "str"),
+    F("iso-8601", "iso_8601", "iso_8601", "iso-8601", "str"),
+    F("posix", "posix", "posix", "posix", "int"),
+    F("time", "time", "time", "time", "str"),
+]
+
+
+# Per-type: Terraform resource, Ansible module, mgmt_cli object, and the type-specific fields.
+# `_COMMON` is appended to every type below.
+OBJ_SPECS: dict[str, dict] = {
+    "host": {"tf": "checkpoint_management_host", "ansible": "cp_mgmt_host", "cli": "host", "fields": [
+        F("ipv4-address", "ipv4_address", "ipv4_address", "ipv4-address", "str"),
+        F("ipv6-address", "ipv6_address", "ipv6_address", "ipv6-address", "str"),
+        _HOST_IFACES, _NAT, _HOST_SERVERS,
+    ]},
+    "network": {"tf": "checkpoint_management_network", "ansible": "cp_mgmt_network", "cli": "network", "fields": [
+        F("subnet4", "subnet4", "subnet4", "subnet4", "str"),
+        F("subnet6", "subnet6", "subnet6", "subnet6", "str"),
+        F("mask-length4", "mask_length4", "mask_length4", "mask-length4", "int"),
+        F("mask-length6", "mask_length6", "mask_length6", "mask-length6", "int"),
+        F("broadcast", "broadcast", "broadcast", "broadcast", "str"),
+        _NAT,
+    ]},
+    "address-range": {"tf": "checkpoint_management_address_range", "ansible": "cp_mgmt_address_range",
+                      "cli": "address-range", "fields": [
+        F("ipv4-address-first", "ipv4_address_first", "ipv4_address_first", "ipv4-address-first", "str"),
+        F("ipv4-address-last", "ipv4_address_last", "ipv4_address_last", "ipv4-address-last", "str"),
+        F("ipv6-address-first", "ipv6_address_first", "ipv6_address_first", "ipv6-address-first", "str"),
+        F("ipv6-address-last", "ipv6_address_last", "ipv6_address_last", "ipv6-address-last", "str"),
+        _NAT,
+    ]},
+    "group": {"tf": "checkpoint_management_group", "ansible": "cp_mgmt_group", "cli": "group", "fields": [
+        F("members", "members", "members", "members", "names"),
+    ]},
+    "group-with-exclusion": {"tf": "checkpoint_management_group_with_exclusion",
+                             "ansible": "cp_mgmt_group_with_exclusion", "cli": "group-with-exclusion", "fields": [
+        F("include", "include", "include", "include", "ref"),
+        F("except", "except", "except", "except", "ref"),
+    ]},
+    "wildcard": {"tf": "checkpoint_management_wildcard", "ansible": "cp_mgmt_wildcard", "cli": "wildcard", "fields": [
+        F("ipv4-address", "ipv4_address", "ipv4_address", "ipv4-address", "str"),
+        F("ipv4-mask-wildcard", "ipv4_mask_wildcard", "ipv4_mask_wildcard", "ipv4-mask-wildcard", "str"),
+        F("ipv6-address", "ipv6_address", "ipv6_address", "ipv6-address", "str"),
+        F("ipv6-mask-wildcard", "ipv6_mask_wildcard", "ipv6_mask_wildcard", "ipv6-mask-wildcard", "str"),
+    ]},
+    "multicast-address-range": {"tf": "checkpoint_management_multicast_address_range",
+                                "ansible": "cp_mgmt_multicast_address_range",
+                                "cli": "multicast-address-range", "fields": [
+        F("ipv4-address", "ipv4_address", "ipv4_address", "ipv4-address", "str"),
+        F("ipv6-address", "ipv6_address", "ipv6_address", "ipv6-address", "str"),
+        F("ipv4-address-first", "ipv4_address_first", "ipv4_address_first", "ipv4-address-first", "str"),
+        F("ipv4-address-last", "ipv4_address_last", "ipv4_address_last", "ipv4-address-last", "str"),
+        F("ipv6-address-first", "ipv6_address_first", "ipv6_address_first", "ipv6-address-first", "str"),
+        F("ipv6-address-last", "ipv6_address_last", "ipv6_address_last", "ipv6-address-last", "str"),
+    ]},
+    "dns-domain": {"tf": "checkpoint_management_dns_domain", "ansible": "cp_mgmt_dns_domain",
+                   "cli": "dns-domain", "fields": [
+        F("is-sub-domain", "is_sub_domain", "is_sub_domain", "is-sub-domain", "bool"),
+    ]},
+    "security-zone": {"tf": "checkpoint_management_security_zone", "ansible": "cp_mgmt_security_zone",
+                      "cli": "security-zone", "fields": []},
+    "tag": {"tf": "checkpoint_management_tag", "ansible": "cp_mgmt_tag", "cli": "tag", "fields": []},
+    "service-tcp": {"tf": "checkpoint_management_service_tcp", "ansible": "cp_mgmt_service_tcp",
+                    "cli": "service-tcp", "fields": [
+        F("port", "port", "port", "port", "str"),
+        F("source-port", "source_port", "source_port", "source-port", "str"),
+        F("protocol", "protocol", "protocol", "protocol", "str"),
+        F("match-by-protocol-signature", "match_by_protocol_signature", "match_by_protocol_signature",
+          "match-by-protocol-signature", "bool"),
+        F("match-for-any", "match_for_any", "match_for_any", "match-for-any", "bool"),
+        F("keep-connections-open-after-policy-installation", "keep_connections_open_after_policy_installation",
+          "keep_connections_open_after_policy_installation", "keep-connections-open-after-policy-installation", "bool"),
+        F("session-timeout", "session_timeout", "session_timeout", "session-timeout", "int"),
+        F("use-default-session-timeout", "use_default_session_timeout", "use_default_session_timeout",
+          "use-default-session-timeout", "bool"),
+        F("sync-connections-on-cluster", "sync_connections_on_cluster", "sync_connections_on_cluster",
+          "sync-connections-on-cluster", "bool"),
+        _AGING,
+    ]},
+    "service-udp": {"tf": "checkpoint_management_service_udp", "ansible": "cp_mgmt_service_udp",
+                    "cli": "service-udp", "fields": [
+        F("port", "port", "port", "port", "str"),
+        F("source-port", "source_port", "source_port", "source-port", "str"),
+        F("protocol", "protocol", "protocol", "protocol", "str"),
+        F("accept-replies", "accept_replies", "accept_replies", "accept-replies", "bool"),
+        F("match-by-protocol-signature", "match_by_protocol_signature", "match_by_protocol_signature",
+          "match-by-protocol-signature", "bool"),
+        F("match-for-any", "match_for_any", "match_for_any", "match-for-any", "bool"),
+        F("keep-connections-open-after-policy-installation", "keep_connections_open_after_policy_installation",
+          "keep_connections_open_after_policy_installation", "keep-connections-open-after-policy-installation", "bool"),
+        F("session-timeout", "session_timeout", "session_timeout", "session-timeout", "int"),
+        F("use-default-session-timeout", "use_default_session_timeout", "use_default_session_timeout",
+          "use-default-session-timeout", "bool"),
+        F("sync-connections-on-cluster", "sync_connections_on_cluster", "sync_connections_on_cluster",
+          "sync-connections-on-cluster", "bool"),
+        _AGING,
+    ]},
+    "service-icmp": {"tf": "checkpoint_management_service_icmp", "ansible": "cp_mgmt_service_icmp",
+                     "cli": "service-icmp", "fields": [
+        F("icmp-type", "icmp_type", "icmp_type", "icmp-type", "int"),
+        F("icmp-code", "icmp_code", "icmp_code", "icmp-code", "int"),
+        F("keep-connections-open-after-policy-installation", "keep_connections_open_after_policy_installation",
+          "keep_connections_open_after_policy_installation", "keep-connections-open-after-policy-installation", "bool"),
+    ]},
+    "service-other": {"tf": "checkpoint_management_service_other", "ansible": "cp_mgmt_service_other",
+                      "cli": "service-other", "fields": [
+        F("ip-protocol", "ip_protocol", "ip_protocol", "ip-protocol", "int"),
+        F("match", "match", "match", "match", "str"),
+        F("action", "action", "action", "action", "str"),
+        F("accept-replies", "accept_replies", "accept_replies", "accept-replies", "bool"),
+        F("match-for-any", "match_for_any", "match_for_any", "match-for-any", "bool"),
+        F("source-port", "source_port", "source_port", "source-port", "str"),
+        F("keep-connections-open-after-policy-installation", "keep_connections_open_after_policy_installation",
+          "keep_connections_open_after_policy_installation", "keep-connections-open-after-policy-installation", "bool"),
+        F("session-timeout", "session_timeout", "session_timeout", "session-timeout", "int"),
+        F("use-default-session-timeout", "use_default_session_timeout", "use_default_session_timeout",
+          "use-default-session-timeout", "bool"),
+        F("sync-connections-on-cluster", "sync_connections_on_cluster", "sync_connections_on_cluster",
+          "sync-connections-on-cluster", "bool"),
+        _AGING,
+    ]},
+    "service-group": {"tf": "checkpoint_management_service_group", "ansible": "cp_mgmt_service_group",
+                      "cli": "service-group", "fields": [
+        F("members", "members", "members", "members", "names"),
+    ]},
+    "service-dce-rpc": {"tf": "checkpoint_management_service_dce_rpc", "ansible": "cp_mgmt_service_dce_rpc",
+                        "cli": "service-dce-rpc", "fields": [
+        F("interface-uuid", "interface_uuid", "interface_uuid", "interface-uuid", "str"),
+        F("keep-connections-open-after-policy-installation", "keep_connections_open_after_policy_installation",
+          "keep_connections_open_after_policy_installation", "keep-connections-open-after-policy-installation", "bool"),
+    ]},
+    "service-rpc": {"tf": "checkpoint_management_service_rpc", "ansible": "cp_mgmt_service_rpc",
+                    "cli": "service-rpc", "fields": [
+        F("program-number", "program_number", "program_number", "program-number", "int"),
+        F("keep-connections-open-after-policy-installation", "keep_connections_open_after_policy_installation",
+          "keep_connections_open_after_policy_installation", "keep-connections-open-after-policy-installation", "bool"),
+    ]},
+    "service-sctp": {"tf": "checkpoint_management_service_sctp", "ansible": "cp_mgmt_service_sctp",
+                     "cli": "service-sctp", "fields": [
+        F("port", "port", "port", "port", "str"),
+        F("source-port", "source_port", "source_port", "source-port", "str"),
+        F("match-for-any", "match_for_any", "match_for_any", "match-for-any", "bool"),
+        F("keep-connections-open-after-policy-installation", "keep_connections_open_after_policy_installation",
+          "keep_connections_open_after_policy_installation", "keep-connections-open-after-policy-installation", "bool"),
+        F("session-timeout", "session_timeout", "session_timeout", "session-timeout", "int"),
+        F("use-default-session-timeout", "use_default_session_timeout", "use_default_session_timeout",
+          "use-default-session-timeout", "bool"),
+        F("sync-connections-on-cluster", "sync_connections_on_cluster", "sync_connections_on_cluster",
+          "sync-connections-on-cluster", "bool"),
+        _AGING,
+    ]},
+    "time": {"tf": "checkpoint_management_time", "ansible": "cp_mgmt_time", "cli": "time", "fields": [
+        F("start", "start", "start", "start", "nested", _TIME_POINT),
+        F("end", "end", "end", "end", "nested", _TIME_POINT),
+        F("start-now", "start_now", "start_now", "start-now", "bool"),
+        F("end-never", "end_never", "end_never", "end-never", "bool"),
+        F("hours-ranges", "hours_ranges", "hours_ranges", "hours-ranges", "nestedlist", [
+            F("enabled", "enabled", "enabled", "enabled", "bool"),
+            F("from", "from", "from", "from", "str"),
+            F("index", "index", "index", "index", "int"),
+            F("to", "to", "to", "to", "str"),
+        ]),
+        F("recurrence", "recurrence", "recurrence", "recurrence", "nested", [
+            F("days", "days", "days", "days", "strlist"),
+            F("month", "month", "month", "month", "str"),
+            F("pattern", "pattern", "pattern", "pattern", "str"),
+            F("weekdays", "weekday", "weekdays", "weekdays", "weekdays"),   # TF singular; Ansible/cli list
+        ]),
+    ]},
+    # access-role: networks export cleanly; users/machines are a show↔add format mismatch — flag, don't guess.
+    "access-role": {"tf": "checkpoint_management_access_role", "ansible": "cp_mgmt_access_role",
+                    "cli": "access-role", "fields": [
+        F("networks", "networks", "networks", "networks", "names"),
+    ], "note": "users / machines / remote-access-clients are not auto-exported (the show output and the "
+               "add-access-role schema differ) — re-add identity sources manually."},
+}
+for _spec in OBJ_SPECS.values():
+    _spec["fields"] = _spec["fields"] + _COMMON
+
+
+# Objects that are part of every management database (predefined) — referenced, never emitted.
+_PREDEFINED_TYPES = {"CpmiAnyObject", "RulebaseAction", "Track", "Global", "CpmiGatewayPlain"}
 _PREDEFINED_NAMES = {"Any", "Original", "None", "Policy Targets", "All_Internet"}
 
 
 def is_predefined(obj: dict) -> bool:
-    """Predefined objects live in the read-only "Check Point Data" domain (or are action/track
-    pseudo-objects). They exist on every SMS, so we reference them by name and never re-create them."""
     if (((obj.get("domain") or {}).get("domain-type")) or "") == "data domain":
         return True
     if obj.get("type") in _PREDEFINED_TYPES:
@@ -100,15 +307,28 @@ def _is_int(v) -> bool:
     return str(v).lstrip("-").isdigit()
 
 
-def _member_names(obj: dict) -> list[str]:
+def _empty(v) -> bool:
+    if v is None:
+        return True
+    if isinstance(v, str) and v == "":
+        return True
+    return isinstance(v, (list, dict, tuple)) and len(v) == 0
+
+
+def _name_of(v) -> str:
+    if isinstance(v, dict):
+        return v.get("name") or v.get("uid") or ""
+    return str(v)
+
+
+def _names(v) -> list[str]:
     out = []
-    for m in obj.get("members") or []:
+    for m in v or []:
         out.append(m.get("name") or m.get("uid") if isinstance(m, dict) else m)
-    return [m for m in out if m]
+    return [x for x in out if x]
 
 
 def _cell(values: list[str]) -> list[str]:
-    """An empty rule cell means 'Any' in Check Point."""
     return values if values else ["Any"]
 
 
@@ -116,20 +336,17 @@ def _cell(values: list[str]) -> list[str]:
 
 def generate(bundle: dict) -> dict:
     """Render a pulled-policy bundle to all three targets.
-
-    bundle = {layer, rules (structured rows: section/rule/other), objects_by_type {type: [obj]}}.
-    Returns {layer, terraform, ansible, mgmt_cli, stats}.
-    """
+    bundle = {layer, rules (structured rows), objects_by_type {type: [obj]}}.
+    Returns {layer, terraform, ansible, mgmt_cli, stats}."""
     layer = bundle.get("layer", "")
-    rules = [dict(r) for r in bundle.get("rules", [])]   # copy — we annotate with slugs
+    rules = [dict(r) for r in bundle.get("rules", [])]
     objects_by_type: dict[str, list] = bundle.get("objects_by_type", {})
 
     used: set[str] = set()
-    emit: list[dict] = []           # objects we can render, in a stable order
+    emit: list[dict] = []
     skipped: dict[str, int] = {}
-    ref_map: dict[str, str] = {}    # object name -> terraform address (for dependency wiring)
+    ref_map: dict[str, str] = {}
 
-    # Objects first: assign slugs + build the name→TF-address map so members/cells can reference.
     for cp_type in sorted(objects_by_type):
         spec = OBJ_SPECS.get(cp_type)
         objs = objects_by_type[cp_type]
@@ -142,20 +359,14 @@ def generate(bundle: dict) -> dict:
             if o.get("name"):
                 ref_map[o["name"]] = f'{spec["tf"]}.{slug}.name'
 
-    # Then sections + rules get their own slugs (kept distinct from object slugs).
     for row in rules:
         if row.get("kind") == "section":
             row["_slug"] = slugify("sec_" + (row.get("name") or "section"), used)
         elif row.get("kind") == "rule":
-            label = row.get("name") or f"rule_{row.get('number') or ''}"
-            row["_slug"] = slugify("rule_" + label, used)
+            row["_slug"] = slugify("rule_" + (row.get("name") or f"rule_{row.get('number') or ''}"), used)
 
-    stats = {
-        "objects": len(emit),
-        "rules": sum(1 for r in rules if r.get("kind") == "rule"),
-        "sections": sum(1 for r in rules if r.get("kind") == "section"),
-        "skipped": skipped,
-    }
+    stats = {"objects": len(emit), "rules": sum(1 for r in rules if r.get("kind") == "rule"),
+             "sections": sum(1 for r in rules if r.get("kind") == "section"), "skipped": skipped}
     return {
         "layer": layer,
         "terraform": _render_terraform(layer, emit, rules, ref_map, skipped),
@@ -168,50 +379,70 @@ def generate(bundle: dict) -> dict:
 # --- Terraform (CheckPointSW/checkpoint) ------------------------------------------------------
 
 def _tf_ref(name: str, ref_map: dict[str, str]) -> str:
-    """A resource reference when the target is in our export set, else a quoted literal name."""
     return ref_map[name] if name in ref_map else _q(name)
 
 
+def _tf_fields(fields, obj, ref_map, indent) -> list[str]:
+    pad = "  " * indent
+    out: list[str] = []
+    for f in fields:
+        v = obj.get(f["src"])
+        k, kind = f["tf"], f["kind"]
+        if _empty(v) or not k:
+            continue
+        if kind == "nested":
+            inner = _tf_fields(f["sub"], v, ref_map, indent + 1)
+            if inner:
+                out.append(f"{pad}{k} {{")
+                out.extend(inner)
+                out.append(f"{pad}}}")
+        elif kind == "nestedlist":
+            for item in v:
+                inner = _tf_fields(f["sub"], item, ref_map, indent + 1)
+                if inner:
+                    out.append(f"{pad}{k} {{")
+                    out.extend(inner)
+                    out.append(f"{pad}}}")
+        elif kind == "names":
+            out.append(f"{pad}{k} = [%s]" % ", ".join(_tf_ref(n, ref_map) for n in _names(v)))
+        elif kind == "namelist":
+            out.append(f"{pad}{k} = [%s]" % ", ".join(_q(n) for n in _names(v)))
+        elif kind == "strlist":
+            out.append(f"{pad}{k} = [%s]" % ", ".join(_q(x) for x in v))
+        elif kind == "weekdays":
+            out.append(f"{pad}{k} = {_q(','.join(_names(v)))}")
+        elif kind == "ref":
+            out.append(f"{pad}{k} = {_tf_ref(_name_of(v), ref_map)}")
+        elif kind == "bool":
+            out.append(f'{pad}{k} = {"true" if v else "false"}')
+        elif kind == "int" and _is_int(v):
+            out.append(f"{pad}{k} = {v}")
+        else:
+            out.append(f"{pad}{k} = {_q(v)}")
+    return out
+
+
 def _render_terraform(layer, emit, rules, ref_map, skipped) -> str:
-    L = [f"# Terraform export of Check Point access layer \"{layer}\".",
-         "# Provider: CheckPointSW/checkpoint. Configure the provider with your SMS credentials,",
-         "# then `terraform init && terraform apply`. Restore into an EMPTY layer to reproduce order.",
+    L = [f'# Terraform export of Check Point access layer "{layer}".',
+         "# Provider: CheckPointSW/checkpoint. Configure the provider, then `terraform init && apply`.",
+         "# Restore into an EMPTY layer/domain to reproduce order and avoid name clashes.",
          "",
-         "terraform {",
-         "  required_providers {",
-         "    checkpoint = {",
-         '      source = "CheckPointSW/checkpoint"',
-         "    }",
-         "  }",
-         "}",
-         ""]
+         "terraform {", "  required_providers {", "    checkpoint = {",
+         '      source = "CheckPointSW/checkpoint"', "    }", "  }", "}", ""]
     if skipped:
         L.append(_skip_banner(skipped, "#"))
         L.append("")
-
     for e in emit:
         spec, o, slug = e["spec"], e["obj"], e["slug"]
         L.append(f'resource "{spec["tf"]}" "{slug}" {{')
         L.append(f'  name = {_q(o.get("name", ""))}')
-        for cpk, tfk, _ak, _clk, kind in spec["fields"]:
-            v = o.get(cpk)
-            if v in (None, ""):
-                continue
-            if kind == "members":
-                refs = ", ".join(_tf_ref(m, ref_map) for m in _member_names(o))
-                L.append(f"  {tfk} = [{refs}]")
-            elif kind == "int" and _is_int(v):
-                L.append(f"  {tfk} = {v}")
-            else:
-                L.append(f"  {tfk} = {_q(v)}")
-        if o.get("comments"):
-            L.append(f'  comments = {_q(o["comments"])}')
+        L.extend(_tf_fields(spec["fields"], o, ref_map, 1))
         if spec.get("note"):
             L.append(f'  # NOTE: {spec["note"]}')
         L.append("}")
         L.append("")
 
-    prev_addr = None
+    prev = None
     for row in rules:
         kind = row.get("kind")
         if kind == "section":
@@ -220,11 +451,11 @@ def _render_terraform(layer, emit, rules, ref_map, skipped) -> str:
             L.append(f'  name = {_q(row.get("name") or "Section")}')
             L.append(f"  layer = {_q(layer)}")
             L.append('  position = "bottom"')
-            if prev_addr:
-                L.append(f"  depends_on = [{prev_addr}]")
+            if prev:
+                L.append(f"  depends_on = [{prev}]")
             L.append("}")
             L.append("")
-            prev_addr = addr
+            prev = addr
         elif kind == "rule":
             addr = f'checkpoint_management_access_rule.{row["_slug"]}'
             L.append(f'resource "checkpoint_management_access_rule" "{row["_slug"]}" {{')
@@ -245,11 +476,11 @@ def _render_terraform(layer, emit, rules, ref_map, skipped) -> str:
                     L.append(f"  {neg} = true")
             if row.get("comments"):
                 L.append(f'  comments = {_q(row["comments"])}')
-            if prev_addr:
-                L.append(f"  depends_on = [{prev_addr}]")
+            if prev:
+                L.append(f"  depends_on = [{prev}]")
             L.append("}")
             L.append("")
-            prev_addr = addr
+            prev = addr
         else:
             L.append(f'# unsupported rulebase item: {row.get("type", "unknown")} {row.get("name", "")}')
             L.append("")
@@ -258,39 +489,63 @@ def _render_terraform(layer, emit, rules, ref_map, skipped) -> str:
 
 # --- Ansible (check_point.mgmt) ---------------------------------------------------------------
 
-def _yaml_list(values: list[str]) -> str:
+def _yaml_list(values) -> str:
     return "[" + ", ".join(_q(v) for v in values) + "]"
+
+
+def _ansible_fields(fields, obj, indent) -> list[str]:
+    pad = "  " * indent
+    out: list[str] = []
+    for f in fields:
+        v = obj.get(f["src"])
+        k, kind = f["ans"], f["kind"]
+        if _empty(v) or not k:
+            continue
+        if kind == "nested":
+            inner = _ansible_fields(f["sub"], v, indent + 1)
+            if inner:
+                out.append(f"{pad}{k}:")
+                out.extend(inner)
+        elif kind == "nestedlist":
+            items = [_ansible_fields(f["sub"], it, indent + 2) for it in v]
+            items = [it for it in items if it]
+            if items:
+                out.append(f"{pad}{k}:")
+                for it in items:                       # YAML list-of-dicts: first key after "- "
+                    out.append(f'{"  " * (indent + 1)}- {it[0].lstrip()}')
+                    out.extend(it[1:])
+        elif kind in ("names", "namelist"):
+            out.append(f"{pad}{k}: {_yaml_list(_names(v))}")
+        elif kind == "strlist":
+            out.append(f"{pad}{k}: {_yaml_list(v)}")
+        elif kind == "weekdays":
+            out.append(f"{pad}{k}: {_yaml_list(_names(v))}")
+        elif kind == "ref":
+            out.append(f"{pad}{k}: {_q(_name_of(v))}")
+        elif kind == "bool":
+            out.append(f'{pad}{k}: {"true" if v else "false"}')
+        elif kind == "int" and _is_int(v):
+            out.append(f"{pad}{k}: {v}")
+        else:
+            out.append(f"{pad}{k}: {_q(v)}")
+    return out
 
 
 def _render_ansible(layer, emit, rules, skipped) -> str:
     L = [f'# Ansible export of Check Point access layer "{layer}".',
          "# Collection: check_point.mgmt. Run against a host configured for the Management API.",
-         "# Restore into an EMPTY layer to reproduce rule order."]
+         "# Restore into an EMPTY layer/domain to reproduce rule order."]
     if skipped:
         L.append(_skip_banner(skipped, "#"))
-    L += ["---",
-          f'- name: Restore Check Point policy — layer "{layer}"',
-          "  hosts: localhost",
-          "  gather_facts: false",
-          "  tasks:"]
+    L += ["---", f'- name: Restore Check Point policy — layer "{layer}"', "  hosts: localhost",
+          "  gather_facts: false", "  tasks:"]
 
     for e in emit:
         spec, o = e["spec"], e["obj"]
         L.append(f'    - name: Add {spec["cli"]} {o.get("name", "")}')
         L.append(f'      check_point.mgmt.{spec["ansible"]}:')
         L.append(f'        name: {_q(o.get("name", ""))}')
-        for cpk, _tfk, ak, _clk, kind in spec["fields"]:
-            v = o.get(cpk)
-            if v in (None, ""):
-                continue
-            if kind == "members":
-                L.append(f"        {ak}: {_yaml_list(_member_names(o))}")
-            elif kind == "int" and _is_int(v):
-                L.append(f"        {ak}: {v}")
-            else:
-                L.append(f"        {ak}: {_q(v)}")
-        if o.get("comments"):
-            L.append(f'        comments: {_q(o["comments"])}')
+        L.extend(_ansible_fields(spec["fields"], o, 4))
         L.append("        state: present")
         if spec.get("note"):
             L.append(f'      # NOTE: {spec["note"]}')
@@ -330,15 +585,39 @@ def _render_ansible(layer, emit, rules, skipped) -> str:
         else:
             L.append(f'    # unsupported rulebase item: {row.get("type", "unknown")} {row.get("name", "")}')
 
-    L += ["    - name: Publish",
-          "      check_point.mgmt.cp_mgmt_publish:"]
+    L += ["    - name: Publish", "      check_point.mgmt.cp_mgmt_publish:"]
     return "\n".join(L).rstrip() + "\n"
 
 
 # --- mgmt_cli script --------------------------------------------------------------------------
 
-def _cli_list(prefix: str, values: list[str]) -> str:
-    return " ".join(f"{prefix}.{i} {_q(v)}" for i, v in enumerate(values, start=1))
+def _cli_parts(fields, obj, prefix="") -> list[str]:
+    parts: list[str] = []
+    for f in fields:
+        v = obj.get(f["src"])
+        k, kind = prefix + (f["cli"] or ""), f["kind"]
+        if _empty(v) or not f["cli"]:
+            continue
+        if kind == "nested":
+            parts.extend(_cli_parts(f["sub"], v, k + "."))
+        elif kind == "nestedlist":
+            for i, item in enumerate(v, 1):
+                parts.extend(_cli_parts(f["sub"], item, f"{k}.{i}."))
+        elif kind in ("names", "namelist", "weekdays"):
+            for i, n in enumerate(_names(v), 1):
+                parts.append(f"{k}.{i} {_q(n)}")
+        elif kind == "strlist":
+            for i, x in enumerate(v, 1):
+                parts.append(f"{k}.{i} {_q(x)}")
+        elif kind == "ref":
+            parts.append(f"{k} {_q(_name_of(v))}")
+        elif kind == "bool":
+            parts.append(f'{k} {"true" if v else "false"}')
+        elif kind == "int" and _is_int(v):
+            parts.append(f"{k} {v}")
+        else:
+            parts.append(f"{k} {_q(v)}")
+    return parts
 
 
 def _render_mgmt_cli(layer, emit, rules, skipped) -> str:
@@ -346,34 +625,20 @@ def _render_mgmt_cli(layer, emit, rules, skipped) -> str:
          f'# mgmt_cli export of Check Point access layer "{layer}".',
          "# 1) Log in (writes the session id to id.txt — fill in your host/credentials):",
          '#    mgmt_cli login user "admin" password "PASSWORD" management "MGMT_IP" > id.txt',
-         "#    (add: domain \"DOMAIN\" for an MDS / CMA)",
+         '#    (add: domain "DOMAIN" for an MDS / CMA)',
          "# 2) Run this script. 3) It publishes and logs out at the end.",
          "set -e", ""]
     if skipped:
         L.append(_skip_banner(skipped, "#"))
         L.append("")
 
-    def add(obj_kind: str, args: str) -> str:
-        return f'mgmt_cli add {obj_kind} {args} --ignore-warnings true -s id.txt'
+    def add(kind: str, parts: list[str]) -> str:
+        return f'mgmt_cli add {kind} {" ".join(parts)} --ignore-warnings true -s id.txt'
 
     for e in emit:
         spec, o = e["spec"], e["obj"]
-        parts = [f'name {_q(o.get("name", ""))}']
-        for cpk, _tfk, _ak, clk, kind in spec["fields"]:
-            v = o.get(cpk)
-            if v in (None, ""):
-                continue
-            if kind == "members":
-                ml = _cli_list("members", _member_names(o))
-                if ml:
-                    parts.append(ml)
-            elif kind == "int" and _is_int(v):
-                parts.append(f"{clk} {v}")
-            else:
-                parts.append(f"{clk} {_q(v)}")
-        if o.get("comments"):
-            parts.append(f'comments {_q(o["comments"])}')
-        L.append(add(spec["cli"], " ".join(parts)))
+        parts = [f'name {_q(o.get("name", ""))}'] + _cli_parts(spec["fields"], o)
+        L.append(add(spec["cli"], parts))
         if spec.get("note"):
             L.append(f'# NOTE: {spec["note"]}')
 
@@ -381,15 +646,15 @@ def _render_mgmt_cli(layer, emit, rules, skipped) -> str:
         kind = row.get("kind")
         if kind == "section":
             L.append(add("access-section",
-                         f'layer {_q(layer)} position bottom name {_q(row.get("name") or "Section")}'))
+                         [f'layer {_q(layer)}', "position bottom", f'name {_q(row.get("name") or "Section")}']))
         elif kind == "rule":
             parts = [f"layer {_q(layer)}", "position bottom", f'name {_q(row.get("name") or "")}',
-                     _cli_list("source", _cell(row.get("source", []))),
-                     _cli_list("destination", _cell(row.get("destination", []))),
-                     _cli_list("service", _cell(row.get("service", []))),
+                     _cli_idx("source", _cell(row.get("source", []))),
+                     _cli_idx("destination", _cell(row.get("destination", []))),
+                     _cli_idx("service", _cell(row.get("service", []))),
                      f'action {_q(row.get("action") or "Drop")}']
             if row.get("vpn"):
-                parts.append(_cli_list("vpn", row["vpn"]))
+                parts.append(_cli_idx("vpn", row["vpn"]))
             if row.get("track"):
                 parts.append(f'track-settings.type {_q(row["track"])}')
             parts.append(f'enabled {"true" if row.get("enabled", True) else "false"}')
@@ -399,12 +664,16 @@ def _render_mgmt_cli(layer, emit, rules, skipped) -> str:
                     parts.append(f"{key} true")
             if row.get("comments"):
                 parts.append(f'comments {_q(row["comments"])}')
-            L.append(add("access-rule", " ".join(parts)))
+            L.append(add("access-rule", parts))
         else:
             L.append(f'# unsupported rulebase item: {row.get("type", "unknown")} {row.get("name", "")}')
 
     L += ["", "mgmt_cli publish -s id.txt", "mgmt_cli logout -s id.txt"]
     return "\n".join(L).rstrip() + "\n"
+
+
+def _cli_idx(prefix: str, values) -> str:
+    return " ".join(f"{prefix}.{i} {_q(v)}" for i, v in enumerate(values, start=1))
 
 
 def _skip_banner(skipped: dict[str, int], comment: str) -> str:
