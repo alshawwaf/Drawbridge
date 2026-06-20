@@ -59,6 +59,30 @@ def test_object_detail_unknown_object():
     assert "error" in coverage.object_detail("management", "v2.0.1", "does-not-exist")
 
 
+def test_gaia_examples_use_gaia_api_path_and_no_mgmt_cli():
+    """Gaia must use /gaia_api/, drop the (Management-only) mgmt_cli form, and link docs."""
+    d = coverage.object_detail("gaia", "v1.8", "dns")
+    ex = d["examples"]
+    assert ex["web_api"].startswith("POST /gaia_api/set-dns")     # NOT /web_api/
+    assert "mgmt_cli" not in ex                                    # clish, not mgmt_cli — so omitted here
+    assert 'context = "gaia_api"' in ex["terraform"]
+    assert "check_point.gaia.cp_gaia_dns" in ex["ansible"]
+    assert d["docs"]["terraform"].endswith("/resources/gaia_dns")
+    assert "check_point/gaia/cp_gaia_dns_module.html" in d["docs"]["ansible"]
+
+
+def test_gaia_object_level_ansible_gaps_are_accurate():
+    """Routing / arp / lldp / dhcp6 have no cp_gaia_* module → Ansible gap; alias-interface has one."""
+    groups = coverage.object_groups("gaia", "v1.8")
+    rows = {r["name"]: r for g in groups for r in g["rows"]}
+    assert rows["alias-interface"]["has_ansible"] is True
+    for missing in ("bgp-external-peer", "arp", "lldp"):
+        if missing in rows:
+            assert rows[missing]["has_ansible"] is False
+    # name exception: API `radius` → Ansible module cp_gaia_radius_server
+    assert coverage.object_detail("gaia", "v1.8", "radius")["ansible"] == "cp_gaia_radius_server"
+
+
 # --- generator core + check-for-updates -------------------------------------------------------
 
 _SYNTH_SPEC = {

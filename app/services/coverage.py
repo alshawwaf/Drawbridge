@@ -161,44 +161,65 @@ def _cli_scalar(v) -> str:
     return '"' + str(v).replace('"', '\\"') + '"'
 
 
-def _examples(obj: dict) -> dict:
+def _examples(obj: dict, api_type: str) -> dict:
     cmd, ex = obj["command"], obj.get("example", {})
-    verb_obj = cmd.replace("-", " ", 1)   # add-host -> "add host"; set-dns -> "set dns"
     fmap = {f["name"]: f for f in obj["fields"]}   # carries the real per-tool field name
+    base = "/web_api/" if api_type == "management" else "/gaia_api/"   # Gaia uses gaia_api, NOT web_api
 
-    web = (f"POST /web_api/{cmd}\nContent-Type: application/json\nX-chkp-sid: <session id>\n\n"
-           + json.dumps(ex, indent=2))
+    out = {"web_api": (f"POST {base}{cmd}\nContent-Type: application/json\nX-chkp-sid: <session id>\n\n"
+                       + json.dumps(ex, indent=2))}
 
-    cli_parts = []
-    for k, v in ex.items():
-        cli_parts += _cli_arg(k, v)
-    cli = f"mgmt_cli {verb_obj} " + " ".join(cli_parts) + " -s id.txt"
+    # mgmt_cli is a Management-API tool only; Gaia's CLI is clish (per-command syntax — not shown here).
+    if api_type == "management":
+        cli_parts = []
+        for k, v in ex.items():
+            cli_parts += _cli_arg(k, v)
+        out["mgmt_cli"] = f"mgmt_cli {cmd.replace('-', ' ', 1)} " + " ".join(cli_parts) + " -s id.txt"
 
     if obj["terraform"]:
-        tf_lines, seen = [f'resource "{obj["terraform"]}" "example" {{'], set()
+        header = ['# provider "checkpoint" { context = "gaia_api" }'] if api_type == "gaia" else []
+        tf_lines, seen = header + [f'resource "{obj["terraform"]}" "example" {{'], set()
         for k, v in ex.items():
             tn = (fmap.get(k) or {}).get("tf_name")   # real TF arg (ip-address -> ipv4_address); None = skip
             if tn and tn not in seen:
                 seen.add(tn)
                 tf_lines.append(f"  {tn} = {_hcl(v)}")
         tf_lines.append("}")
-        tf = "\n".join(tf_lines)
+        out["terraform"] = "\n".join(tf_lines)
     else:
-        tf = f"# No Terraform resource for {obj['name']}."
+        out["terraform"] = f"# No Terraform resource for {obj['name']}."
 
     if obj["ansible"]:
-        ans_lines, seen = [f"- name: Add {obj['name']}", f"  {obj['ansible']}:"], set()
+        coll = "check_point.mgmt" if api_type == "management" else "check_point.gaia"
+        ans_lines, seen = [f"- name: Add {obj['name']}", f"  {coll}.{obj['ansible']}:"], set()
         for k, v in ex.items():
             an = (fmap.get(k) or {}).get("ansible_name")
             if an and an not in seen:
                 seen.add(an)
                 ans_lines.append(f"    {an}: {_yaml(v)}")
         ans_lines.append("    state: present")
-        ans = "\n".join(ans_lines)
+        out["ansible"] = "\n".join(ans_lines)
     else:
-        ans = f"# No Ansible module for {obj['name']}."
+        out["ansible"] = f"# No Ansible module for {obj['name']}."
 
-    return {"web_api": web, "mgmt_cli": cli, "terraform": tf, "ansible": ans}
+    return out
+
+
+# Public documentation links so the user can verify support / browse fields per tool.
+_SWAGGER_BASE = os.environ.get("COVERAGE_SPEC_URL", "https://swagger.ai.alshawwaf.ca")
+
+
+def _doc_urls(api_type: str, obj: dict) -> dict:
+    docs = {"api": f"{_SWAGGER_BASE}/docs?api_type={api_type}"}
+    if obj["terraform"]:
+        slug = obj["terraform"].replace("checkpoint_", "", 1)   # checkpoint_management_host -> management_host
+        docs["terraform"] = ("https://registry.terraform.io/providers/CheckPointSW/checkpoint/latest/"
+                             f"docs/resources/{slug}")
+    if obj["ansible"]:
+        coll = "mgmt" if api_type == "management" else "gaia"
+        docs["ansible"] = (f"https://docs.ansible.com/ansible/latest/collections/check_point/{coll}/"
+                          f"{obj['ansible']}_module.html")
+    return docs
 
 
 def object_detail(api_type: str, version: str, name: str) -> dict:
@@ -211,7 +232,8 @@ def object_detail(api_type: str, version: str, name: str) -> dict:
                "api": f["api"], "tf": f["tf"], "ansible": f["ansible"],
                "tf_name": f.get("tf_name"), "ansible_name": f.get("ansible_name")} for f in obj["fields"]]
     return {"name": obj["name"], "command": obj["command"], "terraform": obj["terraform"],
-            "ansible": obj["ansible"], "fields": fields, "examples": _examples(obj)}
+            "ansible": obj["ansible"], "fields": fields, "examples": _examples(obj, api_type),
+            "docs": _doc_urls(api_type, obj)}
 
 
 def page_context(api_type: str, version: str) -> dict:

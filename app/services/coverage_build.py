@@ -24,17 +24,37 @@ TOOL_VERSIONS = {
     "ansible_gaia": "check_point.gaia",
 }
 REQUEST_ONLY = {"ignore-warnings", "ignore-errors", "set-if-exists", "details-level"}
-# API fields Terraform exposes under a DIFFERENT name (the generic API field is split into v4/v6, etc.).
-# These are SUPPORTED in TF — just renamed — so they must NOT be flagged as gaps. Default for every
-# other field is the API name with hyphens→underscores (e.g. ipv4-address → ipv4_address).
-_TF_RENAME = {"ip-address": "ipv4_address", "ip-address-first": "ipv4_address_first",
-              "ip-address-last": "ipv4_address_last", "subnet": "subnet4", "mask-length": "mask_length4",
-              "vpn": "vpn_communities"}
-# API fields with NO Terraform equivalent at all (genuine gaps).
-_TF_NO_FIELD = {"groups", "details-level", "subnet-mask", "service-resource"}
+
+# --- Management API divergences ---------------------------------------------------------------
+# Management API fields Terraform exposes under a DIFFERENT name (generic field split into v4/v6).
+# These are SUPPORTED in TF — just renamed — so they must NOT be flagged as gaps. Every other field
+# defaults to the API name with hyphens→underscores (e.g. ipv4-address → ipv4_address).
+_MGMT_TF_RENAME = {"ip-address": "ipv4_address", "ip-address-first": "ipv4_address_first",
+                   "ip-address-last": "ipv4_address_last", "subnet": "subnet4", "mask-length": "mask_length4",
+                   "vpn": "vpn_communities"}
+_MGMT_TF_NO_FIELD = {"groups", "details-level", "subnet-mask", "service-resource"}   # no TF arg at all
+_MGMT_ANSIBLE_MISSING = {"service-gtp", "opsec-application", "server-certificate",
+                         "vmware-data-center-server", "aws-data-center-server", "azure-data-center-server"}
+
+# --- Gaia API divergences ---------------------------------------------------------------------
+# Gaia API objects that actually have a check_point.gaia (cp_gaia_*) CONFIG module. Everything else
+# (BGP/OSPF/RIP/PIM/ISIS routing, static-mroute, aggregate-route, arp, lldp, dhcp6, PBR, GRE/VXLAN/PPPoE,
+# NFS, FIPS, …) has NO Ansible module — Ansible is read-only there → those show an Ansible gap.
+_GAIA_ANSIBLE_OBJECTS = {
+    "hostname", "hostname-on-login-page", "initial-setup", "physical-interface", "vlan-interface",
+    "bond-interface", "bridge-interface", "loopback-interface", "alias-interface", "ipv6", "static-route",
+    "dns", "ntp", "dhcp-server", "proxy", "time-and-date", "snmp", "snmp-user", "snmp-trap-receiver",
+    "snmp-custom-trap", "snmp-pre-defined-traps", "syslog", "remote-syslog", "user", "role", "system-group",
+    "radius", "tacacs", "allowed-clients", "password-policy", "ssh-server-settings", "expert-password",
+    "grub-password", "banner", "message-of-the-day", "scheduled-job", "scheduled-job-mail",
+    "scheduled-snapshot", "virtual-switch", "virtual-gateway", "dynamic-content",
+    "maestro-gateway", "maestro-port", "maestro-security-group", "maestro-site", "maestro-changes",
+}
+# Gaia API object → cp_gaia_* module name where it isn't just hyphens→underscores.
+_GAIA_ANSIBLE_MODULE = {"radius": "radius_server", "tacacs": "tacacs_server",
+                        "maestro-gateway": "maestro_gateways", "maestro-port": "maestro_ports",
+                        "maestro-security-group": "maestro_security_groups", "maestro-site": "maestro_sites"}
 TF_MISSING_OBJECTS: set[str] = set()
-ANSIBLE_MISSING_OBJECTS = {"service-gtp", "opsec-application", "server-certificate",
-                           "vmware-data-center-server", "aws-data-center-server", "azure-data-center-server"}
 
 
 def _resolve(schema, spec, seen=None):
@@ -99,32 +119,36 @@ def _example_value(name, schema, spec):
     return "example"
 
 
-def _tf_name(api_type, obj):
-    if obj in TF_MISSING_OBJECTS:
+def _tf_obj_name(api_type, obj):
+    if api_type == "management":
+        return None if obj in TF_MISSING_OBJECTS else "checkpoint_management_" + obj.replace("-", "_")
+    return "checkpoint_gaia_" + obj.replace("-", "_")   # the provider covers ~all Gaia objects
+
+
+def _ans_obj_name(api_type, obj):
+    if api_type == "management":
+        return None if obj in _MGMT_ANSIBLE_MISSING else "cp_mgmt_" + obj.replace("-", "_")
+    if obj not in _GAIA_ANSIBLE_OBJECTS:
+        return None   # many Gaia objects (routing, arp, lldp, dhcp6, …) have no cp_gaia_* module
+    return "cp_gaia_" + _GAIA_ANSIBLE_MODULE.get(obj, obj.replace("-", "_"))
+
+
+def _tf_field_name(api_type, fname, tf_obj):
+    """The Terraform argument name for an API field, or None if TF has no equivalent. For management,
+    generic fields TF splits (ip-address → ipv4_address) resolve to the real TF arg; Gaia fields are 1:1."""
+    if tf_obj is None:
         return None
-    return ("checkpoint_management_" if api_type == "management" else "checkpoint_gaia_") + obj.replace("-", "_")
-
-
-def _ansible_name(api_type, obj):
-    if obj in ANSIBLE_MISSING_OBJECTS:
-        return None
-    return ("cp_mgmt_" if api_type == "management" else "cp_gaia_") + obj.replace("-", "_")
-
-
-def _tf_field_name(fname, tf_obj):
-    """The Terraform argument name for an API field, or None if TF has no equivalent. Renamed fields
-    (the generic ip-address/subnet/... that TF splits into v4) resolve to their real TF arg name."""
-    if tf_obj is None or fname in _TF_NO_FIELD:
-        return None
-    return _TF_RENAME.get(fname, fname.replace("-", "_"))
+    if api_type == "management":
+        return None if fname in _MGMT_TF_NO_FIELD else _MGMT_TF_RENAME.get(fname, fname.replace("-", "_"))
+    return fname.replace("-", "_")
 
 
 def _ans_field_name(fname, ans_obj):
-    return None if ans_obj is None else fname.replace("-", "_")   # Ansible mirrors the API field set
+    return None if ans_obj is None else fname.replace("-", "_")   # collections mirror the API field set
 
 
-def _field_support(obj, fname, tf_obj, ans_obj):
-    tfn, ann = _tf_field_name(fname, tf_obj), _ans_field_name(fname, ans_obj)
+def _field_support(api_type, fname, tf_obj, ans_obj):
+    tfn, ann = _tf_field_name(api_type, fname, tf_obj), _ans_field_name(fname, ans_obj)
     return {"api": True, "request_only": fname in REQUEST_ONLY,
             "tf": tfn is not None, "ansible": ann is not None,
             "tf_name": tfn, "ansible_name": ann}
@@ -133,12 +157,12 @@ def _field_support(obj, fname, tf_obj, ans_obj):
 def _build_object(spec, api_type, path):
     cmd = path.lstrip("/")
     obj = re.sub(r"^(add|set)-", "", cmd)
-    tf_obj, ans_obj = _tf_name(api_type, obj), _ansible_name(api_type, obj)
+    tf_obj, ans_obj = _tf_obj_name(api_type, obj), _ans_obj_name(api_type, obj)
     schema = _request_schema(spec, path)
     required = (_resolve(schema, spec).get("required")) or []
     fields, example = [], {}
     for fname, fschema in _properties(schema, spec).items():
-        sup = _field_support(obj, fname, tf_obj, ans_obj)
+        sup = _field_support(api_type, fname, tf_obj, ans_obj)
         fields.append({"name": fname, "type": fschema.get("type", "string"), "enum": fschema.get("enum"),
                        "required": fname in required, **sup})
         if not sup["request_only"]:
