@@ -76,6 +76,18 @@ def test_gaia_clish():
     assert sh.strip().endswith("save config")
 
 
+def test_gaia_web_api_ops():
+    """Gaia web_api target: replayable set-*/add-* op list (POST /gaia_api/<command> bodies)."""
+    import json as _json
+    ops = _json.loads(gaia_export.generate(CFG)["web_api"])
+    cmds = [o["command"] for o in ops]
+    assert "set-hostname" in cmds and "set-static-route" in cmds and "set-physical-interface" in cmds
+    iface = next(o for o in ops if o["command"] == "set-physical-interface")
+    assert iface["body"]["ipv4-address"] == "10.0.1.1" and iface["body"]["ipv6-address"] == "2001:db8::1"
+    route = next(o for o in ops if o["command"] == "set-static-route")
+    assert route["body"]["next-hop"][0]["gateway"] == "10.0.1.254" and route["body"]["rank"] == 60
+
+
 def test_gaia_generate_is_resilient_to_empty_config():
     art = gaia_export.generate({})                            # device returned nothing → never crash
     assert art["stats"]["interfaces"] == 0 and art["stats"]["sections"] == []
