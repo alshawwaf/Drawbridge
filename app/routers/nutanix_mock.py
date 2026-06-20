@@ -84,13 +84,13 @@ async def category_query_apex(request: Request, db: Session = Depends(get_db)):
 @router.get("/api/vmm/v4.1/ahv/config/vms")
 def vms_v4_apex(request: Request, db: Session = Depends(get_db)):
     dc = _nutanix_dc(db)                               # also serves the ?$limit=1 test-connection probe
-    return _guard(dc, request) or nutanix.vms_list_v4(dc)
+    return _guard(dc, request) or nutanix.vms_list_v4(dc, *nutanix.page_limit(request.query_params))
 
 
 @router.get("/api/prism/v4.1/config/categories")
 def categories_v4_apex(request: Request, db: Session = Depends(get_db)):
     dc = _nutanix_dc(db)
-    return _guard(dc, request) or nutanix.categories_list_v4(dc)
+    return _guard(dc, request) or nutanix.categories_list_v4(dc, *nutanix.page_limit(request.query_params))
 
 
 # Any other Prism v3 GET/POST CloudGuard probes returns an empty v3 list (unique /api/nutanix/ prefix,
@@ -130,10 +130,10 @@ async def category_query_tok(token: str, request: Request, db: Session = Depends
 @router.get("/nutanix/{token}/api/vmm/v4.1/ahv/config/vms")
 def vms_v4_tok(token: str, request: Request, db: Session = Depends(get_db)):
     dc = _dc(db, token)
-    return _guard(dc, request) or nutanix.vms_list_v4(dc)
+    return _guard(dc, request) or nutanix.vms_list_v4(dc, *nutanix.page_limit(request.query_params))
 
 
 @router.get("/nutanix/{token}/api/prism/v4.1/config/categories")
 def categories_v4_tok(token: str, request: Request, db: Session = Depends(get_db)):
     dc = _dc(db, token)
-    return _guard(dc, request) or nutanix.categories_list_v4(dc)
+    return _guard(dc, request) or nutanix.categories_list_v4(dc, *nutanix.page_limit(request.query_params))
