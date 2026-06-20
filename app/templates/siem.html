@@ -5,7 +5,7 @@
 <div class="row" style="align-items:flex-start;">
   <div class="grow">
     <h1>SIEM receiver <span class="pill">Log Exporter</span></h1>
-    <p class="muted">Point Check Point's <b>Log Exporter</b> at the portal and watch the logs land here — live proof that gateway logs reach the SIEM. Parses <b>CEF</b>, <b>LEEF</b>, <b>JSON</b>, and plain syslog over TCP/UDP.</p>
+    <p class="muted">Point Check Point's <b>Log Exporter</b> at the portal and watch the logs land here — live proof that gateway logs reach the SIEM. Parses <b>CEF</b>, <b>LEEF</b>, <b>JSON</b>, <b>key=value</b> field lists (Splunk / LogRhythm / Generic / RSA), and plain syslog over TCP/UDP.</p>
   </div>
   <span class="livewrap">
     {% if not enabled %}<span class="livedot off"></span><span>Listener off</span>
@@ -21,7 +21,7 @@
   <div class="row" style="gap:20px; margin:0 0 11px; flex-wrap:wrap; align-items:center;">
     <span class="cmdpick" data-cmd="cmd-fmt" style="display:inline-flex; gap:6px; align-items:center;">
       <span class="muted" style="font-size:11px; font-weight:700; letter-spacing:.5px;">FORMAT</span>
-      {% for f in ['cef', 'leef', 'json', 'syslog'] %}<button type="button" class="chip {{ 'active' if f == 'cef' else '' }}" data-val="{{ f }}">{{ f|upper }}</button>{% endfor %}
+      {% for f in ['cef', 'leef', 'json', 'syslog', 'generic', 'splunk', 'logrhythm'] %}<button type="button" class="chip {{ 'active' if f == 'cef' else '' }}" data-val="{{ f }}">{{ f|upper }}</button>{% endfor %}
     </span>
     <span class="cmdpick" data-cmd="cmd-proto" style="display:inline-flex; gap:6px; align-items:center;">
       <span class="muted" style="font-size:11px; font-weight:700; letter-spacing:.5px;">PROTOCOL</span>
@@ -52,7 +52,7 @@ cp_log_export restart name <span class="cmd-name">dcsim-siem-cef-udp</span></pre
 </div>
 
 <div class="filterbar" id="siem-filter" style="align-items:center;">
-  {% for key, label in [('', 'All'), ('cef', 'CEF'), ('leef', 'LEEF'), ('json', 'JSON'), ('syslog', 'Syslog')] %}
+  {% for key, label in [('', 'All'), ('cef', 'CEF'), ('leef', 'LEEF'), ('json', 'JSON'), ('keyval', 'Key-Value'), ('syslog', 'Syslog')] %}
   <button class="chip {{ 'active' if key == '' else '' }}" type="button" data-fmt="{{ key }}">{{ label }}</button>
   {% endfor %}
   <span class="grow"></span>

@@ -49,7 +49,7 @@ def siem_rows(request: Request, fmt: str = "", page: int = 1,
     ps = _clean_page_size(page_size)
     base = select(SiemLog)
     cnt = select(func.count()).select_from(SiemLog)
-    if fmt in ("cef", "leef", "json", "syslog", "raw"):
+    if fmt in ("cef", "leef", "json", "keyval", "syslog", "raw"):
         base = base.where(SiemLog.fmt == fmt)
         cnt = cnt.where(SiemLog.fmt == fmt)
     matched = db.scalar(cnt) or 0

@@ -51,6 +51,30 @@ def test_parse_empty_and_garbage_are_safe():
     assert siem.parse_line("not a known format at all")["fmt"] == "syslog"
 
 
+def test_parse_splunk_keyvalue():
+    line = ("<134>1 2026-06-19T12:00:10Z gw-01 CheckPoint - - - action=Accept src=10.10.0.57 "
+            "dst=203.0.113.12 proto=tcp service=https rule=12 origin=gw-01 msg=two words")
+    p = siem.parse_line(line)
+    assert p["fmt"] == "keyval"                              # Splunk/LogRhythm/RSA key=value field list
+    assert p["fields"]["action"] == "Accept" and p["fields"]["src"] == "10.10.0.57"
+    assert p["fields"]["msg"] == "two words" and p["host"] == "gw-01"
+    assert "action=Accept" in p["summary"]
+
+
+def test_parse_generic_colon_semicolon():
+    line = ("<131>1 2026-06-19T12:00:13Z gw-01 CheckPoint - - - action:Drop; src:198.51.100.7; "
+            "dst:10.10.0.22; proto:udp; rule:44; origin:gw-01")
+    p = siem.parse_line(line)
+    assert p["fmt"] == "keyval"                              # Check Point Generic key:value; field list
+    assert p["fields"]["action"] == "Drop" and p["fields"]["dst"] == "10.10.0.22"
+    assert p["host"] == "gw-01"
+
+
+def test_one_stray_equals_stays_syslog():
+    p = siem.parse_line("<134>1 2026-06-19T12:00:00Z gw-01 CheckPoint - - - reason=blocked here")
+    assert p["fmt"] == "syslog"                              # a lone key=value isn't a field list
+
+
 def test_store_persists_parsed_fields():
     db = _session()
     log = siem.store_log(db, "10.0.0.9", "udp", siem.SAMPLE_LINES[0])
