@@ -472,10 +472,11 @@
     // Copy-to-clipboard buttons (data-copy="text").
     (function () {
       document.addEventListener('click', function (e) {
-        var btn = e.target.closest('[data-copy]');
+        var btn = e.target.closest('[data-copy], [data-copy-from]');
         if (!btn) return;
         e.preventDefault();
-        var text = btn.getAttribute('data-copy');
+        var src = btn.getAttribute('data-copy-from');   // copy a live element's text (e.g. a built-up command)
+        var text = src ? ((document.querySelector(src) || {}).innerText || '').trim() : btn.getAttribute('data-copy');
         function done() {
           var label = btn.getAttribute('data-label') || btn.textContent;
           btn.setAttribute('data-label', label);
@@ -493,6 +494,56 @@
           document.body.removeChild(ta); done();
         }
       });
+    })();
+    // Client-side pagination for static list tables: <table data-paginate="N"> keeps long lists from
+    // ever scrolling off the page. Filter-aware — a page's own filter tags rows with class "row-hidden"
+    // (excluded from paging) and calls table.repaginate() after toggling them.
+    (function () {
+      function makePager(table) {
+        var size = parseInt(table.getAttribute('data-paginate'), 10) || 10;
+        var tbody = table.tBodies && table.tBodies[0];
+        if (!tbody) return;
+        var page = 1;
+        var pager = document.createElement('div');
+        pager.className = 'pager';
+        (table.closest('.tablewrap') || table).insertAdjacentElement('afterend', pager);
+        function eligible() {
+          return Array.prototype.slice.call(tbody.rows).filter(function (r) { return !r.classList.contains('row-hidden'); });
+        }
+        function mk(label, p, cur, dis) {
+          var b = document.createElement('button');
+          b.type = 'button'; b.textContent = label; b.className = cur ? '' : 'secondary';
+          if (dis) b.disabled = true;
+          else b.addEventListener('click', function () { page = p; render(); window.scrollTo({ top: 0, behavior: 'smooth' }); });
+          return b;
+        }
+        function dots() { var s = document.createElement('span'); s.className = 'muted'; s.textContent = '…'; return s; }
+        function render() {
+          var rows = eligible();
+          var pages = Math.max(1, Math.ceil(rows.length / size));
+          if (page > pages) page = pages;
+          if (page < 1) page = 1;
+          Array.prototype.slice.call(tbody.rows).forEach(function (r) { if (r.classList.contains('row-hidden')) r.style.display = 'none'; });
+          rows.forEach(function (r, i) { r.style.display = (i >= (page - 1) * size && i < page * size) ? '' : 'none'; });
+          pager.replaceChildren();
+          if (pages <= 1) return;
+          var lo = Math.max(1, page - 2), hi = Math.min(pages, page + 2), p;
+          pager.appendChild(mk('« First', 1, false, page <= 1));
+          pager.appendChild(mk('‹ Prev', page - 1, false, page <= 1));
+          if (lo > 1) { pager.appendChild(mk('1', 1, false, false)); if (lo > 2) pager.appendChild(dots()); }
+          for (p = lo; p <= hi; p++) pager.appendChild(mk(String(p), p, p === page, false));
+          if (hi < pages) { if (hi < pages - 1) pager.appendChild(dots()); pager.appendChild(mk(String(pages), pages, false, false)); }
+          pager.appendChild(mk('Next ›', page + 1, false, page >= pages));
+          pager.appendChild(mk('Last »', pages, false, page >= pages));
+          var info = document.createElement('span'); info.className = 'muted';
+          info.textContent = 'Page ' + page + ' of ' + pages + ' · ' + rows.length + ' total';
+          pager.appendChild(info);
+        }
+        table.repaginate = function () { page = 1; render(); };
+        render();
+      }
+      function init() { document.querySelectorAll('table[data-paginate]').forEach(makePager); }
+      if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
     })();
     // Reveal / hide a masked secret (button.cf-reveal toggles the .cf-secret in its .copyfield).
     (function () {
