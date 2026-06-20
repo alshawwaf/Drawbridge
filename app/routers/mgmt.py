@@ -6,6 +6,7 @@ is stored AES-256-GCM (mgmt_creds) and TLS verification is never disabled.
 """
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -17,6 +18,14 @@ from ..services.gaia_client import ensure_pinned, fetch_gateway_cert
 from .ui import _flash, _pop_flash, templates
 
 router = APIRouter(include_in_schema=False)
+
+
+class RuleEdit(BaseModel):
+    """A single rule edit posted from the viewer. ``publish`` False = dry-run (discard)."""
+    layer: str
+    uid: str
+    changes: dict = {}
+    publish: bool = False
 
 
 def _owned(db: Session, sid: int, user: User) -> ManagementServer:
@@ -187,6 +196,25 @@ def mgmt_export_run(sid: int, request: Request, name: str = "", db: Session = De
     except mgmt_api.MgmtError as exc:
         return JSONResponse({"error": str(exc)}, status_code=400)
     return JSONResponse(mgmt_export.generate(bundle))
+
+
+@router.post("/management/{sid}/apply")
+def mgmt_apply(sid: int, request: Request, edit: RuleEdit, db: Session = Depends(get_db)):
+    """Apply one rule edit. ``publish:false`` is a dry-run — the change is made then DISCARDED, so it
+    validates the payload against the SMS with zero commit; ``publish:true`` commits it."""
+    user = get_user_or_none(request, db)
+    if user is None:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    if not edit.layer or not edit.uid:
+        return JSONResponse({"error": "Missing layer or rule id."}, status_code=400)
+    if not edit.changes:
+        return JSONResponse({"error": "No changes to apply."}, status_code=400)
+    ms = _owned(db, sid, user)
+    secret, err = _secret_or_error(db, ms)
+    if err:
+        return err
+    op = mgmt_api.build_set_rule_op(edit.layer, edit.uid, edit.changes)
+    return JSONResponse(mgmt_api.apply_changes(ms, secret, [op], publish=edit.publish))
 
 
 @router.get("/management/{sid}", response_class=HTMLResponse)

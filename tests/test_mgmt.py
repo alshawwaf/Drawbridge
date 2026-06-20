@@ -147,3 +147,77 @@ def test_export_collect_objects_recurses_groups_and_skips_predefined():
     assert "host" in by_type and by_type["host"][0]["name"] == "h"   # nested member pulled up
     assert "group" in by_type
     assert "CpmiAnyObject" not in by_type                            # predefined dropped
+
+
+# --- writes: build_set_rule_op + apply_changes (Phase 4) ------------------------------------
+
+def _fake_session(rec, fail_on=None):
+    """A stand-in for MgmtSession that records calls instead of hitting a server."""
+    class FS:
+        def __init__(self, server, secret, timeout=30.0):
+            self.trace = []
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def call(self, command, payload=None):
+            rec["calls"].append((command, payload))
+            if fail_on and command == fail_on:
+                raise mgmt_api.MgmtError("server said no")
+            return {}
+
+        def publish(self):
+            rec["calls"].append(("publish", {}))
+
+        def discard(self):
+            rec["calls"].append(("discard", {}))
+    return FS
+
+
+def test_build_set_rule_op_only_sends_changed_fields():
+    op = mgmt_api.build_set_rule_op("Network", "u-1",
+                                    {"enabled": False, "action": "Drop", "track": "Log",
+                                     "name": "New", "comments": "c"})
+    assert op["command"] == "set-access-rule"
+    p = op["payload"]
+    assert p["uid"] == "u-1" and p["layer"] == "Network"
+    assert p["enabled"] is False and p["action"] == "Drop"
+    assert p["track"] == {"type": "Log"} and p["new-name"] == "New" and p["comments"] == "c"
+    assert "disable" in op["summary"]
+    # only the keys present in the change dict are sent — nothing else on the rule is touched
+    assert set(mgmt_api.build_set_rule_op("Network", "u-1", {"action": "Accept"})["payload"]) == \
+        {"uid", "layer", "action"}
+
+
+def test_apply_changes_publishes_then_reports(monkeypatch):
+    rec = {"calls": []}
+    monkeypatch.setattr(mgmt_api, "MgmtSession", _fake_session(rec))
+    res = mgmt_api.apply_changes(object(), "secret",
+                                 [{"command": "set-access-rule", "payload": {"uid": "u"}, "summary": "e"}],
+                                 publish=True)
+    assert res["ok"] is True and res["published"] is True
+    assert [c for c, _ in rec["calls"]] == ["set-access-rule", "publish"]
+
+
+def test_apply_changes_dry_run_discards(monkeypatch):
+    rec = {"calls": []}
+    monkeypatch.setattr(mgmt_api, "MgmtSession", _fake_session(rec))
+    res = mgmt_api.apply_changes(object(), "secret",
+                                 [{"command": "set-access-rule", "payload": {}, "summary": "e"}],
+                                 publish=False)
+    assert res["ok"] is True and res["published"] is False
+    assert [c for c, _ in rec["calls"]] == ["set-access-rule", "discard"]   # validated, never committed
+
+
+def test_apply_changes_discards_on_error_never_publishes(monkeypatch):
+    rec = {"calls": []}
+    monkeypatch.setattr(mgmt_api, "MgmtSession", _fake_session(rec, fail_on="set-access-rule"))
+    res = mgmt_api.apply_changes(object(), "secret",
+                                 [{"command": "set-access-rule", "payload": {}, "summary": "e"}],
+                                 publish=True)
+    assert res["ok"] is False and "server said no" in res["error"]
+    cmds = [c for c, _ in rec["calls"]]
+    assert "publish" not in cmds and "discard" in cmds
