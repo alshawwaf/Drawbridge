@@ -55,13 +55,19 @@ def test_obj_names_handles_uids_and_inline_dicts():
 EXPORT_BUNDLE = {
     "layer": "Network",
     "objects_by_type": {
+        # host carries the full surface: ipv4, color/comments/tags (common), and a NAT nested block
         "host": [{"uid": "u-web", "name": "web-srv", "type": "host", "ipv4-address": "10.0.0.5",
-                  "domain": {"domain-type": "domain"}}],
+                  "color": "red", "comments": "web tier", "domain": {"domain-type": "domain"},
+                  "tags": [{"name": "prod"}, {"name": "dmz"}],
+                  "nat-settings": {"auto-rule": True, "method": "static", "ipv4-address": "1.2.3.4"}}],
         "network": [{"uid": "u-net", "name": "dmz-net", "type": "network",
-                     "subnet4": "10.0.0.0", "mask-length4": 24}],
+                     "subnet4": "10.0.0.0", "mask-length4": 24, "color": "black"}],
         "group": [{"uid": "u-grp", "name": "web-grp", "type": "group", "members": [{"name": "web-srv"}]}],
-        "service-tcp": [{"uid": "u-svc", "name": "tcp-8443", "type": "service-tcp", "port": "8443"}],
-        "dns-domain": [{"uid": "u-dns", "name": ".example.com", "type": "dns-domain"}],  # no spec → skipped
+        # service-tcp with a bool field + an aggressive-aging nested block
+        "service-tcp": [{"uid": "u-svc", "name": "tcp-8443", "type": "service-tcp", "port": "8443",
+                         "match-for-any": False,
+                         "aggressive-aging": {"enable": True, "timeout": 600, "use-default-timeout": False}}],
+        "vpn-community-meshed": [{"uid": "u-vpn", "name": "MyMesh", "type": "vpn-community-meshed"}],  # unsupported
     },
     "rules": [
         {"kind": "section", "name": "Web"},
@@ -80,7 +86,7 @@ def test_export_stats_count_and_skip_unknown_types():
     art = mgmt_export.generate(EXPORT_BUNDLE)
     s = art["stats"]
     assert s["objects"] == 4 and s["rules"] == 2 and s["sections"] == 1
-    assert s["skipped"] == {"dns-domain": 1}            # unknown type counted, never crashes
+    assert s["skipped"] == {"vpn-community-meshed": 1}   # unknown type counted, never crashes
 
 
 def test_export_terraform_resources_refs_and_rule_cells():
@@ -97,10 +103,18 @@ def test_export_terraform_resources_refs_and_rule_cells():
     assert "depends_on = [checkpoint_management_access_section.sec_web]" in tf  # order chain
 
 
-def test_export_predefined_objects_are_referenced_not_emitted():
-    # "Any" is referenced as a literal string but never gets its own resource block.
+def test_export_terraform_carries_all_supported_fields():
+    """Common fields + nested blocks must round-trip into Terraform."""
     tf = mgmt_export.generate(EXPORT_BUNDLE)["terraform"]
-    assert '"any"' not in tf.lower().replace('["any"]', "")  # no resource named any
+    assert 'color = "red"' in tf and 'comments = "web tier"' in tf
+    assert 'tags = ["prod", "dmz"]' in tf
+    assert "nat_settings {" in tf and "auto_rule = true" in tf and 'method = "static"' in tf
+    assert "aggressive_aging {" in tf and "timeout = 600" in tf and "use_default_timeout = false" in tf
+    assert "match_for_any = false" in tf                # a bool that is False is still emitted
+
+
+def test_export_predefined_objects_are_referenced_not_emitted():
+    tf = mgmt_export.generate(EXPORT_BUNDLE)["terraform"]
     assert mgmt_export.is_predefined({"type": "host", "domain": {"domain-type": "data domain"}})
     assert mgmt_export.is_predefined({"name": "Any", "type": "CpmiAnyObject"})
     assert not mgmt_export.is_predefined({"name": "web-srv", "type": "host",
@@ -113,7 +127,10 @@ def test_export_ansible_and_mgmt_cli_shape():
     assert "check_point.mgmt.cp_mgmt_host:" in ans and "state: present" in ans
     assert "check_point.mgmt.cp_mgmt_access_rule:" in ans and "position: bottom" in ans
     assert "check_point.mgmt.cp_mgmt_publish:" in ans
-    assert 'mgmt_cli add host name "web-srv" ip-address "10.0.0.5"' in cli
+    # nested NAT renders as a YAML sub-block in Ansible and dotted params in mgmt_cli
+    assert "nat_settings:" in ans and "auto_rule: true" in ans
+    assert 'mgmt_cli add host name "web-srv" ipv4-address "10.0.0.5"' in cli
+    assert 'nat-settings.method "static"' in cli and 'tags.1 "prod"' in cli
     assert 'mgmt_cli add access-rule layer "Network" position bottom' in cli
     assert "mgmt_cli publish -s id.txt" in cli
 
