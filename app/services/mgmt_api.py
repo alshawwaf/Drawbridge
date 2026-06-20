@@ -138,7 +138,8 @@ class MgmtSession:
             return []   # not an MDS — single SMS has no domains
 
     def list_access_layers(self) -> list[dict]:
-        return self.call_paged("show-access-layers")
+        # show-access-layers returns the list under "access-layers" — NOT the usual "objects" key.
+        return self.call_paged("show-access-layers", key="access-layers")
 
     def _record(self, command: str, payload: dict, resp, t0: float) -> None:
         self.trace.append({"command": command, "params": payload, "status": resp.status_code,

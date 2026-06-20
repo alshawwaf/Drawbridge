@@ -118,6 +118,25 @@ def test_export_ansible_and_mgmt_cli_shape():
     assert "mgmt_cli publish -s id.txt" in cli
 
 
+def test_list_access_layers_reads_the_access_layers_key():
+    """Regression: show-access-layers returns its list under 'access-layers', not the usual 'objects'.
+    The response below has an empty 'objects' (what the old code wrongly read) and the real layers
+    under 'access-layers' — the count must come from the latter."""
+    s = mgmt_api.MgmtSession.__new__(mgmt_api.MgmtSession)   # skip __init__ → no real httpx client
+    seen = {}
+
+    def fake_call(command, payload=None):
+        seen["command"] = command
+        return {"objects": [], "access-layers": [{"name": "Network", "uid": "u1"},
+                                                 {"name": "App Control", "uid": "u2"}],
+                "total": 2, "to": 2}
+
+    s.call = fake_call
+    layers = s.list_access_layers()
+    assert seen["command"] == "show-access-layers"
+    assert [l["name"] for l in layers] == ["Network", "App Control"]
+
+
 def test_export_collect_objects_recurses_groups_and_skips_predefined():
     objdict = {
         "u-grp": {"uid": "u-grp", "name": "g", "type": "group",
