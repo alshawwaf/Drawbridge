@@ -7,10 +7,22 @@
       "object_count": 136
     },
     {
+      "api_type": "gaia",
+      "version": "v1.9",
+      "file": "gaia-v1.9.json",
+      "object_count": 140
+    },
+    {
       "api_type": "management",
       "version": "v2.0.1",
       "file": "management-v2.0.1.json",
       "object_count": 130
+    },
+    {
+      "api_type": "management",
+      "version": "v2.1",
+      "file": "management-v2.1.json",
+      "object_count": 138
     }
   ]
 }

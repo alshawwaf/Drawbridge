@@ -55,3 +55,51 @@ def test_object_detail_has_field_diff_and_four_examples():
 
 def test_object_detail_unknown_object():
     assert "error" in coverage.object_detail("management", "v2.0.1", "does-not-exist")
+
+
+# --- generator core + check-for-updates -------------------------------------------------------
+
+_SYNTH_SPEC = {
+    "openapi": "3.0.0", "info": {"version": "2.0.1"},
+    "paths": {"/add-host": {"post": {"requestBody": {"content": {"application/json": {"schema": {
+        "type": "object", "required": ["name"], "properties": {
+            "name": {"type": "string"},
+            "ipv4-address": {"type": "string"},
+            "groups": {"type": "array", "items": {"type": "string"}},
+            "color": {"type": "string", "enum": ["black", "red"]},
+            "ignore-warnings": {"type": "boolean"}}}}}}}}},
+}
+
+
+def test_build_from_spec_shapes_objects_fields_and_example():
+    from app.services import coverage_build as cb
+    art = cb.build_from_spec("management", "vtest", _SYNTH_SPEC)
+    assert art["object_count"] == 1
+    o = art["objects"][0]
+    assert o["name"] == "host" and o["terraform"] == "checkpoint_management_host" and o["ansible"] == "cp_mgmt_host"
+    fm = {f["name"]: f for f in o["fields"]}
+    assert fm["groups"]["tf"] is False and fm["groups"]["ansible"] is True
+    assert fm["ignore-warnings"]["request_only"] is True
+    assert o["example"]["color"] == "black"               # enum[0]
+    assert "ignore-warnings" not in o["example"]           # request-only excluded from the body
+
+
+def test_check_for_update_fetch_error_is_graceful(monkeypatch):
+    from app.services import coverage_build as cb
+
+    def boom(*a, **k):
+        raise RuntimeError("offline")
+    monkeypatch.setattr(cb, "fetch_spec", boom)
+    r = cb.check_for_update("management")
+    assert r["ok"] is False and "offline" in r["error"]
+
+
+def test_check_for_update_adds_then_finds_existing(monkeypatch, tmp_path):
+    from app.services import coverage_build as cb
+    monkeypatch.setattr(cb, "OUT_DIR", str(tmp_path))
+    monkeypatch.setattr(cb, "fetch_spec", lambda api, version="": _SYNTH_SPEC)
+    r = cb.check_for_update("management", "v9.9-test")
+    assert r["ok"] and r["added"] and r["version"] == "v9.9-test" and r["object_count"] == 1
+    assert (tmp_path / "management-v9.9-test.json").exists()
+    r2 = cb.check_for_update("management", "v9.9-test")    # now bundled
+    assert r2["ok"] and r2["added"] is False

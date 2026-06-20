@@ -46,6 +46,7 @@
   </label>
   <span class="muted">{{ object_count }} objects</span>
   <span class="muted">vs Terraform <code>{{ tool_versions.get('terraform','') }}</code> · Ansible <code>{{ tool_versions.get('ansible_mgmt' if api_type=='management' else 'ansible_gaia','') }}</code></span>
+  <button class="copybtn" id="cov-update" type="button">Check for updates ↻</button>
   <input id="filter" type="text" placeholder="filter objects…" style="margin-left:auto; min-width:180px;">
 </div>
 <div class="leg" style="margin-bottom:8px;">
@@ -73,6 +74,14 @@
     </tbody>
   </table>
 {% endfor %}
+</div>
+
+<div class="modal-overlay" id="upd-modal" hidden>
+  <div class="modal">
+    <div class="row" style="align-items:center;"><h3 class="grow" style="margin:0;">Check for updates</h3>
+      <button type="button" class="copybtn" id="upd-close">Close</button></div>
+    <div id="upd-body" style="margin-top:14px;">…</div>
+  </div>
 </div>
 
 <script>
@@ -136,6 +145,30 @@
           })
           .catch(function () { td.innerHTML = '<div class="err">Failed to load.</div>'; });
       });
+    });
+    // --- check for updates: fetch a newer spec from CP-Docs-To-Swagger + bundle it ---
+    var updModal = document.getElementById('upd-modal'), updBody = document.getElementById('upd-body');
+    function closeUpd() { updModal.hidden = true; }
+    document.getElementById('upd-close').addEventListener('click', closeUpd);
+    updModal.addEventListener('click', function (e) { if (e.target === updModal) closeUpd(); });
+    document.getElementById('cov-update').addEventListener('click', function () {
+      updModal.hidden = false;
+      updBody.innerHTML = '<p class="muted">Fetching the latest <b>' + esc(api) + '</b> spec from CP-Docs-To-Swagger and generating the comparison… a large spec can take a few seconds.</p>';
+      fetch('/coverage/update?api=' + encodeURIComponent(api), { method: 'POST' })
+        .then(function (r) { return r.json(); })
+        .then(function (j) {
+          if (!j.ok) { updBody.innerHTML = '<div class="err">' + esc(j.error || 'Update failed.') + '</div>'; return; }
+          if (j.added) {
+            updBody.innerHTML = '<div class="ok">✓ Bundled <b>' + esc(j.version) + '</b> (' + esc(j.object_count) + ' objects).</div>' +
+              '<div class="row" style="margin-top:12px;"><button class="btn" id="upd-reload">View ' + esc(j.version) + '</button></div>';
+            document.getElementById('upd-reload').addEventListener('click', function () {
+              window.location = '/coverage?api=' + encodeURIComponent(api) + '&version=' + encodeURIComponent(j.version);
+            });
+          } else {
+            updBody.innerHTML = '<div class="ok">✓ Already up to date — <b>' + esc(j.version) + '</b> (' + esc(j.object_count) + ' objects) is bundled.</div>';
+          }
+        })
+        .catch(function () { updBody.innerHTML = '<div class="err">Update request failed.</div>'; });
     });
   })();
 </script>

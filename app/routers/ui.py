@@ -53,6 +53,22 @@ def coverage_object(request: Request, api: str, version: str, name: str,
         return JSONResponse({"error": "Not authenticated"}, status_code=401)
     return JSONResponse(coverage.object_detail(api, version, name))
 
+
+@router.post("/coverage/update")
+def coverage_update(request: Request, api: str = "management", version: str = "",
+                    db: Session = Depends(get_db)):
+    """Check the CP-Docs-To-Swagger service for a newer API version and bundle it if found."""
+    if get_user_or_none(request, db) is None:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    if api not in ("management", "gaia"):
+        api = "management"
+    from ..services import coverage_build
+    result = coverage_build.check_for_update(api, version)
+    if result.get("ok") and result.get("added"):
+        coverage._index.cache_clear()      # surface the new version in the picker
+        coverage._artifact.cache_clear()
+    return JSONResponse(result)
+
 # --- Generic Data Center default (the canonical sk167210 sample) -----------------------
 DEFAULT_FEED_NAME = "Generic-DC-Example"
 DEFAULT_FEED_DESCRIPTION = "Generic Data Center file example"
