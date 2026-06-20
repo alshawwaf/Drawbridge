@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% block title %}{{ ms.name }} — policy{% endblock %}
+{% block main_class %}wide{% endblock %}
+{% block content %}
+<div class="row" style="align-items:flex-start;">
+  <div class="grow">
+    <h1>{{ ms.name }} <span class="pill">Management</span></h1>
+    <p class="muted"><code>{{ ms.host }}:{{ ms.port }}</code>{% if ms.domain %} · domain <b>{{ ms.domain }}</b>{% endif %} · pulled live over the <code>web_api</code>.</p>
+  </div>
+  <a class="btn secondary" href="/management/{{ ms.id }}/edit">Edit connection</a>
+</div>
+
+{% if not has_secret %}
+<div class="card"><p class="muted">No saved credential on this server, so policy can't be pulled. <a href="/management/{{ ms.id }}/edit">Add a password on Edit</a> (stored encrypted), then return here.</p></div>
+{% else %}
+<div class="card" id="mgmt-viewer" data-id="{{ ms.id }}" style="padding:14px 18px;">
+  <div class="row" style="align-items:center; gap:10px; flex-wrap:wrap;">
+    <span class="muted" style="font-size:11px; font-weight:700; letter-spacing:.5px;">ACCESS LAYER</span>
+    <span id="layer-picker" class="filterbar" style="margin:0;"><span class="muted">Loading layers…</span></span>
+  </div>
+  <div id="rulebase" style="margin-top:14px;"><p class="muted">Pick a layer to pull its rulebase.</p></div>
+</div>
+{% endif %}
+
+<script>
+  (function () {
+    var root = document.getElementById('mgmt-viewer');
+    if (!root) return;
+    var id = root.getAttribute('data-id');
+    var picker = document.getElementById('layer-picker');
+    var view = document.getElementById('rulebase');
+    function esc(s) { var d = document.createElement('div'); d.textContent = (s == null ? '' : s); return d.innerHTML; }
+    function cell(names, negate) {
+      var v = (names && names.length) ? names.join(', ') : 'Any';
+      return (negate ? '<span class="pill bad" style="margin-right:4px;">!</span>' : '') + esc(v);
+    }
+    function actionCls(a) {
+      a = (a || '').toLowerCase();
+      if (a.indexOf('accept') > -1) return 'ok';
+      if (a.indexOf('drop') > -1 || a.indexOf('reject') > -1) return 'bad';
+      return 'faint';
+    }
+    function renderRulebase(data) {
+      if (data.error) { view.innerHTML = '<div class="err">' + esc(data.error) + '</div>'; return; }
+      var rows = data.rows || [];
+      if (!rows.length) { view.innerHTML = '<p class="muted">This layer has no rules.</p>'; return; }
+      var h = '<p class="muted" style="margin:0 0 8px;">Layer <b>' + esc(data.layer) + '</b> · ' +
+              esc(data.shown) + ' rule(s)' + (data.total > data.shown ? ' (of ' + esc(data.total) + ')' : '') + '</p>' +
+              '<div class="tablewrap"><table class="acttable"><thead><tr>' +
+              '<th>No.</th><th>Name</th><th>Source</th><th>Destination</th><th>VPN</th><th>Service</th>' +
+              '<th>Action</th><th>Track</th><th>Comments</th></tr></thead><tbody>';
+      rows.forEach(function (r) {
+        if (r.kind === 'section') {
+          h += '<tr><td colspan="9" style="background:var(--header-hover); font-weight:700;">▸ ' + esc(r.name || 'Section') + '</td></tr>';
+        } else if (r.kind === 'rule') {
+          var dim = r.enabled ? '' : ' style="opacity:.5;"';
+          h += '<tr' + dim + '><td class="nowrap">' + esc(r.number) + (r.enabled ? '' : ' ⃠') + '</td>' +
+               '<td>' + esc(r.name) + '</td>' +
+               '<td>' + cell(r.source, r.source_negate) + '</td>' +
+               '<td>' + cell(r.destination, r.destination_negate) + '</td>' +
+               '<td>' + esc((r.vpn && r.vpn.length) ? r.vpn.join(', ') : 'Any') + '</td>' +
+               '<td>' + cell(r.service, r.service_negate) + '</td>' +
+               '<td><span class="pill ' + actionCls(r.action) + '">' + esc(r.action || '—') + '</span></td>' +
+               '<td>' + esc(r.track || '—') + '</td>' +
+               '<td class="muted" style="font-size:12px;">' + esc(r.comments || '') + '</td></tr>';
+        } else {
+          h += '<tr><td colspan="9" class="muted">' + esc(r.type) + ' — ' + esc(r.name) + ' (not rendered)</td></tr>';
+        }
+      });
+      view.innerHTML = h + '</tbody></table></div>';
+    }
+    function loadRulebase(name) {
+      view.innerHTML = '<p class="muted">Pulling “' + esc(name) + '” over web_api…</p>';
+      fetch('/management/' + id + '/rulebase?name=' + encodeURIComponent(name))
+        .then(function (r) { return r.json(); }).then(renderRulebase)
+        .catch(function () { view.innerHTML = '<div class="err">Failed to pull the rulebase.</div>'; });
+    }
+    fetch('/management/' + id + '/layers').then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (data.error) { picker.innerHTML = '<span class="err">' + esc(data.error) + '</span>'; return; }
+        var layers = data.layers || [];
+        if (!layers.length) { picker.innerHTML = '<span class="muted">No access layers found.</span>'; return; }
+        picker.innerHTML = '';
+        layers.forEach(function (l, i) {
+          var b = document.createElement('button');
+          b.type = 'button'; b.className = 'chip' + (i === 0 ? ' active' : ''); b.textContent = l.name;
+          b.addEventListener('click', function () {
+            picker.querySelectorAll('.chip').forEach(function (c) { c.classList.remove('active'); });
+            b.classList.add('active'); loadRulebase(l.name);
+          });
+          picker.appendChild(b);
+        });
+        loadRulebase(layers[0].name);   // auto-load the first layer
+      })
+      .catch(function () { picker.innerHTML = '<span class="err">Failed to load layers.</span>'; });
+  })();
+</script>
+{% endblock %}
