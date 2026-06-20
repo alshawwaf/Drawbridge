@@ -40,7 +40,7 @@
 </div>
 <div class="card" style="padding:6px 6px 2px;">
 <div class="tablewrap">
-<table id="feedtable">
+<table id="feedtable" data-paginate="10">
   <thead><tr>
     <th>Name</th><th>Type</th><th class="nowrap">Items</th><th class="nowrap">Interval</th><th>Auth</th><th>Feed URL</th><th></th>
   </tr></thead>
@@ -90,9 +90,11 @@
       bar.querySelectorAll('.chip').forEach(function (c) { c.classList.remove('active'); });
       chip.classList.add('active');
       var f = chip.getAttribute('data-filter');
-      document.querySelectorAll('#feedtable tbody tr').forEach(function (tr) {
-        tr.style.display = (f === 'all' || tr.getAttribute('data-feedtype') === f) ? '' : 'none';
+      var table = document.getElementById('feedtable');
+      table.querySelectorAll('tbody tr').forEach(function (tr) {
+        tr.classList.toggle('row-hidden', !(f === 'all' || tr.getAttribute('data-feedtype') === f));
       });
+      if (table.repaginate) table.repaginate();   // re-page the filtered set (paginator owns row display)
     });
   })();
 

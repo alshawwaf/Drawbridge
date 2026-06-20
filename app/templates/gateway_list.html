@@ -14,7 +14,7 @@
 {% else %}
 <div class="card" style="padding:6px 6px 2px;">
 <div class="tablewrap">
-<table>
+<table data-paginate="10">
   <thead><tr><th>Name</th><th class="nowrap">Address</th><th class="nowrap">Username</th><th class="nowrap">TLS</th><th class="nowrap">Layers</th><th></th></tr></thead>
   <tbody>
   {% for r in rows %}

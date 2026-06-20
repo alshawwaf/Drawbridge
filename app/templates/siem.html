@@ -24,10 +24,11 @@
       {% for p in ['udp', 'tcp'] %}<button type="button" class="chip {{ 'active' if p == 'udp' else '' }}" data-val="{{ p }}">{{ p|upper }}</button>{% endfor %}
     </span>
   </div>
-  <pre>cp_log_export add name <span class="cmd-name">dcsim-siem-cef-udp</span> \
+  <pre id="cmd-pre">cp_log_export add name <span class="cmd-name">dcsim-siem-cef-udp</span> \
   target-server {{ host }} target-port {{ port }} \
   protocol <span id="cmd-proto">udp</span> format <span id="cmd-fmt">cef</span>
 cp_log_export restart name <span class="cmd-name">dcsim-siem-cef-udp</span></pre>
+  <div class="row" style="margin:8px 0 0;"><button class="copybtn" type="button" data-copy-from="#cmd-pre">Copy command</button></div>
   <p class="muted" style="font-size:12px;">Listening on <code>{{ host }}:{{ port }}</code> (TCP + UDP). On a hosted instance, make sure that port is reachable from the Management Server — the bundled <code>docker-compose.yml</code> publishes it; on Dokploy add a TCP+UDP entrypoint (see <a href="https://github.com/alshawwaf/Datacenter-Integration-Simulator/blob/main/docs/integrations/siem.md">deployment notes</a>). No gateway yet? Click <b>Send test log</b>.</p>
   {% else %}
   <p class="muted" style="margin:0 0 12px;">The listener is turned off (<code>DCSIM_SYSLOG_PORT=0</code>). Set it to a port like <code>5514</code> and restart to receive logs — or just click <b>Send test log</b> to preview the viewer.</p>
