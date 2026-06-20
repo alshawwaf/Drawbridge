@@ -10,10 +10,13 @@ CFG = {
     "time": {"timezone": "Asia / Jerusalem"},
     "interfaces": [
         {"name": "eth1", "ipv4-address": "10.0.1.1", "ipv4-mask-length": 24,
-         "enabled": True, "mtu": 1500, "comments": "LAN"},
+         "enabled": True, "mtu": 1500, "comments": "LAN",
+         "ipv6-address": "2001:db8::1", "ipv6-mask-length": 64, "speed": "10G",
+         "auto-negotiation": True, "mac-addr": "00:1c:7f:11:22:33"},
         {"name": "eth9"}],                       # no IP → skipped
     "routes": [
         {"address": "192.168.50.0", "mask-length": 24, "type": "gateway", "comment": "to lab",
+         "rank": 60, "ping": True, "scope-local": False,
          "next-hop": [{"gateway": "10.0.1.254", "priority": 1}]},
         {"address": "0.0.0.0", "mask-length": 0, "type": "gateway",
          "next-hop": [{"gateway": "10.0.1.1", "priority": "default"}]}],   # default route, no priority
@@ -37,8 +40,11 @@ def test_gaia_terraform():
     assert 'timezone = "Asia / Jerusalem"' in tf
     assert 'resource "checkpoint_gaia_physical_interface" "if_eth1"' in tf
     assert "ipv4_mask_length = 24" in tf and "mtu = 1500" in tf
+    assert 'ipv6_address = "2001:db8::1"' in tf and "ipv6_mask_length = 64" in tf   # full iface fields
+    assert 'speed = "10G"' in tf and "auto_negotiation = true" in tf and 'mac_addr = "00:1c:7f:11:22:33"' in tf
     assert "if_eth9" not in tf                                 # unconfigured interface skipped
     assert "next_hop {" in tf and 'gateway = "10.0.1.254"' in tf and "priority = 1" in tf
+    assert "rank = 60" in tf and "ping = true" in tf           # full static-route fields
     assert 'resource "checkpoint_gaia_proxy" "this"' in tf and "port = 8080" in tf
 
 
@@ -62,7 +68,9 @@ def test_gaia_clish():
     assert "set ntp active on" in sh and "set ntp server primary 192.0.2.10 version 4" in sh
     assert 'set timezone "Asia / Jerusalem"' in sh
     assert "set interface eth1 ipv4-address 10.0.1.1 mask-length 24" in sh
+    assert "set interface eth1 ipv6-address 2001:db8::1 mask-length 64" in sh and "set interface eth1 speed 10G" in sh
     assert "set static-route 192.168.50.0/24 nexthop gateway address 10.0.1.254 priority 1 on" in sh
+    assert "set static-route 192.168.50.0/24 rank 60" in sh and "set static-route 192.168.50.0/24 ping on" in sh
     assert "set static-route default nexthop gateway address 10.0.1.1 on" in sh   # default route, no priority
     assert "set proxy address proxy.lab.local port 8080" in sh
     assert sh.strip().endswith("save config")

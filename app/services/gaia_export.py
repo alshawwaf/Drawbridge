@@ -208,10 +208,21 @@ def _tf(cfg: dict) -> str:
                f'  ipv4_address = {_q(i.get("ipv4-address"))}']
         if str(i.get("ipv4-mask-length", "")).isdigit():
             blk.append(f'  ipv4_mask_length = {i.get("ipv4-mask-length")}')
-        if "enabled" in i:
-            blk.append(f'  enabled = {"true" if i.get("enabled") else "false"}')
+        for cpk, tfk in (("ipv6-address", "ipv6_address"), ("mac-addr", "mac_addr"),
+                         ("speed", "speed"), ("duplex", "duplex")):
+            if _present(i.get(cpk)):
+                blk.append(f'  {tfk} = {_q(i.get(cpk))}')
+        if str(i.get("ipv6-mask-length", "")).isdigit():
+            blk.append(f'  ipv6_mask_length = {i.get("ipv6-mask-length")}')
         if str(i.get("mtu", "")).isdigit():
             blk.append(f'  mtu = {i.get("mtu")}')
+        for cpk, tfk in (("enabled", "enabled"), ("ipv6-autoconfig", "ipv6_autoconfig"),
+                         ("auto-negotiation", "auto_negotiation"), ("monitor-mode", "monitor_mode")):
+            if cpk in i:
+                blk.append(f'  {tfk} = {"true" if i.get(cpk) else "false"}')
+        for cpk, tfk in (("rx-ringsize", "rx_ringsize"), ("tx-ringsize", "tx_ringsize")):
+            if str(i.get(cpk, "")).isdigit():
+                blk.append(f'  {tfk} = {i.get(cpk)}')
         if _present(i.get("comments")):
             blk.append(f'  comments = {_q(i.get("comments"))}')
         L += [*blk, "}", ""]
@@ -226,6 +237,11 @@ def _tf(cfg: dict) -> str:
                f"  type = {_q(rtype)}"]
         if _present(r.get("comment")):
             blk.append(f'  comment = {_q(r.get("comment"))}')
+        if str(r.get("rank", "")).isdigit():
+            blk.append(f'  rank = {r.get("rank")}')
+        for cpk, tfk in (("ping", "ping"), ("scope-local", "scope_local")):
+            if cpk in r:
+                blk.append(f'  {tfk} = {"true" if r.get(cpk) else "false"}')
         if rtype == "gateway":
             for nh in r.get("next-hop") or []:
                 blk.append("  next_hop {")
@@ -318,10 +334,21 @@ def _ansible(cfg: dict) -> str:
         lines = [f'name: {_q(i.get("name", ""))}', f'ipv4_address: {_q(i.get("ipv4-address"))}']
         if str(i.get("ipv4-mask-length", "")).isdigit():
             lines.append(f'ipv4_mask_length: {i.get("ipv4-mask-length")}')
-        if "enabled" in i:
-            lines.append(f'enabled: {"true" if i.get("enabled") else "false"}')
+        for cpk, ak in (("ipv6-address", "ipv6_address"), ("mac-addr", "mac_addr"),
+                        ("speed", "speed"), ("duplex", "duplex")):
+            if _present(i.get(cpk)):
+                lines.append(f'{ak}: {_q(i.get(cpk))}')
+        if str(i.get("ipv6-mask-length", "")).isdigit():
+            lines.append(f'ipv6_mask_length: {i.get("ipv6-mask-length")}')
         if str(i.get("mtu", "")).isdigit():
             lines.append(f'mtu: {i.get("mtu")}')
+        for cpk, ak in (("enabled", "enabled"), ("ipv6-autoconfig", "ipv6_autoconfig"),
+                        ("auto-negotiation", "auto_negotiation"), ("monitor-mode", "monitor_mode")):
+            if cpk in i:
+                lines.append(f'{ak}: {"true" if i.get(cpk) else "false"}')
+        for cpk, ak in (("rx-ringsize", "rx_ringsize"), ("tx-ringsize", "tx_ringsize")):
+            if str(i.get(cpk, "")).isdigit():
+                lines.append(f'{ak}: {i.get(cpk)}')
         if _present(i.get("comments")):
             lines.append(f'comments: {_q(i.get("comments"))}')
         task(f'Interface {i.get("name", "")}', "cp_gaia_physical_interface", lines)
@@ -334,6 +361,11 @@ def _ansible(cfg: dict) -> str:
                  f"type: {_q(rtype)}"]
         if _present(r.get("comment")):
             lines.append(f'comment: {_q(r.get("comment"))}')
+        if str(r.get("rank", "")).isdigit():
+            lines.append(f'rank: {r.get("rank")}')
+        for cpk, ak in (("ping", "ping"), ("scope-local", "scope_local")):
+            if cpk in r:
+                lines.append(f'{ak}: {"true" if r.get(cpk) else "false"}')
         if rtype == "gateway":
             hops = []
             for nh in r.get("next-hop") or []:
@@ -393,6 +425,14 @@ def _clish(cfg: dict) -> str:
             L.append(f'set interface {nm} state {"on" if i.get("enabled") else "off"}')
         if str(i.get("mtu", "")).isdigit():
             L.append(f'set interface {nm} mtu {i.get("mtu")}')
+        if _present(i.get("ipv6-address")) and str(i.get("ipv6-mask-length", "")).isdigit():
+            L.append(f'set interface {nm} ipv6-address {i.get("ipv6-address")} mask-length {i.get("ipv6-mask-length")}')
+        for cpk, kw in (("auto-negotiation", "auto-negotiation"), ("monitor-mode", "monitor-mode")):
+            if cpk in i:
+                L.append(f'set interface {nm} {kw} {"on" if i.get(cpk) else "off"}')
+        for cpk, kw in (("speed", "speed"), ("duplex", "duplex"), ("mac-addr", "mac-addr")):
+            if _present(i.get(cpk)):
+                L.append(f'set interface {nm} {kw} {i.get(cpk)}')
         if _present(i.get("comments")):
             L.append(f'set interface {nm} comments "{i.get("comments")}"')
 
@@ -406,6 +446,10 @@ def _clish(cfg: dict) -> str:
                 L.append(f'set static-route {dst} nexthop gateway address {nh.get("gateway", "")}{prs} on')
         else:
             L.append(f"set static-route {dst} nexthop {rtype}")
+        if str(r.get("rank", "")).isdigit():
+            L.append(f"set static-route {dst} rank {r.get('rank')}")
+        if r.get("ping"):
+            L.append(f"set static-route {dst} ping on")
 
     proxy = cfg.get("proxy") or {}
     if _present(proxy.get("address")):

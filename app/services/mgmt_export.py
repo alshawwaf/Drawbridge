@@ -258,6 +258,43 @@ OBJ_SPECS: dict[str, dict] = {
             F("weekdays", "weekday", "weekdays", "weekdays", "weekdays"),   # TF singular; Ansible/cli list
         ]),
     ]},
+    "service-icmp6": {"tf": "checkpoint_management_service_icmp6", "ansible": "cp_mgmt_service_icmp6",
+                      "cli": "service-icmp6", "fields": [
+        F("icmp-type", "icmp_type", "icmp_type", "icmp-type", "int"),
+        F("icmp-code", "icmp_code", "icmp_code", "icmp-code", "int"),
+        F("keep-connections-open-after-policy-installation", "keep_connections_open_after_policy_installation",
+          "keep_connections_open_after_policy_installation", "keep-connections-open-after-policy-installation", "bool"),
+    ]},
+    "service-citrix-tcp": {"tf": "checkpoint_management_service_citrix_tcp", "ansible": "cp_mgmt_service_citrix_tcp",
+                           "cli": "service-citrix-tcp", "fields": [
+        F("application", "application", "application", "application", "str"),
+    ]},
+    "service-compound-tcp": {"tf": "checkpoint_management_service_compound_tcp",
+                             "ansible": "cp_mgmt_service_compound_tcp", "cli": "service-compound-tcp", "fields": [
+        F("compound-service", "compound_service", "compound_service", "compound-service", "str"),
+        F("keep-connections-open-after-policy-installation", "keep_connections_open_after_policy_installation",
+          "keep_connections_open_after_policy_installation", "keep-connections-open-after-policy-installation", "bool"),
+    ]},
+    "time-group": {"tf": "checkpoint_management_time_group", "ansible": "cp_mgmt_time_group",
+                   "cli": "time-group", "fields": [
+        F("members", "members", "members", "members", "names"),
+    ]},
+    "application-site": {"tf": "checkpoint_management_application_site", "ansible": "cp_mgmt_application_site",
+                         "cli": "application-site", "fields": [
+        F("primary-category", "primary_category", "primary_category", "primary-category", "str"),
+        F("url-list", "url_list", "url_list", "url-list", "strlist"),
+        F("urls-defined-as-regular-expression", "urls_defined_as_regular_expression",
+          "urls_defined_as_regular_expression", "urls-defined-as-regular-expression", "bool"),
+        F("additional-categories", "additional_categories", "additional_categories",
+          "additional-categories", "strlist"),
+        F("description", "description", "description", "description", "str"),
+    ]},
+    "application-site-group": {"tf": "checkpoint_management_application_site_group",
+                               "ansible": "cp_mgmt_application_site_group", "cli": "application-site-group",
+                               "fields": [F("members", "members", "members", "members", "names")]},
+    "application-site-category": {"tf": "checkpoint_management_application_site_category",
+                                  "ansible": "cp_mgmt_application_site_category", "cli": "application-site-category",
+                                  "fields": [F("description", "description", "description", "description", "str")]},
     # access-role: networks export cleanly; users/machines are a show↔add format mismatch — flag, don't guess.
     "access-role": {"tf": "checkpoint_management_access_role", "ansible": "cp_mgmt_access_role",
                     "cli": "access-role", "fields": [
