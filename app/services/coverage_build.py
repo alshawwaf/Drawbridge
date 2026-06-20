@@ -228,6 +228,8 @@ def check_for_update(api_type: str, version: str = "") -> dict:
             return {"ok": True, "added": False, "api_type": api_type, "version": ver,
                     "object_count": json.load(f).get("object_count", 0)}
     art = build_from_spec(api_type, ver, spec)
+    if not art["object_count"]:
+        return {"ok": False, "error": f"The fetched {api_type} {ver} spec has no add-*/set-* objects."}
     write_artifact(art)
     return {"ok": True, "added": True, "api_type": api_type, "version": ver,
             "object_count": art["object_count"]}

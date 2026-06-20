@@ -10,6 +10,7 @@ from __future__ import annotations
 import functools
 import json
 import os
+import re
 
 ART_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "coverage_data")
 
@@ -34,13 +35,17 @@ def _artifact(api_type: str, version: str) -> dict:
     return {}
 
 
+def _vkey(v: str) -> list[int]:
+    return [int(x) for x in re.findall(r"\d+", v)] or [0]
+
+
 def versions() -> dict[str, list[str]]:
-    """Available versions per api_type, newest first."""
+    """Available versions per api_type, newest first (numeric sort: v1.10 > v1.9)."""
     out: dict[str, list[str]] = {}
     for a in _index():
         out.setdefault(a["api_type"], []).append(a["version"])
     for k in out:
-        out[k] = sorted(set(out[k]), reverse=True)
+        out[k] = sorted(set(out[k]), key=_vkey, reverse=True)
     return out
 
 
