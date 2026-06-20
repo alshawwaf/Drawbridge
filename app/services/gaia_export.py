@@ -1,0 +1,428 @@
+"""Export a Check Point appliance's **Gaia OS configuration** (hostname, DNS, NTP, timezone, physical
+interfaces, static routes, proxy) to Infrastructure-as-Code — for a gateway OR an SMS (both run Gaia).
+
+Pulls the live config over the **Gaia REST API** (``login`` → ``show-*`` → ``logout``, TLS pinned, never
+skip-verify) and renders three targets:
+  * **Terraform** — the ``CheckPointSW/checkpoint`` provider in ``context = "gaia_api"`` mode
+    (``checkpoint_gaia_*`` resources).
+  * **Ansible** — the ``check_point.gaia`` collection over ``connection: httpapi`` (matching the
+    conventions in the user's Ansible_Check_Point_Gaia_Playbooks: one play, ``gather_facts: false``,
+    ``collections: [check_point.gaia]``, bare ``cp_gaia_*`` modules, ``servers``/``next_hop`` as inline
+    lists of dicts).
+  * **clish** — native Gaia CLI ``set``/``save config`` commands.
+
+Secrets are NEVER inlined into generated code — the Ansible inventory sources the password from Vault /
+env, Terraform from a variable. Pure ``generate(cfg)`` is unit-tested without a device.
+"""
+from __future__ import annotations
+
+import re
+import ssl
+import time
+
+import httpx
+
+GAIA_VERSION = "v1.9"   # matches apply_runner's Gaia API version
+_SECTIONS = ("hostname", "dns", "ntp", "time", "interfaces", "routes", "proxy")
+
+
+# --- pull over the Gaia REST API -------------------------------------------------------------
+
+def _pinned_ssl_context(cert_pem: str) -> ssl.SSLContext:
+    """Trust ONLY the pinned cert (CERT_REQUIRED, TLS 1.2+, hostname check off — the reviewed pin is
+    the identity check). Never a skip-verify path."""
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_REQUIRED
+    ctx.verify_flags |= ssl.VERIFY_X509_PARTIAL_CHAIN
+    ctx.load_verify_locations(cadata=cert_pem)
+    return ctx
+
+
+def _login_error(resp) -> str:
+    try:
+        body = resp.json() or {}
+        msg = body.get("message") or body.get("errors") or body.get("error") or ""
+    except Exception:  # noqa: BLE001
+        msg = ""
+    if resp.status_code in (401, 403):
+        return f"Gaia login failed ({resp.status_code}): the device rejected the credentials" + (
+            f" — {msg}" if msg else "") + "."
+    return f"Gaia login failed (HTTP {resp.status_code})." + (f" {msg}" if msg else "")
+
+
+def pull_gaia(host: str, port: int, user: str, secret: str, cert_pem: str | None = None) -> dict:
+    """Read the OS config over the Gaia API. Returns {ok, config, trace, error}."""
+    verify = _pinned_ssl_context(cert_pem) if (cert_pem or "").strip() else True
+    base = f"https://{host}:{port}/gaia_api/{GAIA_VERSION}"
+    cfg: dict = {}
+    trace: list[dict] = []
+
+    def rec(cmd, resp, t0):
+        trace.append({"command": cmd, "status": getattr(resp, "status_code", 0),
+                      "ms": round((time.perf_counter() - t0) * 1000)})
+
+    try:
+        with httpx.Client(verify=verify, timeout=30.0) as c:
+            t = time.perf_counter()
+            try:
+                login = c.post(f"{base}/login", json={"user": user, "password": secret})
+            except (httpx.ConnectError, ssl.SSLError, httpx.ConnectTimeout) as exc:
+                return {"ok": False, "config": {}, "trace": trace,
+                        "error": f"Could not reach {host}:{port} over TLS — {exc}. Check the host/port, "
+                                 "firewall, and the pinned cert / auto-trust."}
+            rec("login", login, t)
+            if login.status_code >= 400:
+                return {"ok": False, "config": {}, "trace": trace, "error": _login_error(login)}
+            sid = (login.json() or {}).get("sid")
+            headers = {"X-chkp-sid": sid, "Content-Type": "application/json"}
+
+            def show(cmd, body=None):
+                t0 = time.perf_counter()
+                r = c.post(f"{base}/{cmd}", json=body or {}, headers=headers)
+                rec(cmd, r, t0)
+                try:
+                    return r.json() or {}
+                except Exception:  # noqa: BLE001
+                    return {}
+
+            try:
+                cfg["hostname"] = show("show-hostname")
+                cfg["dns"] = show("show-dns")
+                cfg["ntp"] = show("show-ntp")
+                cfg["time"] = show("show-time-and-date")
+                cfg["interfaces"] = show("show-physical-interfaces", {"limit": 500}).get("objects", [])
+                cfg["routes"] = show("show-static-routes", {"limit": 500}).get("objects", [])
+                cfg["proxy"] = show("show-proxy")
+            finally:
+                try:
+                    c.post(f"{base}/logout", headers=headers)
+                except Exception:  # noqa: BLE001
+                    pass
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "config": cfg, "trace": trace, "error": f"Gaia request failed: {exc}"}
+    return {"ok": True, "config": cfg, "trace": trace, "error": None}
+
+
+def pull_and_generate(host: str, port: int, user: str, secret: str, cert_pem: str | None = None) -> dict:
+    pulled = pull_gaia(host, port, user, secret, cert_pem)
+    if not pulled["ok"]:
+        return {"error": pulled["error"], "trace": pulled.get("trace", [])}
+    art = generate(pulled["config"])
+    art["trace"] = pulled.get("trace", [])
+    return art
+
+
+# --- helpers ---------------------------------------------------------------------------------
+
+def _q(s) -> str:
+    text = re.sub(r"\s*\n\s*", " ", str(s)).replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{text}"'
+
+
+def _slug(s: str, used: set[str]) -> str:
+    out = re.sub(r"[^0-9A-Za-z_]", "_", str(s or "")).strip("_").lower() or "x"
+    if out[0].isdigit():
+        out = "n_" + out
+    cand, i = out, 2
+    while cand in used:
+        cand, i = f"{out}_{i}", i + 1
+    used.add(cand)
+    return cand
+
+
+def _present(v) -> bool:
+    return not (v is None or (isinstance(v, str) and v == ""))
+
+
+def _route_dst(r: dict) -> str:
+    addr, mask = r.get("address"), r.get("mask-length")
+    if str(addr) in ("0.0.0.0", "default") and str(mask) in ("0", "", "None"):
+        return "default"
+    return f"{addr}/{mask}"
+
+
+def _priority(nh: dict):
+    p = nh.get("priority")
+    if p is None or str(p).strip().lower() == "default":
+        return None
+    return int(p) if str(p).lstrip("-").isdigit() else None
+
+
+def _iface_ip(i: dict) -> bool:
+    return _present(i.get("ipv4-address"))
+
+
+# --- Terraform (checkpoint_gaia_*, context = "gaia_api") --------------------------------------
+
+def _tf(cfg: dict) -> str:
+    L = ['# Terraform export of Check Point Gaia OS configuration.',
+         '# Provider: CheckPointSW/checkpoint in Gaia mode (context = "gaia_api").',
+         '# Set the provider server/credentials (use a variable / env — do not inline secrets).',
+         "",
+         "terraform {", "  required_providers {", "    checkpoint = {",
+         '      source = "CheckPointSW/checkpoint"', "    }", "  }", "}", "",
+         'provider "checkpoint" {',
+         '  # server   = "GW_OR_SMS_IP"',
+         '  # username = "admin"',
+         '  # password = var.checkpoint_password',
+         '  context = "gaia_api"', "}", ""]
+
+    name = (cfg.get("hostname") or {}).get("name")
+    if _present(name):
+        L += [f'resource "checkpoint_gaia_hostname" "this" {{', f"  name = {_q(name)}", "}", ""]
+
+    dns = cfg.get("dns") or {}
+    dns_lines = [f"  {k} = {_q(dns[k])}" for k in ("primary", "secondary", "tertiary", "suffix")
+                 if _present(dns.get(k))]
+    if dns_lines:
+        L += ['resource "checkpoint_gaia_dns" "this" {', *dns_lines, "}", ""]
+
+    ntp = cfg.get("ntp") or {}
+    servers = ntp.get("servers") or []
+    if servers or "enabled" in ntp:
+        block = ['resource "checkpoint_gaia_ntp" "this" {',
+                 f'  enabled = {"true" if ntp.get("enabled", True) else "false"}']
+        for s in servers:
+            block.append("  servers {")
+            block.append(f'    address = {_q(s.get("address", ""))}')
+            if _present(s.get("type")):
+                block.append(f'    type = {_q(s.get("type"))}')
+            if str(s.get("version", "")).isdigit():
+                block.append(f'    version = {s.get("version")}')
+            block.append("  }")
+        L += [*block, "}", ""]
+
+    tz = (cfg.get("time") or {}).get("timezone")
+    if _present(tz):
+        L += ['resource "checkpoint_gaia_time_and_date" "this" {', f"  timezone = {_q(tz)}", "}", ""]
+
+    used: set[str] = set()
+    for i in cfg.get("interfaces") or []:
+        if not _iface_ip(i):
+            continue
+        slug = _slug("if_" + str(i.get("name", "")), used)
+        blk = [f'resource "checkpoint_gaia_physical_interface" "{slug}" {{',
+               f'  name = {_q(i.get("name", ""))}',
+               f'  ipv4_address = {_q(i.get("ipv4-address"))}']
+        if str(i.get("ipv4-mask-length", "")).isdigit():
+            blk.append(f'  ipv4_mask_length = {i.get("ipv4-mask-length")}')
+        if "enabled" in i:
+            blk.append(f'  enabled = {"true" if i.get("enabled") else "false"}')
+        if str(i.get("mtu", "")).isdigit():
+            blk.append(f'  mtu = {i.get("mtu")}')
+        if _present(i.get("comments")):
+            blk.append(f'  comments = {_q(i.get("comments"))}')
+        L += [*blk, "}", ""]
+
+    rused: set[str] = set()
+    for r in cfg.get("routes") or []:
+        slug = _slug("route_" + _route_dst(r).replace("/", "_").replace(".", "_"), rused)
+        rtype = r.get("type") or "gateway"
+        blk = [f'resource "checkpoint_gaia_static_route" "{slug}" {{',
+               f'  address = {_q("0.0.0.0" if _route_dst(r) == "default" else r.get("address"))}',
+               f'  mask_length = {r.get("mask-length", 0) if str(r.get("mask-length", "")).isdigit() else 0}',
+               f"  type = {_q(rtype)}"]
+        if _present(r.get("comment")):
+            blk.append(f'  comment = {_q(r.get("comment"))}')
+        if rtype == "gateway":
+            for nh in r.get("next-hop") or []:
+                blk.append("  next_hop {")
+                blk.append(f'    gateway = {_q(nh.get("gateway", ""))}')
+                pr = _priority(nh)
+                if pr is not None:
+                    blk.append(f"    priority = {pr}")
+                blk.append("  }")
+        L += [*blk, "}", ""]
+
+    proxy = cfg.get("proxy") or {}
+    if _present(proxy.get("address")):
+        blk = ['resource "checkpoint_gaia_proxy" "this" {', f'  address = {_q(proxy.get("address"))}']
+        if str(proxy.get("port", "")).isdigit():
+            blk.append(f'  port = {proxy.get("port")}')
+        L += [*blk, "}", ""]
+
+    return "\n".join(L).rstrip() + "\n"
+
+
+# --- Ansible (check_point.gaia over httpapi) --------------------------------------------------
+
+def _yaml_dict_list(items: list[str]) -> str:
+    return "[" + ", ".join(items) + "]"
+
+
+def _ansible(cfg: dict) -> str:
+    L = ['# Ansible export of Check Point Gaia OS configuration (collection: check_point.gaia).',
+         '#',
+         '# Inventory (hosts) — source the password from Ansible Vault / env, never inline:',
+         '#   [checkpoint]',
+         '#   gw ansible_host=GW_OR_SMS_IP',
+         '#   [checkpoint:vars]',
+         '#   ansible_user=admin',
+         '#   ansible_network_os=check_point.gaia.checkpoint',
+         '#   ansible_connection=httpapi',
+         '#   ansible_httpapi_use_ssl=True',
+         '#   ansible_httpapi_validate_certs=False',
+         '#   # ansible_password: "{{ vault_gaia_password }}"',
+         '#',
+         '# Run:  ansible-galaxy collection install check_point.gaia',
+         '#       ansible-playbook -i hosts gaia_config.yml',
+         "---",
+         "- name: Restore Check Point Gaia OS configuration",
+         "  hosts: checkpoint",
+         "  connection: httpapi",
+         "  gather_facts: false",
+         "  collections:",
+         "    - check_point.gaia",
+         "  tasks:"]
+
+    def task(title, module, lines):
+        L.append(f"    - name: {title}")
+        L.append(f"      {module}:")
+        L.extend(f"        {ln}" for ln in lines)
+
+    name = (cfg.get("hostname") or {}).get("name")
+    if _present(name):
+        task("Hostname", "cp_gaia_hostname", [f"name: {_q(name)}"])
+
+    dns = cfg.get("dns") or {}
+    dns_lines = [f"{k}: {_q(dns[k])}" for k in ("primary", "secondary", "tertiary", "suffix")
+                 if _present(dns.get(k))]
+    if dns_lines:
+        task("DNS", "cp_gaia_dns", dns_lines)
+
+    ntp = cfg.get("ntp") or {}
+    servers = ntp.get("servers") or []
+    if servers or "enabled" in ntp:
+        items = []
+        for s in servers:
+            parts = [f'address: {_q(s.get("address", ""))}']
+            if _present(s.get("type")):
+                parts.append(f'type: {_q(s.get("type"))}')
+            if str(s.get("version", "")).isdigit():
+                parts.append(f'version: {s.get("version")}')
+            items.append("{ " + ", ".join(parts) + " }")
+        lines = [f'enabled: {"true" if ntp.get("enabled", True) else "false"}']
+        if items:
+            lines.append("servers: " + _yaml_dict_list(items))
+        task("NTP", "cp_gaia_ntp", lines)
+
+    tz = (cfg.get("time") or {}).get("timezone")
+    if _present(tz):
+        task("Time / timezone", "cp_gaia_time_and_date", [f"timezone: {_q(tz)}"])
+
+    for i in cfg.get("interfaces") or []:
+        if not _iface_ip(i):
+            continue
+        lines = [f'name: {_q(i.get("name", ""))}', f'ipv4_address: {_q(i.get("ipv4-address"))}']
+        if str(i.get("ipv4-mask-length", "")).isdigit():
+            lines.append(f'ipv4_mask_length: {i.get("ipv4-mask-length")}')
+        if "enabled" in i:
+            lines.append(f'enabled: {"true" if i.get("enabled") else "false"}')
+        if str(i.get("mtu", "")).isdigit():
+            lines.append(f'mtu: {i.get("mtu")}')
+        if _present(i.get("comments")):
+            lines.append(f'comments: {_q(i.get("comments"))}')
+        task(f'Interface {i.get("name", "")}', "cp_gaia_physical_interface", lines)
+
+    for r in cfg.get("routes") or []:
+        rtype = r.get("type") or "gateway"
+        lines = ["state: present",
+                 f'address: {_q("0.0.0.0" if _route_dst(r) == "default" else r.get("address"))}',
+                 f'mask_length: {r.get("mask-length", 0) if str(r.get("mask-length", "")).isdigit() else 0}',
+                 f"type: {_q(rtype)}"]
+        if _present(r.get("comment")):
+            lines.append(f'comment: {_q(r.get("comment"))}')
+        if rtype == "gateway":
+            hops = []
+            for nh in r.get("next-hop") or []:
+                parts = [f'gateway: {_q(nh.get("gateway", ""))}']
+                pr = _priority(nh)
+                if pr is not None:
+                    parts.append(f"priority: {pr}")
+                hops.append("{ " + ", ".join(parts) + " }")
+            if hops:
+                lines.append("next_hop: " + _yaml_dict_list(hops))
+        task(f"Static route {_route_dst(r)}", "cp_gaia_static_route", lines)
+
+    proxy = cfg.get("proxy") or {}
+    if _present(proxy.get("address")):
+        lines = ["state: present", f'address: {_q(proxy.get("address"))}']
+        if str(proxy.get("port", "")).isdigit():
+            lines.append(f'port: {proxy.get("port")}')
+        task("Proxy", "cp_gaia_proxy", lines)
+
+    return "\n".join(L).rstrip() + "\n"
+
+
+# --- clish script -----------------------------------------------------------------------------
+
+def _clish(cfg: dict) -> str:
+    L = ["# Gaia clish restore script. Run inside clish, or:  clish -f gaia_config.clish",
+         "# Review before applying; it ends with 'save config' to persist.", ""]
+
+    name = (cfg.get("hostname") or {}).get("name")
+    if _present(name):
+        L.append(f"set hostname {name}")
+
+    dns = cfg.get("dns") or {}
+    for k in ("primary", "secondary", "tertiary", "suffix"):
+        if _present(dns.get(k)):
+            L.append(f"set dns {k} {dns[k]}")
+
+    ntp = cfg.get("ntp") or {}
+    if ntp.get("servers") or "enabled" in ntp:
+        L.append(f'set ntp active {"on" if ntp.get("enabled", True) else "off"}')
+        for s in ntp.get("servers") or []:
+            tier = s.get("type") or "primary"
+            ver = f' version {s.get("version")}' if str(s.get("version", "")).isdigit() else ""
+            L.append(f'set ntp server {tier} {s.get("address", "")}{ver}')
+
+    tz = (cfg.get("time") or {}).get("timezone")
+    if _present(tz):
+        L.append(f'set timezone "{tz}"')
+
+    for i in cfg.get("interfaces") or []:
+        if not _iface_ip(i):
+            continue
+        nm = i.get("name", "")
+        if str(i.get("ipv4-mask-length", "")).isdigit():
+            L.append(f'set interface {nm} ipv4-address {i.get("ipv4-address")} mask-length {i.get("ipv4-mask-length")}')
+        if "enabled" in i:
+            L.append(f'set interface {nm} state {"on" if i.get("enabled") else "off"}')
+        if str(i.get("mtu", "")).isdigit():
+            L.append(f'set interface {nm} mtu {i.get("mtu")}')
+        if _present(i.get("comments")):
+            L.append(f'set interface {nm} comments "{i.get("comments")}"')
+
+    for r in cfg.get("routes") or []:
+        dst = _route_dst(r)
+        rtype = r.get("type") or "gateway"
+        if rtype == "gateway":
+            for nh in r.get("next-hop") or []:
+                pr = _priority(nh)
+                prs = f" priority {pr}" if pr is not None else ""
+                L.append(f'set static-route {dst} nexthop gateway address {nh.get("gateway", "")}{prs} on')
+        else:
+            L.append(f"set static-route {dst} nexthop {rtype}")
+
+    proxy = cfg.get("proxy") or {}
+    if _present(proxy.get("address")):
+        port = f' port {proxy.get("port")}' if str(proxy.get("port", "")).isdigit() else ""
+        L.append(f'set proxy address {proxy.get("address")}{port}')
+
+    L += ["", "save config"]
+    return "\n".join(L).rstrip() + "\n"
+
+
+def generate(cfg: dict) -> dict:
+    """Render a pulled Gaia config dict to all three targets + stats. Pure."""
+    ifaces = [i for i in (cfg.get("interfaces") or []) if _iface_ip(i)]
+    routes = cfg.get("routes") or []
+    sections = [s for s in _SECTIONS
+                if (cfg.get(s) and (cfg[s] if s in ("interfaces", "routes") else
+                                    any(_present(v) for v in (cfg[s] or {}).values())))]
+    stats = {"sections": sections, "interfaces": len(ifaces), "routes": len(routes),
+             "ntp_servers": len((cfg.get("ntp") or {}).get("servers") or [])}
+    return {"terraform": _tf(cfg), "ansible": _ansible(cfg), "clish": _clish(cfg), "stats": stats}

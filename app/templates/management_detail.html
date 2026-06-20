@@ -7,7 +7,10 @@
     <h1>{{ ms.name }} <span class="pill">Management</span></h1>
     <p class="muted"><code>{{ ms.host }}:{{ ms.port }}</code>{% if ms.domain %} · domain <b>{{ ms.domain }}</b>{% endif %} · pulled live over the <code>web_api</code>.</p>
   </div>
-  <a class="btn secondary" href="/management/{{ ms.id }}/edit">Edit connection</a>
+  <div class="row" style="gap:8px;">
+    <a class="btn secondary" href="/management/{{ ms.id }}/gaia-export">Gaia config →</a>
+    <a class="btn secondary" href="/management/{{ ms.id }}/edit">Edit connection</a>
+  </div>
 </div>
 
 {% if not has_secret %}
