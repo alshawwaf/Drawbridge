@@ -27,6 +27,7 @@
       <button class="chip active" type="button" data-tab="terraform">Terraform</button>
       <button class="chip" type="button" data-tab="ansible">Ansible</button>
       <button class="chip" type="button" data-tab="mgmt_cli">mgmt_cli</button>
+      <button class="chip" type="button" data-tab="web_api">web_api JSON</button>
     </div>
     <div class="row" style="gap:8px; margin-bottom:8px;">
       <button class="copybtn" type="button" id="copy-btn">Copy</button>
@@ -53,7 +54,7 @@
     var fileName = document.getElementById('file-name');
     var data = {};           // { terraform, ansible, mgmt_cli, stats, layer }
     var current = 'terraform';
-    var EXT = { terraform: '.tf', ansible: '.ansible.yml', mgmt_cli: '.mgmt_cli.sh' };
+    var EXT = { terraform: '.tf', ansible: '.ansible.yml', mgmt_cli: '.mgmt_cli.sh', web_api: '.web_api.json' };
 
     function esc(s) { var d = document.createElement('div'); d.textContent = (s == null ? '' : s); return d.innerHTML; }
     function slug(s) { return (s || 'policy').replace(/[^0-9A-Za-z._-]+/g, '_').replace(/^_+|_+$/g, '') || 'policy'; }

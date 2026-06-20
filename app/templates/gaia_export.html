@@ -23,6 +23,7 @@
       <button class="chip active" type="button" data-tab="terraform">Terraform</button>
       <button class="chip" type="button" data-tab="ansible">Ansible</button>
       <button class="chip" type="button" data-tab="clish">clish</button>
+      <button class="chip" type="button" data-tab="web_api">web_api JSON</button>
     </div>
     <div class="row" style="gap:8px; margin-bottom:8px;">
       <button class="copybtn" type="button" id="copy-btn">Copy</button>
@@ -46,7 +47,7 @@
     var code = document.getElementById('code');
     var fileName = document.getElementById('file-name');
     var data = {}, current = 'terraform';
-    var EXT = { terraform: '.gaia.tf', ansible: '.gaia.yml', clish: '.gaia.clish.sh' };
+    var EXT = { terraform: '.gaia.tf', ansible: '.gaia.yml', clish: '.gaia.clish.sh', web_api: '.gaia.web_api.json' };
     var BASE = {{ host|tojson }}.split(':')[0].replace(/[^0-9A-Za-z._-]+/g, '_') || 'gaia';
 
     function esc(s) { var d = document.createElement('div'); d.textContent = (s == null ? '' : s); return d.innerHTML; }

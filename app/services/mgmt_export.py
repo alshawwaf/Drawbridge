@@ -26,6 +26,7 @@ Pure functions over the bundle ``mgmt_api.pull_for_export`` returns — no netwo
 """
 from __future__ import annotations
 
+import json
 import re
 
 
@@ -409,8 +410,93 @@ def generate(bundle: dict) -> dict:
         "terraform": _render_terraform(layer, emit, rules, ref_map, skipped),
         "ansible": _render_ansible(layer, emit, rules, skipped),
         "mgmt_cli": _render_mgmt_cli(layer, emit, rules, skipped),
+        "web_api": _render_web_api(layer, emit, rules),
         "stats": stats,
     }
+
+
+# --- web_api (replayable JSON: POST /web_api/<command> with each body) ------------------------
+
+def _api_value(f, v):
+    kind = f["kind"]
+    if kind == "nested":
+        return _api_body(f["sub"], v)
+    if kind == "nestedlist":
+        return [_api_body(f["sub"], it) for it in v]
+    if kind in ("names", "namelist", "weekdays"):
+        return _names(v)
+    if kind == "strlist":
+        return list(v)
+    if kind == "ref":
+        return _name_of(v)
+    if kind == "bool":
+        return bool(v)
+    if kind == "int" and _is_int(v):
+        return int(v)
+    return v
+
+
+def _api_body(fields, obj):
+    body = {}
+    for f in fields:
+        v = obj.get(f["src"])
+        if not _empty(v):
+            body[f["src"]] = _api_value(f, v)
+    return body
+
+
+def _api_rule_body(row, layer):
+    b = {"layer": layer, "position": "bottom", "name": row.get("name") or "",
+         "source": _cell(row.get("source", [])), "destination": _cell(row.get("destination", [])),
+         "service": _cell(row.get("service", [])), "action": row.get("action") or "Drop",
+         "enabled": bool(row.get("enabled", True))}
+    if row.get("content"):
+        b["content"] = row["content"]
+        if row.get("content_direction"):
+            b["content-direction"] = row["content_direction"]
+    if row.get("vpn"):
+        b["vpn"] = row["vpn"]
+    if row.get("inline_layer"):
+        b["inline-layer"] = row["inline_layer"]
+    tk = row.get("track_full") or {}
+    if tk.get("type"):
+        track = {"type": tk["type"]}
+        for k in ("accounting", "per_connection", "per_session", "enable_firewall_session"):
+            if tk.get(k):
+                track[k.replace("_", "-")] = True
+        b["track"] = track
+    elif row.get("track"):
+        b["track"] = {"type": row["track"]}
+    if row.get("time"):
+        b["time"] = row["time"]
+    if row.get("install_on"):
+        b["install-on"] = row["install_on"]
+    if any((row.get("custom_fields") or {}).values()):
+        b["custom-fields"] = {k: v for k, v in row["custom_fields"].items() if v}
+    for neg, key in (("source_negate", "source-negate"), ("destination_negate", "destination-negate"),
+                     ("service_negate", "service-negate"), ("content_negate", "content-negate")):
+        if row.get(neg):
+            b[key] = True
+    if row.get("comments"):
+        b["comments"] = row["comments"]
+    return b
+
+
+def _render_web_api(layer, emit, rules) -> str:
+    """A replayable backup: an ordered list of web_api operations. Log in, POST each body to
+    /web_api/<command> with the X-chkp-sid header, then the trailing publish commits."""
+    ops = []
+    for e in emit:
+        ops.append({"command": f"add-{e['cp_type']}",
+                    "body": {"name": e["obj"].get("name", ""), **_api_body(e["spec"]["fields"], e["obj"])}})
+    for row in rules:
+        if row.get("kind") == "section":
+            ops.append({"command": "add-access-section",
+                        "body": {"layer": layer, "position": "bottom", "name": row.get("name") or "Section"}})
+        elif row.get("kind") == "rule":
+            ops.append({"command": "add-access-rule", "body": _api_rule_body(row, layer)})
+    ops.append({"command": "publish", "body": {}})
+    return json.dumps(ops, indent=2)
 
 
 # --- Terraform (CheckPointSW/checkpoint) ------------------------------------------------------

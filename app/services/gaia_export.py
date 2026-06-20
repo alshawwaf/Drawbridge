@@ -16,6 +16,7 @@ env, Terraform from a variable. Pure ``generate(cfg)`` is unit-tested without a 
 """
 from __future__ import annotations
 
+import json
 import re
 import ssl
 import time
@@ -460,8 +461,62 @@ def _clish(cfg: dict) -> str:
     return "\n".join(L).rstrip() + "\n"
 
 
+def _web_api(cfg: dict) -> str:
+    """Replayable Gaia backup: ordered web_api set-*/add-* ops (POST /gaia_api/<command>)."""
+    ops = []
+    name = (cfg.get("hostname") or {}).get("name")
+    if _present(name):
+        ops.append({"command": "set-hostname", "body": {"name": name}})
+    dns = cfg.get("dns") or {}
+    db = {k: dns[k] for k in ("primary", "secondary", "tertiary", "suffix") if _present(dns.get(k))}
+    if db:
+        ops.append({"command": "set-dns", "body": db})
+    ntp = cfg.get("ntp") or {}
+    if ntp.get("servers") or "enabled" in ntp:
+        servers = [{k: s.get(k) for k in ("address", "type", "version") if s.get(k) is not None}
+                   for s in ntp.get("servers") or []]
+        ops.append({"command": "set-ntp", "body": {"enabled": bool(ntp.get("enabled", True)), "servers": servers}})
+    tz = (cfg.get("time") or {}).get("timezone")
+    if _present(tz):
+        ops.append({"command": "set-time-and-date", "body": {"timezone": tz}})
+    for i in cfg.get("interfaces") or []:
+        if not _iface_ip(i):
+            continue
+        body = {"name": i.get("name", "")}
+        for k in ("ipv4-address", "ipv4-mask-length", "ipv6-address", "ipv6-mask-length", "mtu",
+                  "comments", "speed", "duplex", "mac-addr"):
+            if _present(i.get(k)):
+                body[k] = i[k]
+        for k in ("enabled", "ipv6-autoconfig", "auto-negotiation", "monitor-mode"):
+            if k in i:
+                body[k] = bool(i[k])
+        ops.append({"command": "set-physical-interface", "body": body})
+    for r in cfg.get("routes") or []:
+        body = {"address": "0.0.0.0" if _route_dst(r) == "default" else r.get("address"),
+                "mask-length": r.get("mask-length"), "type": r.get("type") or "gateway"}
+        if body["type"] == "gateway" and r.get("next-hop"):
+            body["next-hop"] = [{"gateway": nh.get("gateway"),
+                                 **({"priority": _priority(nh)} if _priority(nh) is not None else {})}
+                                for nh in r["next-hop"]]
+        if str(r.get("rank", "")).isdigit():
+            body["rank"] = r["rank"]
+        for k in ("ping", "scope-local"):
+            if k in r:
+                body[k] = bool(r[k])
+        if _present(r.get("comment")):
+            body["comment"] = r["comment"]
+        ops.append({"command": "set-static-route", "body": body})
+    proxy = cfg.get("proxy") or {}
+    if _present(proxy.get("address")):
+        body = {"address": proxy.get("address")}
+        if str(proxy.get("port", "")).isdigit():
+            body["port"] = proxy["port"]
+        ops.append({"command": "set-proxy", "body": body})
+    return json.dumps(ops, indent=2)
+
+
 def generate(cfg: dict) -> dict:
-    """Render a pulled Gaia config dict to all three targets + stats. Pure."""
+    """Render a pulled Gaia config dict to all four targets + stats. Pure."""
     ifaces = [i for i in (cfg.get("interfaces") or []) if _iface_ip(i)]
     routes = cfg.get("routes") or []
     sections = [s for s in _SECTIONS
@@ -469,4 +524,5 @@ def generate(cfg: dict) -> dict:
                                     any(_present(v) for v in (cfg[s] or {}).values())))]
     stats = {"sections": sections, "interfaces": len(ifaces), "routes": len(routes),
              "ntp_servers": len((cfg.get("ntp") or {}).get("servers") or [])}
-    return {"terraform": _tf(cfg), "ansible": _ansible(cfg), "clish": _clish(cfg), "stats": stats}
+    return {"terraform": _tf(cfg), "ansible": _ansible(cfg), "clish": _clish(cfg),
+            "web_api": _web_api(cfg), "stats": stats}

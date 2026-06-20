@@ -158,6 +158,20 @@ def test_export_new_object_types():
     assert art["stats"]["objects"] == 3 and art["stats"]["skipped"] == {}
 
 
+def test_export_web_api_ops():
+    """The web_api target is a replayable JSON op list (POST /web_api/<command> bodies + publish)."""
+    import json as _json
+    ops = _json.loads(mgmt_export.generate(EXPORT_BUNDLE)["web_api"])
+    cmds = [o["command"] for o in ops]
+    assert "add-host" in cmds and "add-access-rule" in cmds and cmds[-1] == "publish"
+    host = next(o for o in ops if o["command"] == "add-host")
+    assert host["body"]["name"] == "web-srv" and host["body"]["ipv4-address"] == "10.0.0.5"
+    assert host["body"]["nat-settings"]["method"] == "static"   # nested body carried through
+    rule = next(o for o in ops if o["command"] == "add-access-rule")
+    assert rule["body"]["layer"] == "Network" and rule["body"]["action"] == "Accept"
+    assert rule["body"]["content"] == ["Credit Card Numbers"]   # full rule columns in the JSON body
+
+
 def test_export_predefined_objects_are_referenced_not_emitted():
     tf = mgmt_export.generate(EXPORT_BUNDLE)["terraform"]
     assert mgmt_export.is_predefined({"type": "host", "domain": {"domain-type": "data domain"}})
