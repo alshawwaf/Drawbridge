@@ -9,7 +9,7 @@
 {% if log.fields %}
 <div class="tablewrap">
 <table class="acttable"><tbody>
-  {% for k, v in log.fields.items() %}<tr><td style="white-space:nowrap; font-weight:600; vertical-align:top;">{{ k }}</td><td><code style="word-break:break-all;">{{ v }}</code></td></tr>{% endfor %}
+  {% for k, v in log.fields.items() %}<tr><td style="white-space:nowrap; font-weight:600; vertical-align:top;">{{ k }}</td><td>{% if v is string and (v.startswith('http://') or v.startswith('https://')) %}<a href="{{ v }}" target="_blank" rel="noopener noreferrer" style="word-break:break-all;">{{ v }}</a>{% else %}<code style="word-break:break-all;">{{ v }}</code>{% endif %}</td></tr>{% endfor %}
 </tbody></table>
 </div>
 {% else %}<p class="muted">No structured fields parsed from this line.</p>{% endif %}
