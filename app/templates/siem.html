@@ -7,7 +7,11 @@
     <h1>SIEM receiver <span class="pill">Log Exporter</span></h1>
     <p class="muted">Point Check Point's <b>Log Exporter</b> at the portal and watch the logs land here — live proof that gateway logs reach the SIEM. Parses <b>CEF</b>, <b>LEEF</b>, <b>JSON</b>, and plain syslog over TCP/UDP.</p>
   </div>
-  <span class="livewrap"><span class="livedot {{ 'on' if enabled else 'off' }}" id="livedot"></span><span id="livetext">{{ 'Listening' if enabled else 'Listener off' }}</span></span>
+  <span class="livewrap">
+    {% if not enabled %}<span class="livedot off"></span><span>Listener off</span>
+    {% elif paused %}<span class="livedot" style="background:#f5a623; box-shadow:0 0 0 3px rgba(245,166,35,.18);"></span><span>Paused — dropping logs</span>
+    {% else %}<span class="livedot on"></span><span>Listening</span>{% endif %}
+  </span>
 </div>
 
 <div class="card">
@@ -34,9 +38,17 @@ cp_log_export restart name <span class="cmd-name">dcsim-siem-cef-udp</span></pre
   <p class="muted" style="margin:0 0 12px;">The listener is turned off (<code>DCSIM_SYSLOG_PORT=0</code>). Set it to a port like <code>5514</code> and restart to receive logs — or just click <b>Send test log</b> to preview the viewer.</p>
   {% endif %}
   <div class="row" style="gap:8px; margin-top:12px;">
+    {% if enabled %}
+      {% if paused %}
+      <form method="post" action="/siem/resume" style="margin:0;"><button class="copybtn" type="submit" title="Resume storing incoming logs">▶ Resume receiving</button></form>
+      {% else %}
+      <form method="post" action="/siem/pause" style="margin:0;"><button class="copybtn" type="submit" title="Stop storing incoming logs (the listener stays up) so you aren't flooded while wiring up exporters">⏸ Pause receiving</button></form>
+      {% endif %}
+    {% endif %}
     <form method="post" action="/siem/test" style="margin:0;"><button class="copybtn" type="submit">Send test log</button></form>
     <form method="post" action="/siem/clear" style="margin:0;"><button class="copybtn cb-danger" type="submit" data-confirm="Clear all received logs? This cannot be undone.">Clear all</button></form>
   </div>
+  {% if enabled and paused %}<p class="muted" style="font-size:12px; margin:10px 0 0; color:#f5a623;">⏸ Paused — incoming logs are being dropped. <b>Send test log</b> still works; click <b>Resume receiving</b> to capture live logs again.</p>{% endif %}
 </div>
 
 <div class="filterbar" id="siem-filter" style="align-items:center;">

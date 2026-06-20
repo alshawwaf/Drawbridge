@@ -100,3 +100,16 @@ def test_store_batch_persists_and_trims(monkeypatch):
     n = siem.store_batch(db, [("1.1.1.1", "udp", f"<134>line {i}") for i in range(12)])
     assert n == 12  # all parsed + inserted in one transaction
     assert (db.scalar(select(func.count()).select_from(SiemLog)) or 0) == 5  # then trimmed to the cap
+
+
+def test_pause_drops_received_logs():
+    db = _session()
+    siem.set_paused(True)
+    try:
+        assert siem.is_paused() is True
+        assert siem.store_received(db, [("9.9.9.9", "udp", "<134>flood")]) == 0   # paused → dropped
+        assert (db.scalar(select(func.count()).select_from(SiemLog)) or 0) == 0
+    finally:
+        siem.set_paused(False)
+    assert siem.store_received(db, [("9.9.9.9", "udp", "<134>back")]) == 1        # resumed → stored
+    assert siem.is_paused() is False
