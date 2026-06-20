@@ -29,4 +29,21 @@
   </tbody>
 </table>
 </div>
+
+{% if pages > 1 %}
+<div class="pager" style="flex-wrap:wrap; padding-top:14px;">
+  <button type="button" class="secondary" data-page="1"{% if page <= 1 %} disabled{% endif %}>« First</button>
+  <button type="button" class="secondary" data-page="{{ page - 1 }}"{% if page <= 1 %} disabled{% endif %}>← Newer</button>
+  {% set lo = [1, page - 2] | max %}
+  {% set hi = [pages, page + 2] | min %}
+  {% if lo > 1 %}<button type="button" class="secondary" data-page="1">1</button>{% if lo > 2 %}<span class="muted">…</span>{% endif %}{% endif %}
+  {% for p in range(lo, hi + 1) %}
+  <button type="button" class="{{ '' if p == page else 'secondary' }}" data-page="{{ p }}"{% if p == page %} aria-current="page"{% endif %}>{{ p }}</button>
+  {% endfor %}
+  {% if hi < pages %}{% if hi < pages - 1 %}<span class="muted">…</span>{% endif %}<button type="button" class="secondary" data-page="{{ pages }}">{{ pages }}</button>{% endif %}
+  <button type="button" class="secondary" data-page="{{ page + 1 }}"{% if page >= pages %} disabled{% endif %}>Older →</button>
+  <button type="button" class="secondary" data-page="{{ pages }}"{% if page >= pages %} disabled{% endif %}>Last »</button>
+  <span class="muted" style="margin-left:6px;">Page {{ page }} of {{ pages }} · {{ matched }} matching</span>
+</div>
+{% endif %}
 {% endif %}
