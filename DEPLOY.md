@@ -27,19 +27,75 @@ no cert-trust step. (Caddy / `docker-compose.yml` are only for standalone local/
    ```
 8. **Deploy.** Sign in at your domain as the admin user above.
 
-## Extra ports (Nutanix 9440, SIEM receiver 5514)
+## Non-HTTP ports (SIEM 5514, Nutanix 9440) — read this before you fight it
 
-Two integrations don't ride the standard HTTPS-on-443 path and need their ports published explicitly
-on the Dokploy host (skip whichever you won't demo):
+Most of the portal rides Traefik on 443 and just works. **Two integrations don't**, and getting them
+working on a fresh Ubuntu/Dokploy host cost a full day of debugging once. This is the whole picture so
+it doesn't again. Skip whichever you won't demo.
 
-- **Nutanix — 9440 (HTTPS).** CloudGuard's Prism connector hardcodes port `9440`, so the portal must
-  answer there. Add a Traefik entrypoint for `9440` that routes to the app (same cert/app as 443), or
-  run a `socat 9440→443` passthrough on the host. See [docs/integrations/nutanix.md](docs/integrations/nutanix.md).
-- **SIEM receiver — 5514 (TCP *and* UDP).** Check Point's Log Exporter sends raw syslog/CEF/LEEF —
-  **not** HTTP — so it bypasses Traefik's HTTP routing. Set `DCSIM_SYSLOG_PORT=5514` and publish the
-  port straight to the app container: add a TCP **and** a UDP entrypoint for `5514`, or map the host
-  port directly. See [docs/integrations/siem.md](docs/integrations/siem.md). Set `DCSIM_SYSLOG_PORT=0`
-  to turn the listener off entirely.
+- **SIEM receiver — 5514 (TCP *and* UDP).** Log Exporter sends raw syslog/CEF/LEEF, **not** HTTP, so it
+  bypasses Traefik. Needs `DCSIM_SYSLOG_PORT=5514` *and* the port reaching the app container.
+- **Nutanix — 9440 (TCP).** CloudGuard's Prism connector hardcodes 9440; the portal must answer there.
+
+**Why "just publish the port" silently fails on Dokploy/Swarm** — three independent traps, each of
+which drops the traffic while *every local/loopback test still passes* (the tell: `tcpdump` on the host
+shows the packets arriving, but `/siem` or the Nutanix viewer stays empty):
+
+1. **Swarm ingress drops UDP.** Dokploy publishes via the Swarm routing mesh, which mangles UDP and
+   rewrites the source IP. A host-mode publish or a **host-network socat** is required for 5514.
+2. **The host firewall (`ufw`).** A default `-P INPUT DROP` blocks external packets that loopback never
+   hits (loopback has its own early `-i lo -j ACCEPT`). Worse, ufw can be in a **zombie state**:
+   `ufw status` lists your `allow` rules but `ufw reload` says *"Firewall not enabled"*, meaning they
+   were never loaded. Usual cause — a stray line (e.g. a leftover heredoc delimiter) after `COMMIT` in
+   `/etc/ufw/after.rules`, which makes `iptables-restore` fail. Remove it, then re-enable ufw.
+3. **A hardened `DOCKER-USER` lockdown.** Some hosts carry a deliberate `-A DOCKER-USER -i <iface> -j DROP`
+   (in `after.rules`, "force traffic through Traefik") that blocks *all* external→container traffic
+   except an allow-list — which **also defeats host-mode publish** for any port not on it. A
+   host-network socat sidesteps it: it receives on the host and forwards host→container, never the
+   guarded `iface→container` forward path the rule guards.
+
+### The recipe that works (even on a locked-down host)
+
+**1 — Open the ports and confirm ufw truly enforces:**
+```bash
+sudo ufw allow 5514/tcp && sudo ufw allow 5514/udp && sudo ufw allow 9440/tcp
+sudo ufw status verbose
+sudo ufw reload
+```
+If `reload` prints *"Firewall not enabled"* while `status` says active, the rules aren't live — fix
+`/etc/ufw/after.rules` (drop any stray non-iptables line after `COMMIT`), then `sudo ufw disable && sudo ufw enable`. `22/tcp` stays allowed, so SSH survives.
+
+**2 — SIEM 5514 → app**, via a host-network socat to the app's `docker_gwbridge` IP. That IP changes on
+every redeploy, so use the bundled helper, which re-resolves it each run:
+```bash
+sudo curl -fsSL https://raw.githubusercontent.com/alshawwaf/Datacenter-Integration-Simulator/main/tools/siem-host-socat.sh -o /usr/local/bin/siem-host-socat
+sudo chmod +x /usr/local/bin/siem-host-socat
+sudo siem-host-socat
+```
+(`tools/siem-host-socat.sh` is in this repo — `scp` it over if your remote differs.)
+
+**3 — Nutanix 9440 → Traefik 443**, a raw-TCP passthrough (TLS/SNI flow straight to Traefik's cert):
+```bash
+docker run -d --name dcsim-nutanix-9440 --restart unless-stopped --network host \
+  alpine/socat TCP-LISTEN:9440,fork,reuseaddr TCP:127.0.0.1:443
+```
+This targets `127.0.0.1:443` (stable across redeploys), so unlike the SIEM forwarder it survives.
+
+**4 — Open the same ports at the cloud / CloudShare edge.** Whatever publishes 443 to the internet must
+also pass 5514 (tcp+udp) and 9440 — add them to the security group / NSG / environment policy. 443
+works only because the edge forwards it; the others stay dropped until you add them.
+
+### After every redeploy
+A redeploy gives the app a new `docker_gwbridge` IP, so **re-point the SIEM forwarder** — one command:
+```bash
+sudo siem-host-socat
+```
+Then confirm `/siem` is receiving, and re-run the Nutanix import in SmartConsole. (The 9440 socat targets
+Traefik, so it doesn't need this.)
+
+> `DCSIM_SYSLOG_PORT=0` turns the SIEM listener off entirely. The **full diagnostic ladder** for
+> "packets reach the host but nothing shows up" — NIC → firewall → host socket → container — is in
+> [docs/integrations/siem.md](docs/integrations/siem.md#troubleshooting--packets-reach-the-host-but-nothing-shows-on-siem).
 
 ## Why each setting matters
 
