@@ -15,7 +15,12 @@ from ..services import siem
 from .ui import _flash, _pop_flash, templates
 
 router = APIRouter(include_in_schema=False)
-_PAGE = 60
+PAGE_SIZES = [10, 25, 50, 100]
+DEFAULT_PAGE_SIZE = 25
+
+
+def _clean_page_size(page_size: int) -> int:
+    return page_size if page_size in PAGE_SIZES else DEFAULT_PAGE_SIZE
 
 
 def _host() -> str:
@@ -32,21 +37,30 @@ def siem_page(request: Request, db: Session = Depends(get_db)):
     return templates.TemplateResponse(request, "siem.html", {
         "host": _host(), "port": s.syslog_port, "enabled": bool(s.syslog_port and s.syslog_port > 0),
         "total": db.scalar(select(func.count()).select_from(SiemLog)) or 0,
+        "page_sizes": PAGE_SIZES, "page_size": DEFAULT_PAGE_SIZE,
         "flash": _pop_flash(request)})
 
 
 @router.get("/siem/rows", response_class=HTMLResponse)
-def siem_rows(request: Request, fmt: str = "", db: Session = Depends(get_db)):
+def siem_rows(request: Request, fmt: str = "", page: int = 1,
+              page_size: int = DEFAULT_PAGE_SIZE, db: Session = Depends(get_db)):
     if get_user_or_none(request, db) is None:
         return HTMLResponse("", status_code=401)
-    q = select(SiemLog).order_by(SiemLog.at.desc()).limit(_PAGE)
+    ps = _clean_page_size(page_size)
+    base = select(SiemLog)
+    cnt = select(func.count()).select_from(SiemLog)
     if fmt in ("cef", "leef", "json", "syslog", "raw"):
-        q = q.where(SiemLog.fmt == fmt)
-    rows = db.scalars(q).all()
+        base = base.where(SiemLog.fmt == fmt)
+        cnt = cnt.where(SiemLog.fmt == fmt)
+    matched = db.scalar(cnt) or 0
+    pages = max(1, (matched + ps - 1) // ps)
+    page = min(max(1, page), pages)
+    rows = db.scalars(base.order_by(SiemLog.at.desc()).limit(ps).offset((page - 1) * ps)).all()
     counts = dict(db.execute(select(SiemLog.fmt, func.count()).group_by(SiemLog.fmt)).all())
     total = db.scalar(select(func.count()).select_from(SiemLog)) or 0
     return templates.TemplateResponse(request, "_siem_rows.html",
-                                      {"rows": rows, "total": total, "counts": counts})
+                                      {"rows": rows, "total": total, "counts": counts,
+                                       "page": page, "pages": pages, "matched": matched})
 
 
 @router.get("/siem/{log_id}", response_class=HTMLResponse)

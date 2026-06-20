@@ -38,10 +38,21 @@ cp_log_export restart name dcsim-siem</pre>
   </div>
 </div>
 
-<div class="filterbar" id="siem-filter">
+<div class="filterbar" id="siem-filter" style="align-items:center;">
   {% for key, label in [('', 'All'), ('cef', 'CEF'), ('leef', 'LEEF'), ('json', 'JSON'), ('syslog', 'Syslog')] %}
   <button class="chip {{ 'active' if key == '' else '' }}" type="button" data-fmt="{{ key }}">{{ label }}</button>
   {% endfor %}
+  <span class="grow"></span>
+  <label class="ctl">Show
+    <select id="siem-page-size">{% for n in page_sizes %}<option value="{{ n }}" {{ 'selected' if n == page_size else '' }}>{{ n }}</option>{% endfor %}</select>
+  </label>
+  <label class="ctl" title="Only the newest page auto-refreshes — page back to read older logs without rows shifting">Refresh
+    <select id="siem-refresh">
+      <option value="0">Off</option><option value="2000">2s</option><option value="3000" selected>3s</option>
+      <option value="5000">5s</option><option value="10000">10s</option>
+    </select>
+  </label>
+  <span class="livewrap"><span class="livedot on" id="siem-livedot"></span><span id="siem-livetext">Live</span></span>
 </div>
 
 <div class="card" style="padding:6px 18px 14px;"><div id="siem-rows"><p class="muted">Loading…</p></div></div>
@@ -58,20 +69,30 @@ cp_log_export restart name dcsim-siem</pre>
   (function () {
     var $ = function (id) { return document.getElementById(id); };
     var rowsEl = $('siem-rows'), modal = $('siem-modal'), body = $('siem-body'), bar = $('siem-filter');
-    var fmt = '', timer = null;
+    var psSel = $('siem-page-size'), refreshSel = $('siem-refresh');
+    var liveDot = $('siem-livedot'), liveText = $('siem-livetext');
+    var fmt = '', page = 1, timer = null;
     function setHTML(el, html) { el.replaceChildren(document.createRange().createContextualFragment(html)); }
     function load() {
-      fetch('/siem/rows?fmt=' + encodeURIComponent(fmt))
+      var p = new URLSearchParams();
+      p.set('fmt', fmt); p.set('page', page); p.set('page_size', psSel.value);
+      fetch('/siem/rows?' + p.toString())
         .then(function (r) { return r.ok ? r.text() : ''; })
         .then(function (html) { if (html) setHTML(rowsEl, html); })
         .catch(function () {});
     }
+    window.gotoPage = function (n) { page = Math.max(1, n); load(); window.scrollTo({ top: 0, behavior: 'smooth' }); };
+
     bar.addEventListener('click', function (e) {
       var chip = e.target.closest('.chip'); if (!chip) return;
       bar.querySelectorAll('.chip').forEach(function (c) { c.classList.remove('active'); });
-      chip.classList.add('active'); fmt = chip.getAttribute('data-fmt') || ''; load();
+      chip.classList.add('active'); fmt = chip.getAttribute('data-fmt') || ''; page = 1; load();
     });
+    psSel.addEventListener('change', function () { page = 1; load(); });
+
     rowsEl.addEventListener('click', function (e) {
+      var pg = e.target.closest ? e.target.closest('[data-page]') : null;
+      if (pg) { e.preventDefault(); window.gotoPage(parseInt(pg.getAttribute('data-page'), 10) || 1); return; }
       var row = e.target.closest('.siem-row'); if (!row) return;
       setHTML(body, '<p class="muted">Loading…</p>'); modal.hidden = false;
       fetch('/siem/' + row.getAttribute('data-id')).then(function (r) { return r.text(); })
@@ -92,8 +113,23 @@ cp_log_export restart name dcsim-siem</pre>
       });
     });
 
+    // Auto-refresh at the chosen rate, but only the newest page (page 1) — paging back to read
+    // older logs holds still instead of shifting as new logs stream in.
+    function setLive() {
+      var ms = parseInt(refreshSel.value, 10) || 0;
+      liveDot.className = 'livedot ' + (ms > 0 ? 'on' : 'off');
+      liveText.textContent = ms > 0 ? 'Live · ' + (ms / 1000) + 's' : 'Paused';
+    }
+    function applyRefresh() {
+      if (timer) { clearInterval(timer); timer = null; }
+      var ms = parseInt(refreshSel.value, 10) || 0;
+      if (ms > 0) timer = setInterval(function () { if (page === 1 && modal.hidden) load(); }, ms);
+      setLive();
+    }
+    refreshSel.addEventListener('change', applyRefresh);
+
     load();
-    timer = setInterval(function () { if (modal.hidden) load(); }, 3000);
+    applyRefresh();
   })();
 </script>
 {% endblock %}
