@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block title %}Automation coverage{% endblock %}
+{% block main_class %}wide{% endblock %}
+{% block content %}
+<style>
+  table.cov { table-layout:fixed; width:100%; border-collapse:collapse; margin:6px 0 4px; }
+  table.cov th, table.cov td { padding:6px 9px; text-align:left; vertical-align:top; border-bottom:1px solid var(--line);
+    font-size:12px; word-break:break-word; }
+  table.cov th { font-size:10.5px; letter-spacing:.4px; text-transform:uppercase; color:var(--subtle-fg); }
+  table.cov col.c-name { width:16%; } table.cov col.c-tool { width:19%; } table.cov col.c-port { width:7%; } table.cov col.c-note { width:20%; }
+  .cov code { font-size:11px; }
+  .cov .yes { color:var(--ok-fg, #1a7f37); }
+  .cov .no  { color:var(--bad-fg, #c4314b); font-weight:600; }
+  .cov td.yescell { background:color-mix(in srgb, var(--ok-fg, #1a7f37) 9%, transparent); }
+  .cov td.nocell  { background:color-mix(in srgb, var(--bad-fg, #c4314b) 11%, transparent); }
+  .cov td.note { color:var(--faint); font-size:11px; }
+  .covgroup { margin:18px 0 4px; font-weight:700; }
+  .covgroup .cnt { font-weight:500; color:var(--faint); font-size:12px; margin-left:6px; }
+  .leg { display:flex; gap:16px; flex-wrap:wrap; align-items:center; font-size:12.5px; margin:8px 0 4px; }
+  .leg span { display:inline-flex; align-items:center; gap:6px; }
+  .swatch { width:13px; height:13px; border-radius:3px; display:inline-block; }
+</style>
+
+<h1>Automation coverage <span class="pill">API · Terraform · Ansible</span></h1>
+<p class="muted">For each Check Point object/command: is it supported by the <b>web_api</b>, the <b>Terraform</b> provider
+(<code>CheckPointSW/checkpoint</code>), and the <b>Ansible</b> collection (<code>check_point.mgmt</code> / <code>check_point.gaia</code>) —
+and does this <b>portal</b> export it. Red = no equivalent in that tool; that's a gap. Field-level gaps are listed under each matrix.</p>
+<div class="leg">
+  <span><span class="swatch" style="background:color-mix(in srgb, var(--ok-fg,#1a7f37) 22%, transparent);"></span> supported</span>
+  <span><span class="swatch" style="background:color-mix(in srgb, var(--bad-fg,#c4314b) 22%, transparent);"></span> missing in that tool</span>
+  <span><b class="yes">✓</b> exported by this portal</span>
+</div>
+
+{% macro cell(v) %}
+  {% if v %}<td class="yescell"><code class="yes">{{ v }}</code></td>{% else %}<td class="nocell"><span class="no">—</span></td>{% endif %}
+{% endmacro %}
+
+{% macro matrix(groups) %}
+  {% for g in groups %}
+  <div class="covgroup">{{ g.title }}<span class="cnt">· {{ g.covered }}/{{ g.total }} exported by portal</span></div>
+  <table class="cov">
+    <colgroup><col class="c-name"><col class="c-tool"><col class="c-tool"><col class="c-tool"><col class="c-port"><col class="c-note"></colgroup>
+    <thead><tr><th>Object / command</th><th>web_api</th><th>Terraform</th><th>Ansible</th><th>Portal</th><th>Notes</th></tr></thead>
+    <tbody>
+    {% for r in g.rows %}
+      <tr>
+        <td><b>{{ r.name }}</b></td>
+        {{ cell(r.api) }}{{ cell(r.tf) }}{{ cell(r.ans) }}
+        {% if r.exported %}<td class="yescell" style="text-align:center;"><b class="yes">✓</b></td>{% else %}<td style="text-align:center;"><span class="faint">—</span></td>{% endif %}
+        <td class="note">{{ r.note }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endfor %}
+{% endmacro %}
+
+{% macro gaps(items) %}
+  <div class="card" style="margin-top:10px; padding:12px 16px;">
+    <b style="font-size:13px;">Field-level gaps</b>
+    <ul class="muted" style="margin:8px 0 0; padding-left:18px; font-size:12.5px; line-height:1.55;">
+      {% for x in items %}<li>{{ x }}</li>{% endfor %}
+    </ul>
+  </div>
+{% endmacro %}
+
+<h2 style="margin-top:26px;">Management API</h2>
+<p class="muted" style="margin-top:0;">Policy &amp; objects (<code>web_api</code>). Terraform v3.2.0 ≈ 248 <code>checkpoint_management_*</code> resources; Ansible <code>check_point.mgmt</code> ≈ 274 modules.</p>
+{{ matrix(mgmt) }}
+{{ gaps(mgmt_field_gaps) }}
+
+<h2 style="margin-top:30px;">Gaia OS API</h2>
+<p class="muted" style="margin-top:0;">Appliance OS config (<code>gaia_api</code>). Terraform (<code>context = "gaia_api"</code>) ≈ 119 <code>checkpoint_gaia_*</code> resources; Ansible <code>check_point.gaia</code> ≈ 53 config modules. Terraform is the broadest Gaia target — Ansible's main hole is dynamic routing.</p>
+{{ matrix(gaia) }}
+{{ gaps(gaia_field_gaps) }}
+{% endblock %}
