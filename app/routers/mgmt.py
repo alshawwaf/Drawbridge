@@ -111,6 +111,64 @@ def mgmt_test(sid: int, request: Request, password: str = Form(""), db: Session 
     return JSONResponse(mgmt_api.test_connection(ms, secret))
 
 
+def _secret_or_error(db: Session, ms: ManagementServer):
+    """Resolve the stored secret for a live pull, or a JSONResponse error if it can't run."""
+    if not ms.username:
+        return None, JSONResponse({"error": "This server has no username — set one on Edit."}, status_code=400)
+    secret = mgmt_creds.get_secret(db, ms)
+    if not secret:
+        return None, JSONResponse({"error": "No saved credential — store one on the Edit page to browse "
+                                  "policy."}, status_code=400)
+    ensure_pinned(db, ms)   # trust-on-first-use before the TLS handshake
+    return secret, None
+
+
+@router.get("/management/{sid}/layers")
+def mgmt_layers(sid: int, request: Request, db: Session = Depends(get_db)):
+    """JSON: the access layers on this server/domain (live)."""
+    user = get_user_or_none(request, db)
+    if user is None:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    ms = _owned(db, sid, user)
+    secret, err = _secret_or_error(db, ms)
+    if err:
+        return err
+    try:
+        return JSONResponse(mgmt_api.pull_layers(ms, secret))
+    except mgmt_api.MgmtError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+
+
+@router.get("/management/{sid}/rulebase")
+def mgmt_rulebase(sid: int, request: Request, name: str = "", db: Session = Depends(get_db)):
+    """JSON: a layer's access rulebase, cells resolved to object names."""
+    user = get_user_or_none(request, db)
+    if user is None:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    if not name:
+        return JSONResponse({"error": "No layer specified."}, status_code=400)
+    ms = _owned(db, sid, user)
+    secret, err = _secret_or_error(db, ms)
+    if err:
+        return err
+    try:
+        return JSONResponse(mgmt_api.pull_rulebase(ms, secret, name))
+    except mgmt_api.MgmtError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+
+
+@router.get("/management/{sid}", response_class=HTMLResponse)
+def mgmt_detail(sid: int, request: Request, db: Session = Depends(get_db)):
+    """Policy viewer: pick a layer (loaded live) and render its rulebase + resolved objects."""
+    user = get_user_or_none(request, db)
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+    ms = _owned(db, sid, user)
+    return templates.TemplateResponse(request, "management_detail.html",
+                                      {"ms": ms, "has_secret": mgmt_creds.has_secret(db, ms),
+                                       "flash": _pop_flash(request)})
+
+
 @router.get("/management/{sid}/edit", response_class=HTMLResponse)
 def mgmt_edit(sid: int, request: Request, db: Session = Depends(get_db)):
     user = get_user_or_none(request, db)

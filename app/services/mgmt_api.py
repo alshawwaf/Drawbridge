@@ -167,6 +167,95 @@ def _login_error(resp) -> str:
     return f"Management login failed (HTTP {resp.status_code})." + (f" {msg}" if msg else "")
 
 
+# --- rulebase pull + structuring (the read-only viewer) -------------------------------------
+
+def _obj_names(cell, objdict: dict) -> list[str]:
+    """Resolve a rule cell (list of object UIDs, or inline object dicts) to display names."""
+    out: list[str] = []
+    for it in cell or []:
+        if isinstance(it, str):
+            out.append((objdict.get(it) or {}).get("name") or it)
+        elif isinstance(it, dict):
+            out.append(it.get("name") or (objdict.get(it.get("uid")) or {}).get("name") or it.get("uid", ""))
+    return out
+
+
+def _one_name(val, objdict: dict) -> str:
+    """Resolve a single-valued cell (action / track type) to a display name."""
+    if isinstance(val, str):
+        return (objdict.get(val) or {}).get("name") or val
+    if isinstance(val, dict):
+        return val.get("name") or (objdict.get(val.get("uid")) or {}).get("name") or val.get("uid", "")
+    return ""
+
+
+def _structure_rule(rule: dict, objdict: dict) -> dict:
+    return {
+        "kind": "rule",
+        "number": rule.get("rule-number"),
+        "name": rule.get("name", ""),
+        "enabled": rule.get("enabled", True),
+        "source": _obj_names(rule.get("source"), objdict),
+        "source_negate": bool(rule.get("source-negate")),
+        "destination": _obj_names(rule.get("destination"), objdict),
+        "destination_negate": bool(rule.get("destination-negate")),
+        "vpn": _obj_names(rule.get("vpn"), objdict),
+        "service": _obj_names(rule.get("service"), objdict),
+        "service_negate": bool(rule.get("service-negate")),
+        "action": _one_name(rule.get("action"), objdict),
+        "track": _one_name((rule.get("track") or {}).get("type"), objdict),
+        "install_on": _obj_names(rule.get("install-on"), objdict),
+        "comments": rule.get("comments", ""),
+    }
+
+
+def _structure_rulebase(items: list[dict], objdict: dict) -> list[dict]:
+    """Flatten the rulebase into rows the UI renders: section headers + rules (cells resolved to
+    names). Unknown item types pass through flagged, mirroring CP's tool — never break on a new type."""
+    out: list[dict] = []
+    for it in items or []:
+        t = it.get("type")
+        if t == "access-section":
+            out.append({"kind": "section", "name": it.get("name", "")})
+            out.extend(_structure_rule(r, objdict) for r in (it.get("rulebase") or []))
+        elif t == "access-rule":
+            out.append(_structure_rule(it, objdict))
+        else:
+            out.append({"kind": "other", "type": t or "unknown", "name": it.get("name", "")})
+    return out
+
+
+def pull_layers(server, secret: str) -> dict:
+    with MgmtSession(server, secret) as s:
+        layers = s.list_access_layers()
+        return {"layers": [{"name": l.get("name"), "uid": l.get("uid")} for l in layers], "trace": s.trace}
+
+
+def pull_rulebase(server, secret: str, layer: str, max_rules: int = 5000) -> dict:
+    """Pull a layer's access rulebase with its object dictionary, paginating, and resolve every cell
+    to names. Returns {layer, rows, total, shown, trace}."""
+    with MgmtSession(server, secret) as s:
+        items: list[dict] = []
+        objdict: dict = {}
+        total, offset = 0, 0
+        while offset < max_rules:
+            page = s.call("show-access-rulebase",
+                          {"name": layer, "limit": 100, "offset": offset, "use-object-dictionary": True})
+            for o in page.get("objects-dictionary", []):
+                if o.get("uid"):
+                    objdict[o["uid"]] = o
+            batch = page.get("rulebase", [])
+            items.extend(batch)
+            total = page.get("total", total)
+            to = page.get("to", 0)
+            if not batch or to >= total or to <= offset:
+                break
+            offset = to
+        rows = _structure_rulebase(items, objdict)
+        shown = sum(1 for r in rows if r["kind"] == "rule")
+        return {"layer": layer, "rows": rows, "total": total, "shown": shown, "trace": s.trace}
+
+
 def test_connection(server, secret: str) -> dict:
     """Login, read the API version + domains, log out. Returns {ok, version, domains, layers, trace}."""
     out: dict = {"ok": False, "version": "", "domains": [], "layers": 0, "trace": [], "message": ""}
