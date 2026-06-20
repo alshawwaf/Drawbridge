@@ -19,8 +19,8 @@
   <tbody>
   {% for r in rows %}
     <tr>
-      <td><a class="feedname" href="/management/{{ r.ms.id }}">{{ r.ms.name }}</a></td>
-      <td class="nowrap"><code>{{ r.ms.host }}:{{ r.ms.port }}</code></td>
+      <td><a class="feedname cellclip" href="/management/{{ r.ms.id }}" title="{{ r.ms.name }}">{{ r.ms.name }}</a></td>
+      <td><code class="cellclip" title="{{ r.ms.host }}:{{ r.ms.port }}">{{ r.ms.host }}:{{ r.ms.port }}</code></td>
       <td class="nowrap">{{ r.ms.domain or '—' }}</td>
       <td class="nowrap">{{ r.ms.username or '—' }}</td>
       <td class="nowrap">{% if r.ms.cert_pem %}<span class="pill ok">pinned cert</span>{% elif r.ms.auto_trust %}<span class="pill">auto-trust</span>{% else %}<span class="pill faint">system trust</span>{% endif %}</td>
