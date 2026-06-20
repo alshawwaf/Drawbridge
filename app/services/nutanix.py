@@ -119,12 +119,31 @@ def category_query_v3(dc, body: dict | None = None) -> dict:
 
 # --- Prism v4 (GET APIs) --------------------------------------------------------------------
 
-def _v4_envelope(data: list[dict]) -> dict:
-    return {"data": data, "metadata": {"totalAvailableResults": len(data), "hasMorePages": False,
-                                       "flags": [], "links": []}}
+def page_limit(query) -> tuple[int, int]:
+    """Parse Nutanix v4 pagination params: 0-based ``$page`` and ``$limit`` (default 50, max 100)."""
+    def _int(v, default):
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            return default
+    page = max(0, _int(query.get("$page"), 0))
+    limit = max(1, min(_int(query.get("$limit"), 50), 100))
+    return page, limit
 
 
-def vms_list_v4(dc) -> dict:
+def _v4_envelope(data: list[dict], page: int = 0, limit: int = 50) -> dict:
+    """v4 list envelope **with real pagination**: slice to the requested page and report
+    ``hasMorePages`` honestly. Returning the full list on every page (ignoring ``$page``/``$limit``)
+    makes CloudGuard's scanner loop forever — the bug behind an object viewer stuck on "Loading…",
+    because it keeps re-fetching categories and never advances to the VMs."""
+    total = len(data)
+    start = page * limit
+    window = data[start:start + limit]
+    return {"data": window, "metadata": {"totalAvailableResults": total,
+                                         "hasMorePages": start + limit < total, "flags": [], "links": []}}
+
+
+def vms_list_v4(dc, page: int = 0, limit: int = 50) -> dict:
     """``GET /api/vmm/v4.1/ahv/config/vms`` — v4 VMs (IPs in ``nics[].networkInfo.ipv4Info
     .learnedIpAddresses[]``, categories by extId reference)."""
     data = []
@@ -137,14 +156,14 @@ def vms_list_v4(dc) -> dict:
                      "description": vm.get("description", ""), "powerState": "ON", "nics": [nic],
                      "categories": [{"extId": _uid("cat", k, v)}
                                     for k, v in _vm_categories(vm).items()]})
-    return _v4_envelope(data)
+    return _v4_envelope(data, page, limit)
 
 
-def categories_list_v4(dc) -> dict:
+def categories_list_v4(dc, page: int = 0, limit: int = 50) -> dict:
     """``GET /api/prism/v4.1/config/categories`` — v4 categories as flat key/value pairs."""
     data = [{"extId": _uid("cat", k, v), "key": k, "value": v, "description": "", "type": "USER"}
             for k, vals in categories(dc).items() for v in vals]
-    return _v4_envelope(data)
+    return _v4_envelope(data, page, limit)
 
 
 # --- auth (HTTP Basic) ----------------------------------------------------------------------

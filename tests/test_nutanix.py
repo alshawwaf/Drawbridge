@@ -70,6 +70,34 @@ def test_v4_envelope_has_metadata():
     assert m["totalAvailableResults"] == 3 and m["hasMorePages"] is False
 
 
+def test_v4_pagination_terminates():
+    """The bug behind the stuck object viewer: ignoring $page/$limit returned the full list on every
+    page, so the scanner looped forever. Paging must slice and reach a short/empty final page."""
+    p0 = nutanix.categories_list_v4(DC, page=0, limit=2)          # 3 categories total
+    assert len(p0["data"]) == 2 and p0["metadata"]["hasMorePages"] is True
+    assert p0["metadata"]["totalAvailableResults"] == 3
+    p1 = nutanix.categories_list_v4(DC, page=1, limit=2)
+    assert len(p1["data"]) == 1 and p1["metadata"]["hasMorePages"] is False     # last page → stops
+    p2 = nutanix.categories_list_v4(DC, page=2, limit=2)
+    assert p2["data"] == [] and p2["metadata"]["hasMorePages"] is False         # past the end → empty
+    ids = [c["extId"] for c in p0["data"] + p1["data"]]                         # no repeats across pages
+    assert len(ids) == len(set(ids)) == 3
+
+
+def test_v4_limit_one_probe_slices():
+    """The ?$limit=1 test-connection probe must return exactly one VM, not the whole inventory."""
+    one = nutanix.vms_list_v4(DC, *nutanix.page_limit({"$limit": "1"}))
+    assert len(one["data"]) == 1 and one["metadata"]["totalAvailableResults"] == 3
+    assert one["metadata"]["hasMorePages"] is True
+
+
+def test_page_limit_parsing():
+    assert nutanix.page_limit({"$page": "2", "$limit": "10"}) == (2, 10)
+    assert nutanix.page_limit({}) == (0, 50)                          # defaults
+    assert nutanix.page_limit({"$limit": "9999"}) == (0, 100)         # capped at 100
+    assert nutanix.page_limit({"$page": "-3", "$limit": "x"}) == (0, 50)   # clamped / non-numeric
+
+
 def test_basic_auth():
     secured = _DC({"auth": {"username": "admin", "password_hash": hash_password("nutanix/4u")},
                    "vms": []})
