@@ -72,7 +72,11 @@ EXPORT_BUNDLE = {
     "rules": [
         {"kind": "section", "name": "Web"},
         {"kind": "rule", "number": 1, "name": "Allow web", "enabled": True,
-         "source": ["web-grp"], "destination": ["web-srv"], "service": ["tcp-8443"], "vpn": [],
+         "source": ["web-grp"], "destination": ["web-srv"], "service": ["tcp-8443"],
+         "vpn": ["MyMesh"], "content": ["Credit Card Numbers"], "content_direction": "any",
+         "time": ["WorkHours"], "install_on": ["gw1"], "custom_fields": {"field-1": "ticket-123"},
+         "track_full": {"type": "Log", "accounting": True, "per_connection": False,
+                        "per_session": False, "enable_firewall_session": False, "alert": ""},
          "action": "Accept", "track": "Log", "comments": "ok",
          "source_negate": False, "destination_negate": False, "service_negate": False},
         {"kind": "rule", "number": 2, "name": "Cleanup", "enabled": False,
@@ -111,6 +115,27 @@ def test_export_terraform_carries_all_supported_fields():
     assert "nat_settings {" in tf and "auto_rule = true" in tf and 'method = "static"' in tf
     assert "aggressive_aging {" in tf and "timeout = 600" in tf and "use_default_timeout = false" in tf
     assert "match_for_any = false" in tf                # a bool that is False is still emitted
+
+
+def test_export_rule_carries_all_columns():
+    """A faithful rulebase backup must carry content / time / install-on / custom-fields / full track
+    / vpn across all three targets."""
+    art = mgmt_export.generate(EXPORT_BUNDLE)
+    tf, ans, cli = art["terraform"], art["ansible"], art["mgmt_cli"]
+    # Terraform
+    assert 'vpn_communities = ["MyMesh"]' in tf            # TF models a community list as vpn_communities
+    assert 'content = ["Credit Card Numbers"]' in tf and 'content_direction = "any"' in tf
+    assert 'time = ["WorkHours"]' in tf and 'install_on = ["gw1"]' in tf
+    assert "custom_fields {" in tf and 'field_1 = "ticket-123"' in tf
+    assert "accounting = true" in tf                       # full track settings, not just type
+    # Ansible
+    assert 'vpn: ["MyMesh"]' in ans and 'content: ["Credit Card Numbers"]' in ans
+    assert 'time: ["WorkHours"]' in ans and "accounting: true" in ans
+    assert "custom_fields:" in ans and 'field_1: "ticket-123"' in ans
+    # mgmt_cli
+    assert 'content.1 "Credit Card Numbers"' in cli and 'vpn.1 "MyMesh"' in cli
+    assert 'time.1 "WorkHours"' in cli and 'install-on.1 "gw1"' in cli
+    assert 'custom-fields.field-1 "ticket-123"' in cli and "track-settings.accounting true" in cli
 
 
 def test_export_predefined_objects_are_referenced_not_emitted():

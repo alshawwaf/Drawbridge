@@ -190,6 +190,32 @@ def _one_name(val, objdict: dict) -> str:
     return ""
 
 
+def _track_full(track, objdict: dict) -> dict:
+    """The full Track Settings object (type + the booleans), for a faithful rulebase export."""
+    t = track or {}
+    return {
+        "type": _one_name(t.get("type"), objdict),
+        "accounting": bool(t.get("accounting")),
+        "alert": t.get("alert") if isinstance(t.get("alert"), str) and t.get("alert") != "none" else "",
+        "per_connection": bool(t.get("per-connection")),
+        "per_session": bool(t.get("per-session")),
+        "enable_firewall_session": bool(t.get("enable-firewall-session")),
+    }
+
+
+def _action_settings(val, objdict: dict) -> dict:
+    a = val or {}
+    return {"limit": _one_name(a.get("limit"), objdict) if a.get("limit") else "",
+            "enable_identity_captive_portal": bool(a.get("enable-identity-captive-portal"))}
+
+
+def _user_check(val, objdict: dict) -> dict:
+    u = val or {}
+    out = {"confirm": u.get("confirm", ""), "frequency": u.get("frequency", ""),
+           "interaction": _one_name(u.get("interaction"), objdict) if u.get("interaction") else ""}
+    return {k: v for k, v in out.items() if v}
+
+
 def _structure_rule(rule: dict, objdict: dict) -> dict:
     return {
         "kind": "rule",
@@ -204,9 +230,18 @@ def _structure_rule(rule: dict, objdict: dict) -> dict:
         "vpn": _obj_names(rule.get("vpn"), objdict),
         "service": _obj_names(rule.get("service"), objdict),
         "service_negate": bool(rule.get("service-negate")),
+        "content": _obj_names(rule.get("content"), objdict),
+        "content_negate": bool(rule.get("content-negate")),
+        "content_direction": rule.get("content-direction", ""),
         "action": _one_name(rule.get("action"), objdict),
-        "track": _one_name((rule.get("track") or {}).get("type"), objdict),
+        "action_settings": _action_settings(rule.get("action-settings"), objdict),
+        "inline_layer": _one_name(rule.get("inline-layer"), objdict) if rule.get("inline-layer") else "",
+        "track": _one_name((rule.get("track") or {}).get("type"), objdict),   # type only (viewer)
+        "track_full": _track_full(rule.get("track"), objdict),                # full settings (export)
+        "time": _obj_names(rule.get("time"), objdict),
         "install_on": _obj_names(rule.get("install-on"), objdict),
+        "custom_fields": rule.get("custom-fields") or {},
+        "user_check": _user_check(rule.get("user-check"), objdict),
         "comments": rule.get("comments", ""),
     }
 
