@@ -14,7 +14,7 @@ from ..links import public_url
 from ..models import Feed, FeedPoll, FeedType, User
 from ..security import get_user_or_none, new_feed_token, verify_password
 from ..schemas.ioc import IOC_FORMATS, IOC_LEVELS, IOC_TYPES
-from ..services import bundle
+from ..services import bundle, coverage
 from ..services.render import (
     custom_csv_command,
     normalize_generic_dc_content,
@@ -31,6 +31,14 @@ templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 # How many recent polls the feed page shows inline; the full history lives in the Activity log.
 POLL_PREVIEW = 6
+
+
+@router.get("/coverage", response_class=HTMLResponse)
+def coverage_page(request: Request, db: Session = Depends(get_db)):
+    """API vs Terraform vs Ansible coverage comparison (Management + Gaia) — the export gaps at a glance."""
+    if get_user_or_none(request, db) is None:
+        return RedirectResponse("/login", status_code=303)
+    return templates.TemplateResponse(request, "coverage.html", coverage.build())
 
 # --- Generic Data Center default (the canonical sk167210 sample) -----------------------
 DEFAULT_FEED_NAME = "Generic-DC-Example"
