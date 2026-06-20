@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% block title %}Management Servers{% endblock %}
+{% block content %}
+<div class="row">
+  <div class="grow">
+    <h1>Management Servers</h1>
+    <p class="muted">Connect to a Check Point Management Server (or MDS domain) over the <code>web_api</code> to pull, view, edit and export policy — for admins who manage specific layers without SmartConsole. Secrets are stored AES-256-encrypted; TLS verification stays on.</p>
+  </div>
+  <a class="btn" href="/management/new">+ New management server</a>
+</div>
+
+{% if not rows %}
+<div class="card"><p class="muted">No management servers yet. Add one to pull a layer's rulebase and objects, then view/edit or export them as Terraform/Ansible.</p></div>
+{% else %}
+<div class="card" style="padding:6px 6px 2px;">
+<div class="tablewrap">
+<table data-paginate="10">
+  <thead><tr><th>Name</th><th class="nowrap">Address</th><th class="nowrap">Domain</th><th class="nowrap">Username</th><th class="nowrap">TLS</th><th class="nowrap">Secret</th><th></th></tr></thead>
+  <tbody>
+  {% for r in rows %}
+    <tr>
+      <td><a class="feedname" href="/management/{{ r.ms.id }}/edit">{{ r.ms.name }}</a></td>
+      <td class="nowrap"><code>{{ r.ms.host }}:{{ r.ms.port }}</code></td>
+      <td class="nowrap">{{ r.ms.domain or '—' }}</td>
+      <td class="nowrap">{{ r.ms.username or '—' }}</td>
+      <td class="nowrap">{% if r.ms.cert_pem %}<span class="pill ok">pinned cert</span>{% elif r.ms.auto_trust %}<span class="pill">auto-trust</span>{% else %}<span class="pill faint">system trust</span>{% endif %}</td>
+      <td class="nowrap">{% if r.has_secret %}<span class="pill ok">saved</span>{% else %}<span class="pill faint">none</span>{% endif %}</td>
+      <td class="nowrap" style="text-align:right;">
+        <button class="copybtn" type="button" data-test="/management/{{ r.ms.id }}/test" data-name="{{ r.ms.name }}">Test</button>
+        <a class="copybtn" href="/management/{{ r.ms.id }}/edit" style="margin-left:6px;">Edit</a>
+        <form method="post" action="/management/{{ r.ms.id }}/delete" style="display:inline;">
+          <button class="copybtn cb-danger" type="submit" style="margin-left:6px;" data-confirm="Delete “{{ r.ms.name }}”? This removes the saved connection + secret.">Delete</button>
+        </form>
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+</div>
+{% endif %}
+
+<div class="modal-overlay" id="test-modal" hidden>
+  <div class="modal">
+    <div class="row" style="align-items:center;"><h3 class="grow" style="margin:0;" id="test-title">Test connection</h3>
+      <button type="button" class="copybtn" id="test-close">Close</button></div>
+    <div id="test-body" style="margin-top:14px;">Testing…</div>
+  </div>
+</div>
+
+<script>
+  (function () {
+    var modal = document.getElementById('test-modal');
+    var body = document.getElementById('test-body');
+    var title = document.getElementById('test-title');
+    if (!modal) return;
+    function close() { modal.hidden = true; }
+    document.getElementById('test-close').addEventListener('click', close);
+    modal.addEventListener('click', function (e) { if (e.target === modal) close(); });
+    document.addEventListener('keydown', function (e) { if (e.key === 'Escape') close(); });
+
+    document.querySelectorAll('[data-test]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        title.textContent = 'Test connection — ' + (btn.getAttribute('data-name') || '');
+        body.innerHTML = '<p class="muted">Connecting over web_api…</p>';
+        modal.hidden = false;
+        fetch(btn.getAttribute('data-test'), { method: 'POST' })
+          .then(function (r) { return r.json(); })
+          .then(function (j) {
+            if (j.ok) {
+              var domains = (j.domains && j.domains.length) ? j.domains.join(', ') : '—';
+              body.innerHTML =
+                '<div class="ok" style="margin-bottom:10px;">✓ Connected.</div>' +
+                '<table class="acttable"><tbody>' +
+                '<tr><td><b>API version</b></td><td><code>' + (j.version || '—') + '</code></td></tr>' +
+                '<tr><td><b>Access layers</b></td><td>' + (j.layers || 0) + '</td></tr>' +
+                '<tr><td><b>Domains</b></td><td>' + domains + '</td></tr>' +
+                '</tbody></table>';
+            } else {
+              body.innerHTML = '<div class="err">' + (j.message || j.error || 'Connection failed.') + '</div>';
+            }
+          })
+          .catch(function () { body.innerHTML = '<div class="err">Request failed.</div>'; });
+      });
+    });
+  })();
+</script>
+{% endblock %}

@@ -244,6 +244,46 @@ class AppState(Base):
     value: Mapped[str] = mapped_column(String(255), default="")
 
 
+class ManagementServer(Base):
+    """A saved Check Point Management Server (or MDS domain/CMA) connection the portal drives over the
+    `web_api`: pull layers/objects, view/edit them, export to IaC. Login password / API key is stored
+    AES-256-GCM-encrypted in `ManagementSecret`; an optional pinned cert (or trust-on-first-use) keeps
+    TLS verification on. Holds a *real* customer policy once pulled — treat the instance as sensitive."""
+
+    __tablename__ = "management_servers"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(200))
+    host: Mapped[str] = mapped_column(String(200))
+    port: Mapped[int] = mapped_column(Integer, default=443)
+    username: Mapped[str] = mapped_column(String(120), default="")
+    domain: Mapped[str] = mapped_column(String(200), default="")   # MDS/CMA domain; blank = single SMS
+    cert_pem: Mapped[str] = mapped_column(Text, default="")
+    auto_trust: Mapped[bool] = mapped_column(Boolean, default=True)
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    secret: Mapped["ManagementSecret"] = relationship(
+        back_populates="server", cascade="all, delete-orphan", uselist=False)
+
+
+class ManagementSecret(Base):
+    """The Management Server login password or API key, encrypted at rest (AES-256-GCM), in its own
+    table so it's never loaded or serialized with the server profile unless a call needs it."""
+
+    __tablename__ = "management_secrets"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    server_id: Mapped[int] = mapped_column(ForeignKey("management_servers.id"), unique=True, index=True)
+    kind: Mapped[str] = mapped_column(String(16), default="password")   # password | api_key
+    ciphertext: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    server: Mapped["ManagementServer"] = relationship(back_populates="secret")
+
+
 class Datacenter(Base):
     """A mock cloud/datacenter that Check Point connects to (e.g. OpenStack). `content` holds
     the simulated inventory the provider API serves (instances, subnets, security groups)."""
