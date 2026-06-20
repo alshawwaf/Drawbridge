@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from ..db import get_db
 from ..models import ManagementServer, User
 from ..security import get_user_or_none
-from ..services import mgmt_api, mgmt_creds
+from ..services import mgmt_api, mgmt_creds, mgmt_export
 from ..services.gaia_client import ensure_pinned, fetch_gateway_cert
 from .ui import _flash, _pop_flash, templates
 
@@ -155,6 +155,38 @@ def mgmt_rulebase(sid: int, request: Request, name: str = "", db: Session = Depe
         return JSONResponse(mgmt_api.pull_rulebase(ms, secret, name))
     except mgmt_api.MgmtError as exc:
         return JSONResponse({"error": str(exc)}, status_code=400)
+
+
+@router.get("/management/{sid}/export", response_class=HTMLResponse)
+def mgmt_export_page(sid: int, request: Request, layer: str = "", db: Session = Depends(get_db)):
+    """Export page: pick a layer, generate Terraform / Ansible / mgmt_cli, preview + download."""
+    user = get_user_or_none(request, db)
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+    ms = _owned(db, sid, user)
+    return templates.TemplateResponse(request, "management_export.html",
+                                      {"ms": ms, "layer": layer,
+                                       "has_secret": mgmt_creds.has_secret(db, ms),
+                                       "flash": _pop_flash(request)})
+
+
+@router.post("/management/{sid}/export")
+def mgmt_export_run(sid: int, request: Request, name: str = "", db: Session = Depends(get_db)):
+    """JSON: pull a layer's rulebase + objects and render all three IaC targets."""
+    user = get_user_or_none(request, db)
+    if user is None:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    if not name:
+        return JSONResponse({"error": "No layer specified."}, status_code=400)
+    ms = _owned(db, sid, user)
+    secret, err = _secret_or_error(db, ms)
+    if err:
+        return err
+    try:
+        bundle = mgmt_api.pull_for_export(ms, secret, name)
+    except mgmt_api.MgmtError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    return JSONResponse(mgmt_export.generate(bundle))
 
 
 @router.get("/management/{sid}", response_class=HTMLResponse)

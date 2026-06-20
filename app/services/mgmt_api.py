@@ -256,6 +256,59 @@ def pull_rulebase(server, secret: str, layer: str, max_rules: int = 5000) -> dic
         return {"layer": layer, "rows": rows, "total": total, "shown": shown, "trace": s.trace}
 
 
+def _collect_export_objects(objdict: dict) -> dict:
+    """Group the referenced objects by type for export, skipping predefined ones and recursing into
+    group members (which arrive as full nested objects at details-level full). Keyed by CP type."""
+    from . import mgmt_export   # local import avoids a cycle (mgmt_export has no api dependency)
+
+    by_type: dict[str, list] = {}
+    seen: set[str] = set()
+
+    def add(o: dict) -> None:
+        uid = o.get("uid")
+        if not uid or uid in seen:
+            return
+        seen.add(uid)
+        for m in o.get("members") or []:          # pull nested group/service-group members up too
+            if isinstance(m, dict):
+                add(m)
+            elif isinstance(m, str) and m in objdict:
+                add(objdict[m])
+        if mgmt_export.is_predefined(o):
+            return
+        by_type.setdefault(o.get("type") or "unknown", []).append(o)
+
+    for o in list(objdict.values()):
+        add(o)
+    return by_type
+
+
+def pull_for_export(server, secret: str, layer: str, max_rules: int = 5000) -> dict:
+    """Pull a layer's rulebase with FULL object details, returning the structured rows plus the
+    referenced objects grouped by type. Feeds ``mgmt_export.generate`` — no rendering here."""
+    with MgmtSession(server, secret) as s:
+        items: list[dict] = []
+        objdict: dict = {}
+        total, offset = 0, 0
+        while offset < max_rules:
+            page = s.call("show-access-rulebase",
+                          {"name": layer, "limit": 100, "offset": offset,
+                           "use-object-dictionary": True, "details-level": "full"})
+            for o in page.get("objects-dictionary", []):
+                if o.get("uid"):
+                    objdict[o["uid"]] = o
+            batch = page.get("rulebase", [])
+            items.extend(batch)
+            total = page.get("total", total)
+            to = page.get("to", 0)
+            if not batch or to >= total or to <= offset:
+                break
+            offset = to
+        rows = _structure_rulebase(items, objdict)
+        return {"layer": layer, "rules": rows, "objects_by_type": _collect_export_objects(objdict),
+                "total": total, "trace": s.trace}
+
+
 def test_connection(server, secret: str) -> dict:
     """Login, read the API version + domains, log out. Returns {ok, version, domains, layers, trace}."""
     out: dict = {"ok": False, "version": "", "domains": [], "layers": 0, "trace": [], "message": ""}
