@@ -465,13 +465,39 @@ def _render_terraform(layer, emit, rules, ref_map, skipped) -> str:
             L.append("  source = [%s]" % ", ".join(_tf_ref(n, ref_map) for n in _cell(row.get("source", []))))
             L.append("  destination = [%s]" % ", ".join(_tf_ref(n, ref_map) for n in _cell(row.get("destination", []))))
             L.append("  service = [%s]" % ", ".join(_tf_ref(n, ref_map) for n in _cell(row.get("service", []))))
-            if row.get("vpn"):
-                L.append("  vpn = [%s]" % ", ".join(_tf_ref(n, ref_map) for n in row["vpn"]))
+            if row.get("content"):
+                L.append("  content = [%s]" % ", ".join(_tf_ref(n, ref_map) for n in row["content"]))
+                if row.get("content_direction"):
+                    L.append(f'  content_direction = {_q(row["content_direction"])}')
+            if row.get("vpn"):   # Terraform models a community list as `vpn_communities`
+                L.append("  vpn_communities = [%s]" % ", ".join(_tf_ref(n, ref_map) for n in row["vpn"]))
             L.append(f'  action = {_q(row.get("action") or "Drop")}')
-            if row.get("track"):
+            if row.get("inline_layer"):
+                L.append(f'  inline_layer = {_q(row["inline_layer"])}')
+            tk = row.get("track_full") or {}
+            if tk.get("type"):
+                tl = [f'    type = {_q(tk["type"])}']
+                for b in ("accounting", "per_connection", "per_session", "enable_firewall_session"):
+                    if tk.get(b):
+                        tl.append(f"    {b} = true")
+                if tk.get("alert"):
+                    tl.append(f'    alert = {_q(tk["alert"])}')
+                L.append("  track {\n" + "\n".join(tl) + "\n  }")
+            elif row.get("track"):
                 L.append(f'  track {{\n    type = {_q(row["track"])}\n  }}')
+            if row.get("time"):
+                L.append("  time = [%s]" % ", ".join(_tf_ref(n, ref_map) for n in row["time"]))
+            if row.get("install_on"):
+                L.append("  install_on = [%s]" % ", ".join(_tf_ref(n, ref_map) for n in row["install_on"]))
+            cf = row.get("custom_fields") or {}
+            if any(cf.values()):
+                L.append("  custom_fields {")
+                for k in ("field-1", "field-2", "field-3"):
+                    if cf.get(k):
+                        L.append(f'    {k.replace("-", "_")} = {_q(cf[k])}')
+                L.append("  }")
             L.append(f'  enabled = {"true" if row.get("enabled", True) else "false"}')
-            for neg in ("source_negate", "destination_negate", "service_negate"):
+            for neg in ("source_negate", "destination_negate", "service_negate", "content_negate"):
                 if row.get(neg):
                     L.append(f"  {neg} = true")
             if row.get("comments"):
@@ -568,15 +594,40 @@ def _render_ansible(layer, emit, rules, skipped) -> str:
             L.append(f"        source: {_yaml_list(_cell(row.get('source', [])))}")
             L.append(f"        destination: {_yaml_list(_cell(row.get('destination', [])))}")
             L.append(f"        service: {_yaml_list(_cell(row.get('service', [])))}")
+            if row.get("content"):
+                L.append(f"        content: {_yaml_list(row['content'])}")
+                if row.get("content_direction"):
+                    L.append(f'        content_direction: {_q(row["content_direction"])}')
             if row.get("vpn"):
                 L.append(f"        vpn: {_yaml_list(row['vpn'])}")
             L.append(f'        action: {_q(row.get("action") or "Drop")}')
-            if row.get("track"):
+            if row.get("inline_layer"):
+                L.append(f'        inline_layer: {_q(row["inline_layer"])}')
+            tk = row.get("track_full") or {}
+            if tk.get("type"):
+                L.append("        track:")
+                L.append(f'          type: {_q(tk["type"])}')
+                for b in ("accounting", "per_connection", "per_session", "enable_firewall_session"):
+                    if tk.get(b):
+                        L.append(f"          {b}: true")
+                if tk.get("alert"):
+                    L.append(f'          alert: {_q(tk["alert"])}')
+            elif row.get("track"):
                 L.append("        track:")
                 L.append(f'          type: {_q(row["track"])}')
+            if row.get("time"):
+                L.append(f"        time: {_yaml_list(row['time'])}")
+            if row.get("install_on"):
+                L.append(f"        install_on: {_yaml_list(row['install_on'])}")
+            cf = row.get("custom_fields") or {}
+            if any(cf.values()):
+                L.append("        custom_fields:")
+                for k in ("field-1", "field-2", "field-3"):
+                    if cf.get(k):
+                        L.append(f'          {k.replace("-", "_")}: {_q(cf[k])}')
             L.append(f'        enabled: {"true" if row.get("enabled", True) else "false"}')
             for neg, key in (("source_negate", "source-negate"), ("destination_negate", "destination-negate"),
-                             ("service_negate", "service-negate")):
+                             ("service_negate", "service-negate"), ("content_negate", "content-negate")):
                 if row.get(neg):
                     L.append(f"        {key}: true")
             if row.get("comments"):
@@ -653,13 +704,34 @@ def _render_mgmt_cli(layer, emit, rules, skipped) -> str:
                      _cli_idx("destination", _cell(row.get("destination", []))),
                      _cli_idx("service", _cell(row.get("service", []))),
                      f'action {_q(row.get("action") or "Drop")}']
+            if row.get("content"):
+                parts.append(_cli_idx("content", row["content"]))
+                if row.get("content_direction"):
+                    parts.append(f'content-direction {_q(row["content_direction"])}')
             if row.get("vpn"):
                 parts.append(_cli_idx("vpn", row["vpn"]))
-            if row.get("track"):
+            if row.get("inline_layer"):
+                parts.append(f'inline-layer {_q(row["inline_layer"])}')
+            tk = row.get("track_full") or {}
+            if tk.get("type"):
+                parts.append(f'track-settings.type {_q(tk["type"])}')
+                for b, key in (("accounting", "accounting"), ("per_connection", "per-connection"),
+                               ("per_session", "per-session"), ("enable_firewall_session", "enable-firewall-session")):
+                    if tk.get(b):
+                        parts.append(f"track-settings.{key} true")
+            elif row.get("track"):
                 parts.append(f'track-settings.type {_q(row["track"])}')
+            if row.get("time"):
+                parts.append(_cli_idx("time", row["time"]))
+            if row.get("install_on"):
+                parts.append(_cli_idx("install-on", row["install_on"]))
+            cf = row.get("custom_fields") or {}
+            for k in ("field-1", "field-2", "field-3"):
+                if cf.get(k):
+                    parts.append(f'custom-fields.{k} {_q(cf[k])}')
             parts.append(f'enabled {"true" if row.get("enabled", True) else "false"}')
             for neg, key in (("source_negate", "source-negate"), ("destination_negate", "destination-negate"),
-                             ("service_negate", "service-negate")):
+                             ("service_negate", "service-negate"), ("content_negate", "content-negate")):
                 if row.get(neg):
                     parts.append(f"{key} true")
             if row.get("comments"):
