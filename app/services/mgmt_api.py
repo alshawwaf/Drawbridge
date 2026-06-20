@@ -193,6 +193,7 @@ def _one_name(val, objdict: dict) -> str:
 def _structure_rule(rule: dict, objdict: dict) -> dict:
     return {
         "kind": "rule",
+        "uid": rule.get("uid"),          # target edits by uid — rule numbers shift as rules move
         "number": rule.get("rule-number"),
         "name": rule.get("name", ""),
         "enabled": rule.get("enabled", True),
@@ -326,3 +327,59 @@ def test_connection(server, secret: str) -> dict:
     except Exception as exc:  # noqa: BLE001 — surface anything unexpected as a clean message
         out["message"] = f"Unexpected error: {exc}"
     return out
+
+
+# --- writes: edit a rule, then publish or discard (Phase 4) ----------------------------------
+
+_RULE_EDIT_FIELDS = ("enabled", "action", "track", "name", "comments")
+
+
+def build_set_rule_op(layer: str, uid: str, changes: dict) -> dict:
+    """Build a single ``set-access-rule`` op from a small change dict. Only the keys actually present
+    in ``changes`` are sent, so the op touches nothing else on the rule. Returns
+    {command, payload, summary} — pure, so the UI can preview the exact call before it runs."""
+    payload: dict = {"uid": uid, "layer": layer}
+    parts: list[str] = []
+    if "enabled" in changes:
+        payload["enabled"] = bool(changes["enabled"])
+        parts.append("enable" if payload["enabled"] else "disable")
+    if changes.get("action"):
+        payload["action"] = changes["action"]
+        parts.append(f"action → {changes['action']}")
+    if changes.get("track"):
+        payload["track"] = {"type": changes["track"]}   # Track Settings object, matching show output
+        parts.append(f"track → {changes['track']}")
+    if changes.get("name") is not None and "name" in changes:
+        payload["new-name"] = changes["name"]
+        parts.append(f"rename → {changes['name']!r}")
+    if "comments" in changes:
+        payload["comments"] = changes["comments"]
+        parts.append("comments")
+    return {"command": "set-access-rule", "payload": payload,
+            "summary": "set-access-rule (" + (", ".join(parts) or "no changes") + ")"}
+
+
+def apply_changes(server, secret: str, ops: list[dict], *, publish: bool) -> dict:
+    """Run write ops in ONE session, then **publish** (commit) or **discard** (dry-run — validates the
+    payloads against the SMS with zero commit). On any error the session is discarded so a partial
+    change never lingers. Returns {ok, published, results, trace, error?}."""
+    results: list[dict] = []
+    try:
+        with MgmtSession(server, secret) as s:
+            try:
+                for op in ops:
+                    s.call(op["command"], op.get("payload") or {})
+                    results.append({"summary": op.get("summary", op["command"]), "ok": True})
+                if publish:
+                    s.publish()
+                else:
+                    s.discard()
+            except MgmtError:
+                try:
+                    s.discard()   # never leave uncommitted changes in the session on failure
+                except MgmtError:
+                    pass
+                raise
+            return {"ok": True, "published": publish, "results": results, "trace": s.trace}
+    except MgmtError as exc:
+        return {"ok": False, "published": False, "error": str(exc), "results": results}
