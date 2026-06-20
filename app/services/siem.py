@@ -77,6 +77,29 @@ def _json_summary(obj: dict) -> str:
     return ", ".join(f"{k}={v}" for k, v in list(obj.items())[:4])[:380]
 
 
+def _kv_pairs(body: str) -> dict:
+    """Parse a prefix-less field-list format: Splunk / LogRhythm / RSA emit ``key=value key2=value2``
+    (values may be quoted or contain spaces); Check Point's **Generic** format emits
+    ``key:value; key2:value2;``. Returns whichever separator yields the richer field map."""
+    fields = body.rsplit(" - - - ", 1)[-1]                  # drop the RFC5424 header ('… CheckPoint - - -')
+    eq = _parse_ext(fields)                                 # 'key=value' (whitespace-before-key= split)
+    semi: dict = {}
+    if ";" in fields:
+        for part in fields.split(";"):
+            k, sep, v = part.strip().partition(":")
+            k = k.strip()
+            if sep and v.strip() and re.fullmatch(r"[A-Za-z0-9_.\-]+", k):
+                semi[k] = v.strip()
+    return semi if len(semi) > len(eq) else eq
+
+
+def _kv_summary(f: dict) -> str:
+    keys = [k for k in ("action", "act", "src", "dst", "service", "proto", "rule", "msg") if f.get(k)]
+    if keys:
+        return " ".join(f"{k}={f[k]}" for k in keys)[:380]
+    return " ".join(f"{k}={v}" for k, v in list(f.items())[:6])[:380]
+
+
 def _syslog_host_msg(body: str) -> tuple[str, str]:
     """RFC3164: 'Mmm dd hh:mm:ss host tag: msg' → (host, msg). Best-effort."""
     m = re.match(r"^[A-Z][a-z]{2}\s+\d+\s+[\d:]+\s+(\S+)\s+(.*)$", body)
@@ -122,6 +145,13 @@ def parse_line(raw: str) -> dict:
                 return out
         except ValueError:
             pass
+
+    kv = _kv_pairs(body)   # Splunk / LogRhythm / RSA (key=value) or Check Point Generic (key:value;)
+    if len(kv) >= 3:
+        out.update(fmt="keyval", fields=kv, summary=_kv_summary(kv),
+                   host=(kv.get("origin") or kv.get("hostname") or kv.get("host")
+                         or _header_host(" ".join(body.split()[:4]))))   # leading syslog-header tokens
+        return out
 
     out["fmt"] = "syslog"
     out["host"], out["summary"] = _syslog_host_msg(body)
@@ -212,4 +242,10 @@ SAMPLE_LINES = [
      "layer_name=Network msg=Demo dropped SSH from blocklisted host"),
     ('<134>1 2026-06-19T12:00:07Z gw-01 CheckPoint - - - {"action":"Accept","src":"10.10.0.56",'
      '"dst":"203.0.113.11","service":"https","rule":"12","product":"Firewall","origin":"gw-01"}'),
+    # Splunk / LogRhythm / RSA — prefix-less key=value field list
+    ("<134>1 2026-06-19T12:00:10Z gw-01 CheckPoint - - - action=Accept src=10.10.0.57 dst=203.0.113.12 "
+     "proto=tcp service=https rule=12 product=Firewall origin=gw-01 msg=Demo Splunk-format connection"),
+    # Check Point Generic — key:value; field list
+    ("<131>1 2026-06-19T12:00:13Z gw-01 CheckPoint - - - action:Drop; src:198.51.100.7; dst:10.10.0.22; "
+     "proto:udp; rule:44; product:Firewall; origin:gw-01; msg:Demo Generic-format drop"),
 ]
