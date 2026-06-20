@@ -24,7 +24,14 @@ TOOL_VERSIONS = {
     "ansible_gaia": "check_point.gaia",
 }
 REQUEST_ONLY = {"ignore-warnings", "ignore-errors", "set-if-exists", "details-level"}
-TF_OMIT_FIELDS = {"groups", "ip-address", "subnet", "mask-length", "subnet-mask", "service-resource"}
+# API fields Terraform exposes under a DIFFERENT name (the generic API field is split into v4/v6, etc.).
+# These are SUPPORTED in TF — just renamed — so they must NOT be flagged as gaps. Default for every
+# other field is the API name with hyphens→underscores (e.g. ipv4-address → ipv4_address).
+_TF_RENAME = {"ip-address": "ipv4_address", "ip-address-first": "ipv4_address_first",
+              "ip-address-last": "ipv4_address_last", "subnet": "subnet4", "mask-length": "mask_length4",
+              "vpn": "vpn_communities"}
+# API fields with NO Terraform equivalent at all (genuine gaps).
+_TF_NO_FIELD = {"groups", "details-level", "subnet-mask", "service-resource"}
 TF_MISSING_OBJECTS: set[str] = set()
 ANSIBLE_MISSING_OBJECTS = {"service-gtp", "opsec-application", "server-certificate",
                            "vmware-data-center-server", "aws-data-center-server", "azure-data-center-server"}
@@ -104,11 +111,23 @@ def _ansible_name(api_type, obj):
     return ("cp_mgmt_" if api_type == "management" else "cp_gaia_") + obj.replace("-", "_")
 
 
+def _tf_field_name(fname, tf_obj):
+    """The Terraform argument name for an API field, or None if TF has no equivalent. Renamed fields
+    (the generic ip-address/subnet/... that TF splits into v4) resolve to their real TF arg name."""
+    if tf_obj is None or fname in _TF_NO_FIELD:
+        return None
+    return _TF_RENAME.get(fname, fname.replace("-", "_"))
+
+
+def _ans_field_name(fname, ans_obj):
+    return None if ans_obj is None else fname.replace("-", "_")   # Ansible mirrors the API field set
+
+
 def _field_support(obj, fname, tf_obj, ans_obj):
-    request_only = fname in REQUEST_ONLY
-    return {"api": True, "request_only": request_only,
-            "tf": tf_obj is not None and (request_only or fname not in TF_OMIT_FIELDS),
-            "ansible": ans_obj is not None}
+    tfn, ann = _tf_field_name(fname, tf_obj), _ans_field_name(fname, ans_obj)
+    return {"api": True, "request_only": fname in REQUEST_ONLY,
+            "tf": tfn is not None, "ansible": ann is not None,
+            "tf_name": tfn, "ansible_name": ann}
 
 
 def _build_object(spec, api_type, path):
