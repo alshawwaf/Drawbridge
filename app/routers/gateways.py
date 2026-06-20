@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from ..db import get_db
 from ..models import DynamicLayer, Gateway, GatewayLayerSnapshot, User
 from ..security import get_user_or_none, new_feed_token
-from ..services import gateway_creds
+from ..services import gateway_creds, gaia_export
 from ..services.apply_runner import fetch_dynamic_content
 from ..services.gaia_client import ensure_pinned, fetch_gateway_cert
 from .ui import _flash, _pop_flash, templates
@@ -152,6 +152,40 @@ def gateways_fetch(gid: int, request: Request, password: str = Form(""),
         else:
             _flash(request, data.get("error") or "Fetch failed.", "error")
     return RedirectResponse(f"/gateways/{gid}", status_code=303)
+
+
+@router.get("/gateways/{gid}/gaia-export", response_class=HTMLResponse)
+def gw_gaia_export_page(gid: int, request: Request, db: Session = Depends(get_db)):
+    """Export this gateway's Gaia OS config (interfaces/routes/dns/ntp/…) to Terraform/Ansible/clish."""
+    user = get_user_or_none(request, db)
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+    gw = _owned(db, gid, user)
+    return templates.TemplateResponse(request, "gaia_export.html",
+                                      {"title": gw.name, "host": f"{gw.host}:{gw.port}",
+                                       "run_url": f"/gateways/{gw.id}/gaia-export/run",
+                                       "back_url": f"/gateways/{gw.id}", "back_label": "Gateway",
+                                       "has_secret": gateway_creds.has_password(db, gw),
+                                       "flash": _pop_flash(request)})
+
+
+@router.post("/gateways/{gid}/gaia-export/run")
+def gw_gaia_export_run(gid: int, request: Request, password: str = Form(""),
+                       db: Session = Depends(get_db)):
+    """JSON: pull the gateway's Gaia config and render the three IaC targets."""
+    user = get_user_or_none(request, db)
+    if user is None:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    gw = _owned(db, gid, user)
+    if not gw.username:
+        return JSONResponse({"error": "This gateway has no username — set one on Edit."}, status_code=400)
+    ensure_pinned(db, gw)   # trust-on-first-use before the TLS handshake
+    secret = password or gateway_creds.get_password(db, gw)
+    if not secret:
+        return JSONResponse({"error": "Enter the gateway password (none saved on this gateway)."},
+                            status_code=400)
+    return JSONResponse(gaia_export.pull_and_generate(gw.host, gw.port, gw.username, secret,
+                                                      gw.cert_pem or None))
 
 
 @router.get("/gateways/{gid}/edit", response_class=HTMLResponse)

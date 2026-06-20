@@ -6,6 +6,7 @@
   <div class="grow"><h1>{{ gw.name }} <span class="pill">gateway</span></h1>
     <p class="muted">Saved gateway connection profile.</p></div>
   <div class="row" style="gap:8px;">
+    <a class="btn secondary" href="/gateways/{{ gw.id }}/gaia-export">Export Gaia config →</a>
     <a class="btn secondary" href="/gateways/{{ gw.id }}/edit">Edit</a>
     <form method="post" action="/gateways/{{ gw.id }}/delete">
       <button class="danger" type="submit" data-confirm="Delete gateway “{{ gw.name }}”?">Delete</button>

@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from ..db import get_db
 from ..models import ManagementServer, User
 from ..security import get_user_or_none
-from ..services import mgmt_api, mgmt_creds, mgmt_export
+from ..services import gaia_export, mgmt_api, mgmt_creds, mgmt_export
 from ..services.gaia_client import ensure_pinned, fetch_gateway_cert
 from .ui import _flash, _pop_flash, templates
 
@@ -215,6 +215,40 @@ def mgmt_apply(sid: int, request: Request, edit: RuleEdit, db: Session = Depends
         return err
     op = mgmt_api.build_set_rule_op(edit.layer, edit.uid, edit.changes)
     return JSONResponse(mgmt_api.apply_changes(ms, secret, [op], publish=edit.publish))
+
+
+@router.get("/management/{sid}/gaia-export", response_class=HTMLResponse)
+def mgmt_gaia_export_page(sid: int, request: Request, db: Session = Depends(get_db)):
+    """Export the SMS's Gaia OS config (the SMS is a Gaia appliance too) to Terraform/Ansible/clish."""
+    user = get_user_or_none(request, db)
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+    ms = _owned(db, sid, user)
+    return templates.TemplateResponse(request, "gaia_export.html",
+                                      {"title": ms.name, "host": f"{ms.host}:{ms.port}",
+                                       "run_url": f"/management/{ms.id}/gaia-export/run",
+                                       "back_url": f"/management/{ms.id}", "back_label": "Policy viewer",
+                                       "has_secret": mgmt_creds.has_secret(db, ms),
+                                       "flash": _pop_flash(request)})
+
+
+@router.post("/management/{sid}/gaia-export/run")
+def mgmt_gaia_export_run(sid: int, request: Request, password: str = Form(""),
+                         db: Session = Depends(get_db)):
+    """JSON: pull the SMS's Gaia config (via its gaia_api) and render the three IaC targets."""
+    user = get_user_or_none(request, db)
+    if user is None:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    ms = _owned(db, sid, user)
+    if not ms.username:
+        return JSONResponse({"error": "This server has no username — set one on Edit."}, status_code=400)
+    ensure_pinned(db, ms)
+    secret = password or mgmt_creds.get_secret(db, ms)
+    if not secret:
+        return JSONResponse({"error": "No saved credential — enter the OS password, or store one on Edit."},
+                            status_code=400)
+    return JSONResponse(gaia_export.pull_and_generate(ms.host, ms.port, ms.username, secret,
+                                                      ms.cert_pem or None))
 
 
 @router.get("/management/{sid}", response_class=HTMLResponse)
