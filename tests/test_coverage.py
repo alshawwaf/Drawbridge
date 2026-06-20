@@ -1,8 +1,8 @@
-"""Coverage matrix: structure + that `exported` flags are derived from the live exporter specs."""
+"""Coverage: bundled spec artifacts + the artifact-driven service (object groups, detail, examples)."""
 import json
 import os
 
-from app.services import coverage, mgmt_export
+from app.services import coverage
 
 _ART = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "app", "coverage_data")
 
@@ -24,35 +24,34 @@ def test_generated_coverage_artifacts_are_complete_and_shaped():
     assert ga["object_count"] == len(ga["objects"]) >= 100
 
 
-def _find(groups, name):
-    for g in groups:
-        for r in g["rows"]:
-            if r["name"] == name:
-                return r
-    return None
+def test_versions_and_latest():
+    v = coverage.versions()
+    assert "v2.0.1" in v.get("management", []) and "v1.8" in v.get("gaia", [])
+    assert coverage.latest("management") == "v2.0.1"
 
 
-def test_build_shape():
-    data = coverage.build()
-    assert data["mgmt"] and data["gaia"]
-    assert data["mgmt_field_gaps"] and data["gaia_field_gaps"]
-    for g in data["mgmt"] + data["gaia"]:
-        assert g["total"] == len(g["rows"]) and 0 <= g["covered"] <= g["total"]
+def test_object_groups_categorise_and_flag_gaps():
+    groups = coverage.object_groups("management", "v2.0.1")
+    titles = {g["title"] for g in groups}
+    assert {"Network objects", "Services", "Access policy"} <= titles
+    rows = {r["name"]: r for g in groups for r in g["rows"]}
+    assert rows["host"]["has_tf"] and rows["host"]["has_ansible"]
+    assert rows["service-gtp"]["has_ansible"] is False          # the Ansible gap shows at object level
 
 
-def test_exported_flag_tracks_specs():
-    data = coverage.build()
-    # a type the exporter handles vs one it doesn't — flag derived from mgmt_export.OBJ_SPECS
-    assert _find(data["mgmt"], "host")["exported"] is True
-    assert "host" in mgmt_export.OBJ_SPECS                      # the source of truth
-    assert _find(data["mgmt"], "nat-rule")["exported"] is False
-    assert _find(data["mgmt"], "access-rule")["exported"] is True   # rulebase is exported
+def test_object_detail_has_field_diff_and_four_examples():
+    d = coverage.object_detail("management", "v2.0.1", "host")
+    assert d["name"] == "host"
+    fmap = {f["name"]: f for f in d["fields"]}
+    assert fmap["groups"]["tf"] is False and fmap["ip-address"]["tf"] is False
+    ex = d["examples"]
+    assert set(ex) == {"web_api", "mgmt_cli", "terraform", "ansible"}
+    assert ex["web_api"].startswith("POST /web_api/add-host")    # web_api JSON form
+    assert "mgmt_cli add host" in ex["mgmt_cli"]
+    assert 'resource "checkpoint_management_host" "example"' in ex["terraform"]
+    assert "name =" in ex["terraform"] and "groups" not in ex["terraform"]   # TF-omitted field skipped
+    assert "cp_mgmt_host:" in ex["ansible"]
 
 
-def test_tool_gaps_are_marked():
-    data = coverage.build()
-    assert _find(data["mgmt"], "service-gtp")["ans"] is None        # Ansible gap
-    assert _find(data["mgmt"], "service-gtp")["tf"] is not None
-    assert _find(data["gaia"], "lldp")["ans"] is None               # Ansible gap (Gaia)
-    hosts = _find(data["gaia"], "static /etc/hosts entries")
-    assert hosts["api"] is None and hosts["tf"] is None and hosts["ans"] is None   # missing everywhere
+def test_object_detail_unknown_object():
+    assert "error" in coverage.object_detail("management", "v2.0.1", "does-not-exist")
