@@ -164,8 +164,7 @@ def _cli_scalar(v) -> str:
 def _examples(obj: dict) -> dict:
     cmd, ex = obj["command"], obj.get("example", {})
     verb_obj = cmd.replace("-", " ", 1)   # add-host -> "add host"; set-dns -> "set dns"
-    tf_skip = {f["name"] for f in obj["fields"] if not f["tf"]}
-    ans_skip = {f["name"] for f in obj["fields"] if not f["ansible"]}
+    fmap = {f["name"]: f for f in obj["fields"]}   # carries the real per-tool field name
 
     web = (f"POST /web_api/{cmd}\nContent-Type: application/json\nX-chkp-sid: <session id>\n\n"
            + json.dumps(ex, indent=2))
@@ -173,23 +172,27 @@ def _examples(obj: dict) -> dict:
     cli_parts = []
     for k, v in ex.items():
         cli_parts += _cli_arg(k, v)
-    cli = f"mgmt_cli {verb_obj} " + " ".join(cli_parts) + " -s id.txt" if obj["terraform"] or True else ""
+    cli = f"mgmt_cli {verb_obj} " + " ".join(cli_parts) + " -s id.txt"
 
     if obj["terraform"]:
-        tf_lines = [f'resource "{obj["terraform"]}" "example" {{']
+        tf_lines, seen = [f'resource "{obj["terraform"]}" "example" {{'], set()
         for k, v in ex.items():
-            if k not in tf_skip:
-                tf_lines.append(f"  {_u(k)} = {_hcl(v)}")
+            tn = (fmap.get(k) or {}).get("tf_name")   # real TF arg (ip-address -> ipv4_address); None = skip
+            if tn and tn not in seen:
+                seen.add(tn)
+                tf_lines.append(f"  {tn} = {_hcl(v)}")
         tf_lines.append("}")
         tf = "\n".join(tf_lines)
     else:
         tf = f"# No Terraform resource for {obj['name']}."
 
     if obj["ansible"]:
-        ans_lines = [f"- name: Add {obj['name']}", f"  {obj['ansible']}:"]
+        ans_lines, seen = [f"- name: Add {obj['name']}", f"  {obj['ansible']}:"], set()
         for k, v in ex.items():
-            if k not in ans_skip:
-                ans_lines.append(f"    {_u(k)}: {_yaml(v)}")
+            an = (fmap.get(k) or {}).get("ansible_name")
+            if an and an not in seen:
+                seen.add(an)
+                ans_lines.append(f"    {an}: {_yaml(v)}")
         ans_lines.append("    state: present")
         ans = "\n".join(ans_lines)
     else:
@@ -205,7 +208,8 @@ def object_detail(api_type: str, version: str, name: str) -> dict:
         return {"error": "Object not found."}
     fields = [{"name": f["name"], "type": f.get("type", "string"), "required": f.get("required", False),
                "request_only": f.get("request_only", False),
-               "api": f["api"], "tf": f["tf"], "ansible": f["ansible"]} for f in obj["fields"]]
+               "api": f["api"], "tf": f["tf"], "ansible": f["ansible"],
+               "tf_name": f.get("tf_name"), "ansible_name": f.get("ansible_name")} for f in obj["fields"]]
     return {"name": obj["name"], "command": obj["command"], "terraform": obj["terraform"],
             "ansible": obj["ansible"], "fields": fields, "examples": _examples(obj)}
 

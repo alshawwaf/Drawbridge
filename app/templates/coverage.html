@@ -53,7 +53,7 @@
   <span><b class="yes">✓</b> supported</span><span><b class="no">✗</b> no equivalent (gap)</span>
   <span class="muted">click a row for full example + field diff · web_api is authoritative</span>
 </div>
-<p class="muted" style="font-size:11.5px; margin:0 0 10px;">Object-level support is exact. Field-level Terraform/Ansible support is <b>derived</b> from the API schema + documented divergences (e.g. <code>groups</code>/<code>details-level</code> are TF gaps); a field renamed by a tool (e.g. host <code>ip-address</code> → TF <code>ipv4_address</code>) can show as a gap. Exact per-field parsing of the provider/collection schemas is a planned refinement.</p>
+<p class="muted" style="font-size:11.5px; margin:0 0 10px;">Object-level support is exact. Field-level support is <b>derived</b> from the API schema + documented divergences: common API→tool <b>renames</b> (e.g. <code>ip-address</code> → <code>ipv4_address</code>, <code>subnet</code> → <code>subnet4</code>, <code>vpn</code> → <code>vpn_communities</code>) are <b>mapped</b> and shown as supported under the tool's name (✓ + name); only fields with no tool equivalent (e.g. <code>groups</code>, <code>details-level</code>) are flagged as gaps.</p>
 
 <div id="cov-root" data-api="{{ api_type }}" data-version="{{ version }}">
 {% for g in groups %}
@@ -103,11 +103,17 @@
 
     function fieldTable(fields) {
       var h = '<table class="ftab"><thead><tr><th>Field</th><th>Type</th><th>API</th><th>Terraform</th><th>Ansible</th></tr></thead><tbody>';
+      function tcell(ok, nm, apiName) {
+        if (!ok) return '<span class="no">✗</span>';
+        var u = apiName.replace(/-/g, '_');   // show the tool's real arg name only when it's renamed
+        return (nm && nm !== u) ? '<span class="yes">✓</span> <span class="muted" style="font-size:10.5px;">' + esc(nm) + '</span>'
+                                : '<span class="yes">✓</span>';
+      }
       fields.forEach(function (f) {
         var cls = f.request_only ? ' class="req"' : '';
-        function c(ok) { return ok ? '<span class="yes">✓</span>' : '<span class="no">✗</span>'; }
         h += '<tr' + cls + '><td>' + esc(f.name) + (f.required ? ' *' : '') + (f.request_only ? ' <span class="muted">(request)</span>' : '') +
-             '</td><td class="muted">' + esc(f.type) + '</td><td>' + c(f.api) + '</td><td>' + c(f.tf) + '</td><td>' + c(f.ansible) + '</td></tr>';
+             '</td><td class="muted">' + esc(f.type) + '</td><td><span class="yes">✓</span></td><td>' +
+             tcell(f.tf, f.tf_name, f.name) + '</td><td>' + tcell(f.ansible, f.ansible_name, f.name) + '</td></tr>';
       });
       return h + '</tbody></table>';
     }

@@ -16,8 +16,8 @@ def test_generated_coverage_artifacts_are_complete_and_shaped():
     assert host["terraform"] == "checkpoint_management_host" and host["ansible"] == "cp_mgmt_host"
     assert host["example"].get("name")                          # web_api JSON example present
     f = {x["name"]: x for x in host["fields"]}
-    assert f["groups"]["tf"] is False and f["groups"]["ansible"] is True   # documented TF field gap
-    assert f["ip-address"]["tf"] is False                       # TF uses ipv4/ipv6 split
+    assert f["groups"]["tf"] is False and f["groups"]["tf_name"] is None and f["groups"]["ansible"] is True
+    assert f["ip-address"]["tf"] is True and f["ip-address"]["tf_name"] == "ipv4_address"  # renamed, NOT a gap
     assert f["set-if-exists"]["request_only"] is True           # request flag, excluded from the diff
     assert next(o for o in mg["objects"] if o["name"] == "service-gtp")["ansible"] is None  # Ansible gap
     ga = json.load(open(os.path.join(_ART, "gaia-v1.8.json")))
@@ -26,8 +26,9 @@ def test_generated_coverage_artifacts_are_complete_and_shaped():
 
 def test_versions_and_latest():
     v = coverage.versions()
-    assert "v2.0.1" in v.get("management", []) and "v1.8" in v.get("gaia", [])
-    assert coverage.latest("management") == "v2.0.1"
+    assert {"v2.1", "v2.0.1"} <= set(v.get("management", []))
+    assert {"v1.9", "v1.8"} <= set(v.get("gaia", []))
+    assert coverage.latest("management") == "v2.1" and coverage.latest("gaia") == "v1.9"
 
 
 def test_object_groups_categorise_and_flag_gaps():
@@ -43,13 +44,14 @@ def test_object_detail_has_field_diff_and_four_examples():
     d = coverage.object_detail("management", "v2.0.1", "host")
     assert d["name"] == "host"
     fmap = {f["name"]: f for f in d["fields"]}
-    assert fmap["groups"]["tf"] is False and fmap["ip-address"]["tf"] is False
+    assert fmap["groups"]["tf"] is False                         # genuine TF gap
+    assert fmap["ip-address"]["tf"] is True and fmap["ip-address"]["tf_name"] == "ipv4_address"  # renamed
     ex = d["examples"]
     assert set(ex) == {"web_api", "mgmt_cli", "terraform", "ansible"}
     assert ex["web_api"].startswith("POST /web_api/add-host")    # web_api JSON form
     assert "mgmt_cli add host" in ex["mgmt_cli"]
     assert 'resource "checkpoint_management_host" "example"' in ex["terraform"]
-    assert "name =" in ex["terraform"] and "groups" not in ex["terraform"]   # TF-omitted field skipped
+    assert "ipv4_address =" in ex["terraform"] and "groups" not in ex["terraform"]  # rename mapped; real gap skipped
     assert "cp_mgmt_host:" in ex["ansible"]
 
 
@@ -64,7 +66,7 @@ _SYNTH_SPEC = {
     "paths": {"/add-host": {"post": {"requestBody": {"content": {"application/json": {"schema": {
         "type": "object", "required": ["name"], "properties": {
             "name": {"type": "string"},
-            "ipv4-address": {"type": "string"},
+            "ip-address": {"type": "string"},
             "groups": {"type": "array", "items": {"type": "string"}},
             "color": {"type": "string", "enum": ["black", "red"]},
             "ignore-warnings": {"type": "boolean"}}}}}}}}},
@@ -78,7 +80,8 @@ def test_build_from_spec_shapes_objects_fields_and_example():
     o = art["objects"][0]
     assert o["name"] == "host" and o["terraform"] == "checkpoint_management_host" and o["ansible"] == "cp_mgmt_host"
     fm = {f["name"]: f for f in o["fields"]}
-    assert fm["groups"]["tf"] is False and fm["groups"]["ansible"] is True
+    assert fm["groups"]["tf"] is False and fm["groups"]["tf_name"] is None and fm["groups"]["ansible"] is True
+    assert fm["ip-address"]["tf_name"] == "ipv4_address"   # generic API field → renamed TF arg, still supported
     assert fm["ignore-warnings"]["request_only"] is True
     assert o["example"]["color"] == "black"               # enum[0]
     assert "ignore-warnings" not in o["example"]           # request-only excluded from the body
