@@ -138,6 +138,26 @@ def test_export_rule_carries_all_columns():
     assert 'custom-fields.field-1 "ticket-123"' in cli and "track-settings.accounting true" in cli
 
 
+def test_export_new_object_types():
+    """The object types added from the OpenAPI spec render across all three targets."""
+    bundle = {"layer": "L", "rules": [], "objects_by_type": {
+        "service-icmp6": [{"uid": "u1", "name": "icmp6-echo", "type": "service-icmp6",
+                           "icmp-type": 128, "icmp-code": 0}],
+        "application-site": [{"uid": "u2", "name": "MyApp", "type": "application-site",
+                              "primary-category": "Custom", "url-list": ["x.com", "y.com"],
+                              "urls-defined-as-regular-expression": False}],
+        "time-group": [{"uid": "u3", "name": "WorkTimes", "type": "time-group",
+                        "members": [{"name": "WorkHours"}]}],
+    }}
+    art = mgmt_export.generate(bundle)
+    tf, ans, cli = art["terraform"], art["ansible"], art["mgmt_cli"]
+    assert 'resource "checkpoint_management_service_icmp6" "icmp6_echo"' in tf and "icmp_type = 128" in tf
+    assert 'resource "checkpoint_management_application_site" "myapp"' in tf
+    assert 'url_list = ["x.com", "y.com"]' in tf and 'primary_category = "Custom"' in tf
+    assert "check_point.mgmt.cp_mgmt_time_group:" in ans and 'mgmt_cli add application-site' in cli
+    assert art["stats"]["objects"] == 3 and art["stats"]["skipped"] == {}
+
+
 def test_export_predefined_objects_are_referenced_not_emitted():
     tf = mgmt_export.generate(EXPORT_BUNDLE)["terraform"]
     assert mgmt_export.is_predefined({"type": "host", "domain": {"domain-type": "data domain"}})
