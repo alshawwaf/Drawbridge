@@ -43,7 +43,7 @@ async def _start_siem_receiver(settings):
 
     def store_batch(items: list) -> None:
         with SessionLocal() as db:
-            siem.store_batch(db, items)
+            siem.store_received(db, items)   # honors the admin Pause toggle (drops the flood while paused)
 
     receiver = SyslogReceiver(settings.syslog_port, store_batch)
     try:

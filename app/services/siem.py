@@ -167,6 +167,29 @@ def store_batch(db: Session, items: list[tuple[str, str, str]]) -> int:
     return len(items)
 
 
+# --- admin Pause toggle: drop the live feed without tearing down the listener ----------------
+# In-memory (per-process); resets to "receiving" on restart. Lets an SE silence the flood while
+# wiring up several exporters/ports, then resume. "Send test log" is manual and unaffected.
+_paused = False
+
+
+def is_paused() -> bool:
+    return _paused
+
+
+def set_paused(value: bool) -> None:
+    global _paused
+    _paused = bool(value)
+
+
+def store_received(db: Session, items: list[tuple[str, str, str]]) -> int:
+    """The network listener's entrypoint. When the admin has paused, the batch is dropped (the
+    listener keeps draining its queue so nothing backs up); only manual 'Send test log' still writes."""
+    if _paused:
+        return 0
+    return store_batch(db, items)
+
+
 def _trim(db: Session) -> None:
     """Delete everything older than the newest N by primary key — an indexed range delete that fires
     only when over cap (cheap even under load), keeping the table (and disk) bounded."""
