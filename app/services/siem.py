@@ -6,12 +6,13 @@ map; the raw line is always kept. Tolerant by design — a line it can't classif
 """
 import json
 import re
+import time
 
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from ..config import get_settings
-from ..models import SiemLog
+from ..models import AppState, SiemLog
 
 _SEVERITY_NAMES = ["emerg", "alert", "crit", "err", "warning", "notice", "info", "debug"]
 
@@ -198,24 +199,37 @@ def store_batch(db: Session, items: list[tuple[str, str, str]]) -> int:
 
 
 # --- admin Pause toggle: drop the live feed without tearing down the listener ----------------
-# In-memory (per-process); resets to "receiving" on restart. Lets an SE silence the flood while
-# wiring up several exporters/ports, then resume. "Send test log" is manual and unaffected.
-_paused = False
+# Stored in the DB (AppState) so a Pause/Resume from any uvicorn worker or Swarm replica reaches the
+# replica running the listener — an in-memory flag isn't shared and made Resume look broken. The page
+# reads it fresh; the listener's hot path reads a ~2s cache so it isn't a DB hit per batch.
+_PAUSE_KEY = "siem_paused"
+_pause_cache = {"value": False, "at": -1e9}
 
 
-def is_paused() -> bool:
-    return _paused
+def is_paused(db: Session, fresh: bool = False) -> bool:
+    """``fresh=True`` for page renders (always accurate); cached for the listener's per-batch path."""
+    now = time.monotonic()
+    if fresh or (now - _pause_cache["at"]) > 2.0:
+        row = db.get(AppState, _PAUSE_KEY)
+        _pause_cache["value"] = bool(row and row.value == "1")
+        _pause_cache["at"] = now
+    return _pause_cache["value"]
 
 
-def set_paused(value: bool) -> None:
-    global _paused
-    _paused = bool(value)
+def set_paused(db: Session, value: bool) -> None:
+    row = db.get(AppState, _PAUSE_KEY)
+    if row is None:
+        db.add(AppState(key=_PAUSE_KEY, value="1" if value else "0"))
+    else:
+        row.value = "1" if value else "0"
+    db.commit()
+    _pause_cache.update(value=bool(value), at=time.monotonic())   # same-process consistency, no wait
 
 
 def store_received(db: Session, items: list[tuple[str, str, str]]) -> int:
     """The network listener's entrypoint. When the admin has paused, the batch is dropped (the
     listener keeps draining its queue so nothing backs up); only manual 'Send test log' still writes."""
-    if _paused:
+    if is_paused(db):
         return 0
     return store_batch(db, items)
 
@@ -248,4 +262,10 @@ SAMPLE_LINES = [
     # Check Point Generic — key:value; field list
     ("<131>1 2026-06-19T12:00:13Z gw-01 CheckPoint - - - action:Drop; src:198.51.100.7; dst:10.10.0.22; "
      "proto:udp; rule:44; product:Firewall; origin:gw-01; msg:Demo Generic-format drop"),
+    # With the Attachments fields (SmartView links + Log Attachment ID) Log Exporter can append
+    ("<134>1 2026-06-19T12:00:16Z gw-01 CheckPoint - - - CEF:0|Check Point|VPN-1 & FireWall-1|R82|"
+     "Accept|Firewall|3|src=10.10.0.58 dst=203.0.113.13 proto=tcp act=Accept rule=12 origin=gw-01 "
+     "logId=1a2b-3c4d-5e6f logDetailsLink=https://smartconsole.example/smartview/#/log/1a2b-3c4d-5e6f "
+     "logAttachmentLink=https://smartconsole.example/smartview/attachment/1a2b-3c4d-5e6f "
+     "msg=Demo log with SmartView attachment links"),
 ]

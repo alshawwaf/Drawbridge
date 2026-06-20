@@ -233,6 +233,17 @@ class SiemLog(Base):
     raw: Mapped[str] = mapped_column(Text, default="")
 
 
+class AppState(Base):
+    """A tiny key→value store for cross-process runtime flags that must be shared across uvicorn
+    workers / Swarm replicas (which each have their own memory) — e.g. the SIEM receiver's
+    pause toggle. Kept in the DB so a Pause/Resume from any process reaches the listener's process."""
+
+    __tablename__ = "app_state"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[str] = mapped_column(String(255), default="")
+
+
 class Datacenter(Base):
     """A mock cloud/datacenter that Check Point connects to (e.g. OpenStack). `content` holds
     the simulated inventory the provider API serves (instances, subnets, security groups)."""

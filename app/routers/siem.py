@@ -34,11 +34,13 @@ def siem_page(request: Request, db: Session = Depends(get_db)):
     if user is None:
         return RedirectResponse("/login", status_code=303)
     s = get_settings()
-    return templates.TemplateResponse(request, "siem.html", {
+    resp = templates.TemplateResponse(request, "siem.html", {
         "host": _host(), "port": s.syslog_port, "enabled": bool(s.syslog_port and s.syslog_port > 0),
         "total": db.scalar(select(func.count()).select_from(SiemLog)) or 0,
-        "page_sizes": PAGE_SIZES, "page_size": DEFAULT_PAGE_SIZE, "paused": siem.is_paused(),
+        "page_sizes": PAGE_SIZES, "page_size": DEFAULT_PAGE_SIZE, "paused": siem.is_paused(db, fresh=True),
         "flash": _pop_flash(request)})
+    resp.headers["Cache-Control"] = "no-store"   # never serve a stale Paused/Listening state
+    return resp
 
 
 @router.get("/siem/rows", response_class=HTMLResponse)
@@ -86,7 +88,7 @@ def siem_test(request: Request, db: Session = Depends(get_db)):
 def siem_pause(request: Request, db: Session = Depends(get_db)):
     if get_user_or_none(request, db) is None:
         return RedirectResponse("/login", status_code=303)
-    siem.set_paused(True)
+    siem.set_paused(db, True)
     _flash(request, "Receiving paused — incoming logs are dropped until you resume (the listener stays up).")
     return RedirectResponse("/siem", status_code=303)
 
@@ -95,7 +97,7 @@ def siem_pause(request: Request, db: Session = Depends(get_db)):
 def siem_resume(request: Request, db: Session = Depends(get_db)):
     if get_user_or_none(request, db) is None:
         return RedirectResponse("/login", status_code=303)
-    siem.set_paused(False)
+    siem.set_paused(db, False)
     _flash(request, "Receiving resumed — logs will land on the page again.")
     return RedirectResponse("/siem", status_code=303)
 
