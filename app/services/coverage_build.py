@@ -9,6 +9,7 @@ support is derived from the API schema + documented divergences (the web_api sid
 """
 from __future__ import annotations
 
+import functools
 import json
 import os
 import re
@@ -203,6 +204,28 @@ def fetch_spec(api_type: str, version: str = "") -> dict:
     service dependency — the portal converts the docs itself over TLS-verified httpx."""
     from app.services.cp_docs.generator import convert_checkpoint_to_openapi
     return convert_checkpoint_to_openapi(api_type=api_type, api_version=version or None)
+
+
+# --- full-spec serving (for the embedded Swagger-UI explorer) ---------------------------------
+# Building a spec re-fetches the CP docs and processes ~1000 paths, so memoise the heavy part per
+# (api_type, version). The target server URL only affects the small top-level ``servers`` block, which
+# we patch onto a shallow copy per request — the shared paths/components are never mutated.
+
+@functools.lru_cache(maxsize=6)
+def _cached_spec(api_type: str, version: str) -> dict:
+    return fetch_spec(api_type, version)
+
+
+def openapi_spec(api_type: str, version: str = "", server_url: str = "") -> dict:
+    """The full OpenAPI document for the explorer, with the requested target server pre-filled."""
+    spec = _cached_spec(api_type, version)
+    if server_url:
+        spec = {**spec, "servers": [{"url": server_url, "description": "Target server (from the portal)"}]}
+    return spec
+
+
+def explorer_spec_cache_clear() -> None:
+    _cached_spec.cache_clear()
 
 
 def _norm_version(spec: dict, fallback: str) -> str:
