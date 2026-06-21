@@ -12,6 +12,7 @@
   .leg { display:flex; gap:16px; flex-wrap:wrap; font-size:12.5px; }
   .leg span { display:inline-flex; align-items:center; gap:6px; }
   .yes { color:var(--ok-fg,#1a7f37); font-weight:700; } .no { color:var(--bad-fg,#c4314b); font-weight:700; }
+  .na { color:var(--faint); font-weight:700; font-size:11px; }
   table.cov { table-layout:fixed; width:100%; border-collapse:collapse; }
   table.cov th, table.cov td { padding:6px 9px; text-align:left; border-bottom:1px solid var(--line); font-size:12.5px; }
   table.cov col.c-obj { width:34%; } table.cov col.c-sup { width:11%; } table.cov col.c-cnt { width:11%; }
@@ -55,10 +56,10 @@
   <input id="filter" type="text" placeholder="filter objects…" style="margin-left:auto; min-width:180px;">
 </div>
 <div class="leg" style="margin-bottom:8px;">
-  <span><b class="yes">✓</b> supported</span><span><b class="no">✗</b> no equivalent (gap)</span>
+  <span><b class="yes">✓</b> supported</span><span><b class="no">✗</b> no equivalent (gap)</span><span><b class="na">n/a</b> request-only param — not a managed field</span>
   <span class="muted">click a row for full example + field diff · web_api is authoritative</span>
 </div>
-<p class="muted" style="font-size:11.5px; margin:0 0 10px;">Object-level support is exact. Field-level support is <b>derived</b> from the API schema + documented divergences: common API→tool <b>renames</b> (e.g. <code>ip-address</code> → <code>ipv4_address</code>, <code>subnet</code> → <code>subnet4</code>, <code>vpn</code> → <code>vpn_communities</code>) are <b>mapped</b> and shown as supported under the tool's name (✓ + name); only fields with no tool equivalent (e.g. <code>groups</code>, <code>details-level</code>) are flagged as gaps.</p>
+<p class="muted" style="font-size:11.5px; margin:0 0 10px;">Object-level support is exact. Field-level support is <b>derived</b> from the API schema + documented divergences: common API→tool <b>renames</b> (e.g. <code>ip-address</code> → <code>ipv4_address</code>, <code>subnet</code> → <code>subnet4</code>, <code>vpn</code> → <code>vpn_communities</code>) are <b>mapped</b> and shown as supported under the tool's name (✓ + name). Real fields with no tool equivalent (e.g. <code>groups</code>) are flagged as gaps (✗); <b>request-only</b> API parameters that control the call rather than the object (e.g. <code>details-level</code>, <code>ignore-warnings</code>) show <b>n/a</b> for a tool that doesn't model them — that's expected, not a gap, which is why the object can still be fully supported.</p>
 
 <div id="cov-root" data-api="{{ api_type }}" data-version="{{ version }}">
 {% for g in groups %}
@@ -111,9 +112,15 @@
     }
     function fieldTable(fields, docs) {
       var h = '<table class="ftab"><thead><tr><th>Field</th><th>Type</th><th>API</th><th>Terraform</th><th>Ansible</th></tr></thead><tbody>';
-      function tcell(ok, nm, apiName, url) {
+      function tcell(ok, nm, apiName, url, requestOnly) {
         var inner;
-        if (!ok) { inner = '<span class="no">✗</span>'; }
+        if (!ok) {
+          // A request-only API parameter (controls the call, not a managed object field) that a tool
+          // doesn't model is NOT a gap — show n/a so a green object isn't contradicted by a red param.
+          inner = requestOnly
+            ? '<span class="na" title="Request-only API parameter — controls the call, not a managed object field, so it isn’t modeled by this tool (not a gap)">n/a</span>'
+            : '<span class="no">✗</span>';
+        }
         else {
           // show the tool's exact arg name whenever it differs from the API field name — Ansible/TF use
           // underscores (ip-address → ip_address), and TF may rename further (→ ipv4_address)
@@ -126,7 +133,7 @@
         var cls = f.request_only ? ' class="req"' : '';
         h += '<tr' + cls + '><td>' + esc(f.name) + (f.required ? ' *' : '') + (f.request_only ? ' <span class="muted">(request)</span>' : '') +
              '</td><td class="muted">' + esc(f.type) + '</td><td>' + link('<span class="yes">✓</span>', docs.api) + '</td><td>' +
-             tcell(f.tf, f.tf_name, f.name, docs.terraform) + '</td><td>' + tcell(f.ansible, f.ansible_name, f.name, docs.ansible) + '</td></tr>';
+             tcell(f.tf, f.tf_name, f.name, docs.terraform, f.request_only) + '</td><td>' + tcell(f.ansible, f.ansible_name, f.name, docs.ansible, f.request_only) + '</td></tr>';
       });
       return h + '</tbody></table>';
     }
