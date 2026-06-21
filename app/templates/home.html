@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Home{% endblock %}
+{% block content %}
+<style>
+  .home-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(264px,1fr)); gap:14px; margin-top:8px; }
+  a.homecard { display:block; text-decoration:none; color:inherit; transition:border-color .12s, transform .12s; }
+  a.homecard:hover { border-color:var(--line-strong); transform:translateY(-1px); }
+  a.homecard .hc-title { font-size:15px; font-weight:700; color:var(--text); }
+  a.homecard:hover .hc-title { color:var(--accent); }
+</style>
+
+<div class="row">
+  <div class="grow">
+    <h1>Welcome back, {{ user.first_name or user.username }}</h1>
+    <p class="muted">DC Integration Simulator — your Check Point PoV portal. Jump into a section below.</p>
+  </div>
+  <a class="btn secondary" href="/account">Account &amp; profile →</a>
+</div>
+
+{% macro card(href, title, desc, count=none) %}
+  <a class="card homecard" href="{{ href }}">
+    <div class="row" style="align-items:center;gap:8px;margin:0;">
+      <span class="hc-title">{{ title }}</span>
+      <span class="grow"></span>
+      {% if count is not none %}<span class="pill">{{ count }}</span>{% endif %}
+    </div>
+    <p class="muted small" style="margin:7px 0 0;">{{ desc }}</p>
+  </a>
+{% endmacro %}
+
+<div class="home-grid">
+  {{ card("/feeds", "Feeds", "Serve Check Point-format dynamic feeds (Generic DC, IOC, network feeds) for import.", counts.feeds) }}
+  {{ card("/datacenters", "Data Centers", "Mock cloud / datacenter inventories CloudGuard connects to and imports.", counts.datacenters) }}
+  {{ card("/management", "Management Servers", "Pull, view, edit, and export real SMS policy over the web_api.", counts.management) }}
+  {{ card("/access-automation", "Access automation", "Turn a ticket request into the minimal correct rule change — no-op / widen / create.") }}
+  {{ card("/gateways", "Gateways", "Saved Gaia gateways + OS config export (interfaces, routes, DNS…).", counts.gateways) }}
+  {{ card("/layers", "Dynamic Layers", "Gaia dynamic-object layers driven by the feeds.", counts.layers) }}
+  {{ card("/coverage", "Automation coverage", "Object/field coverage across web_api, Terraform, and Ansible.") }}
+  {{ card("/api-explorer", "API explorer", "Browse the live Management / Gaia API in an embedded Swagger UI.") }}
+  {{ card("/siem", "SIEM", "Log Exporter receiver + a searchable viewer of received logs.") }}
+  {{ card("/activity", "Activity", "Every API call the portal served — methods, status, timing.") }}
+  {{ card("/settings", "Settings", "Tune session reuse + the revision-based policy cache.") }}
+</div>
+{% endblock %}

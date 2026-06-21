@@ -11,7 +11,9 @@ from sqlalchemy.orm import Session
 from ..config import get_settings
 from ..db import get_db
 from ..links import public_url
-from ..models import Feed, FeedPoll, FeedType, Gateway, ManagementServer, User
+from ..models import (
+    Datacenter, DynamicLayer, Feed, FeedPoll, FeedType, Gateway, ManagementServer, User,
+)
 from ..security import (
     get_user_or_none, hash_password, new_feed_token, password_strength_error, verify_password,
 )
@@ -404,9 +406,51 @@ def change_password(
     return RedirectResponse("/account", status_code=303)
 
 
-# --- Dashboard -------------------------------------------------------------------------
+@router.post("/account/profile")
+def update_profile(
+    request: Request,
+    first_name: str = Form(""),
+    last_name: str = Form(""),
+    email: str = Form(""),
+    title: str = Form(""),
+    db: Session = Depends(get_db),
+):
+    user = get_user_or_none(request, db)
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+    email = (email or "").strip()
+    if email and ("@" not in email or " " in email or len(email) > 200):
+        _flash(request, "That doesn't look like a valid email address.", "error")
+        return RedirectResponse("/account", status_code=303)
+    user.first_name = (first_name or "").strip()[:80]
+    user.last_name = (last_name or "").strip()[:80]
+    user.email = email
+    user.title = (title or "").strip()[:120]
+    db.commit()
+    _flash(request, "Profile saved.")
+    return RedirectResponse("/account", status_code=303)
+
+
+# --- Home ------------------------------------------------------------------------------
 @router.get("/", response_class=HTMLResponse)
-def dashboard(request: Request, db: Session = Depends(get_db)):
+def home(request: Request, db: Session = Depends(get_db)):
+    user = get_user_or_none(request, db)
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+
+    def _count(model):
+        return db.scalar(select(func.count()).select_from(model)
+                         .where(model.owner_id == user.id)) or 0
+
+    counts = {"feeds": _count(Feed), "datacenters": _count(Datacenter), "gateways": _count(Gateway),
+              "management": _count(ManagementServer), "layers": _count(DynamicLayer)}
+    return templates.TemplateResponse(request, "home.html",
+                                      {"user": user, "counts": counts, "flash": _pop_flash(request)})
+
+
+# --- Feeds -----------------------------------------------------------------------------
+@router.get("/feeds", response_class=HTMLResponse)
+def feeds_list(request: Request, db: Session = Depends(get_db)):
     user = get_user_or_none(request, db)
     if user is None:
         return RedirectResponse("/login", status_code=303)
@@ -920,4 +964,4 @@ def delete_feed_form(feed_id: int, request: Request, db: Session = Depends(get_d
     db.delete(feed)
     db.commit()
     _flash(request, f"Feed “{name}” deleted.")
-    return RedirectResponse("/", status_code=303)
+    return RedirectResponse("/feeds", status_code=303)

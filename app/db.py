@@ -54,7 +54,15 @@ def init_db() -> None:
 
 # Additive, idempotent column migrations for SQLite (no Alembic): create_all won't add a column to an
 # already-existing table, so columns introduced later are added here on boot.
-_ADDED_COLUMNS = {"gateways": {"auto_trust": "BOOLEAN DEFAULT 1"}}
+_ADDED_COLUMNS = {
+    "gateways": {"auto_trust": "BOOLEAN DEFAULT 1"},
+    "users": {
+        "first_name": "VARCHAR(80) DEFAULT ''",
+        "last_name": "VARCHAR(80) DEFAULT ''",
+        "email": "VARCHAR(200) DEFAULT ''",
+        "title": "VARCHAR(120) DEFAULT ''",
+    },
+}
 
 
 def _ensure_columns() -> None:

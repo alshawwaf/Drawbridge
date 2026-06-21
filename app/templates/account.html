@@ -2,7 +2,25 @@
 {% block title %}Account{% endblock %}
 {% block content %}
 <h1>Account</h1>
-<p class="muted">Signed in as <strong>{{ user.username }}</strong>.</p>
+<p class="muted">Signed in as <strong>{{ user.display_name }}</strong> (<code>{{ user.username }}</code>).</p>
+
+<div class="card" style="max-width:460px;">
+  <h2 style="margin-top:0;">Profile</h2>
+  <form method="post" action="/account/profile">
+    <div class="row" style="gap:12px;">
+      <div class="grow"><label>First name</label>
+        <input name="first_name" value="{{ user.first_name }}" maxlength="80" autocomplete="given-name"></div>
+      <div class="grow"><label>Last name</label>
+        <input name="last_name" value="{{ user.last_name }}" maxlength="80" autocomplete="family-name"></div>
+    </div>
+    <label>Email</label>
+    <input name="email" type="email" value="{{ user.email }}" maxlength="200" autocomplete="email"
+           placeholder="you@example.com">
+    <label>Title / role</label>
+    <input name="title" value="{{ user.title }}" maxlength="120" placeholder="e.g. Security Engineer">
+    <div style="margin-top:14px;"><button type="submit">Save profile</button></div>
+  </form>
+</div>
 
 <div class="card" style="max-width:460px;">
   <h2 style="margin-top:0;">Change password</h2>
