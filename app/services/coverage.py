@@ -135,6 +135,28 @@ def _hcl(v) -> str:
     return '"' + str(v).replace('"', '\\"') + '"'
 
 
+def _tf_assign(key, v, indent) -> list[str]:
+    """Render a value as HCL: a dict → a ``key { }`` block, a list-of-dicts → repeated blocks, anything
+    else → ``key = <value>``. The Check Point provider models nested settings (nat_settings, interfaces,
+    host_servers, hours_ranges, …) as blocks, not map assignments — so this keeps the example valid HCL."""
+    pad = "  " * indent
+    if isinstance(v, dict):
+        out = [f"{pad}{key} {{"]
+        for k, x in v.items():
+            out += _tf_assign(_u(k), x, indent + 1)
+        out.append(f"{pad}}}")
+        return out
+    if isinstance(v, list) and v and all(isinstance(x, dict) for x in v):
+        out = []
+        for item in v:
+            out.append(f"{pad}{key} {{")
+            for k, x in item.items():
+                out += _tf_assign(_u(k), x, indent + 1)
+            out.append(f"{pad}}}")
+        return out
+    return [f"{pad}{key} = {_hcl(v)}"]
+
+
 def _yaml(v) -> str:
     if isinstance(v, bool):
         return "true" if v else "false"
@@ -188,7 +210,7 @@ def _examples(obj: dict, api_type: str) -> dict:
             tn = (fmap.get(k) or {}).get("tf_name")   # real TF arg (ip-address -> ipv4_address); None = skip
             if tn and tn not in seen:
                 seen.add(tn)
-                tf_lines.append(f"  {tn} = {_hcl(v)}")
+                tf_lines += _tf_assign(tn, v, 1)      # dict/list-of-dicts → blocks, scalars → key = value
         tf_lines.append("}")
         out["terraform"] = "\n".join(tf_lines)
     else:
