@@ -74,9 +74,11 @@ def test_decide_no_op_source_inside_network():
     assert d.outcome is Outcome.NO_OP and d.target_rule.uid == "r8"
 
 
-def test_decide_widen_prefers_group():
+def test_decide_widen_source_adds_to_cell_not_group():
+    # WEB references a source group, but we widen the rule's CELL (never the shared group) to avoid
+    # granting the new source in every other rule that uses that group.
     d = aa.decide(AccessRequest(["192.168.9.9/32"], ["172.16.5.10/32"], "tcp", "443"), [WEB, CLEANUP])
-    assert d.outcome is Outcome.WIDEN and d.widen_group_uid == "grp-web-src"
+    assert d.outcome is Outcome.WIDEN and d.widen_field == "source" and d.widen_group_uid is None
 
 
 def test_decide_widen_falls_back_to_source_cell_when_no_group():
@@ -93,11 +95,11 @@ def test_decide_widen_destination_when_only_dest_differs():
     assert d.target_rule.uid == "r74" and d.widen_group_uid is None
 
 
-def test_decide_dest_widen_prefers_a_group_on_the_destination():
+def test_decide_dest_widen_via_cell_not_group():
     dns = _rule("rg", 74, "Accept", _host("10.1.2.250"), _net("9.9.9.0/24"), _tcp(53),
                 dest_groups=["grp-dns-dst"])
     d = aa.decide(AccessRequest(["10.1.2.250/32"], ["1.1.1.1/32"], "tcp", "53"), [dns, CLEANUP])
-    assert d.outcome is Outcome.WIDEN and d.widen_field == "destination" and d.widen_group_uid == "grp-dns-dst"
+    assert d.outcome is Outcome.WIDEN and d.widen_field == "destination" and d.widen_group_uid is None
 
 
 def test_execute_widen_destination_adds_to_rule_dest_cell(monkeypatch):
@@ -208,14 +210,38 @@ def test_decide_no_explicit_cleanup_creates_at_bottom():
     assert d.outcome is Outcome.CREATE and d.position == {"_above_cleanup": True}
 
 
-def test_decide_prefers_group_backed_widen_over_bare_cell():
-    # both accepts cover dst+svc with a different source; the group-backed one (even though later) wins
-    no_group = _rule("rn", 6, "Accept", _net("10.2.0.0/24"), _host("172.16.5.10"), _tcp(443))
-    grp_backed = _rule("rg", 7, "Accept", _net("10.3.0.0/24"), _host("172.16.5.10"), _tcp(443),
-                       groups=["grp-X"])
+def test_decide_widen_source_via_cell_first_match():
+    # dst + svc equal, source differs -> widen the SOURCE cell of the first matching rule (cell add,
+    # never a shared group)
+    r1 = _rule("rn", 6, "Accept", _net("10.2.0.0/24"), _host("172.16.5.10"), _tcp(443), groups=["grp-X"])
+    r2 = _rule("rg", 7, "Accept", _net("10.3.0.0/24"), _host("172.16.5.10"), _tcp(443))
     d = aa.decide(AccessRequest(["192.168.9.9/32"], ["172.16.5.10/32"], "tcp", "443"),
-                  [no_group, grp_backed, CLEANUP])
-    assert d.outcome is Outcome.WIDEN and d.target_rule.uid == "rg" and d.widen_group_uid == "grp-X"
+                  [r1, r2, CLEANUP])
+    assert d.outcome is Outcome.WIDEN and d.widen_field == "source"
+    assert d.target_rule.uid == "rn" and d.widen_group_uid is None
+
+
+def test_decide_no_widen_when_source_cell_broader_creates_instead():
+    # the rule-7.3 over-grant: source {win_client, win_server}, only win_server requested. Widening the
+    # destination would also grant win_client -> 1.1.1.1, so we must CREATE a precise rule instead.
+    multi = _rule("r73", 73, "Accept", aa._merge(_host("10.1.2.249") + _host("10.1.2.250")),
+                  _host("9.9.9.9"), _tcp(53))
+    d = aa.decide(AccessRequest(["10.1.2.250/32"], ["1.1.1.1/32"], "tcp", "53"), [multi, CLEANUP])
+    assert d.outcome is Outcome.CREATE
+
+
+def test_decide_no_widen_when_dest_cell_broader_creates_instead():
+    # rule destination is a /24; widening the source would grant the new source the whole /24.
+    rule = _rule("rb", 5, "Accept", _host("10.1.0.5"), _net("172.16.5.0/24"), _tcp(443))
+    d = aa.decide(AccessRequest(["192.168.9.9/32"], ["172.16.5.10/32"], "tcp", "443"), [rule, CLEANUP])
+    assert d.outcome is Outcome.CREATE
+
+
+def test_decide_no_widen_when_service_cell_broader_creates_instead():
+    # rule allows the whole 1-1024 range; widening the source would grant the new source all of it.
+    rule = _rule("rw", 5, "Accept", _host("10.1.0.5"), _host("172.16.5.10"), _tcp("1-1024"))
+    d = aa.decide(AccessRequest(["192.168.9.9/32"], ["172.16.5.10/32"], "tcp", "443"), [rule, CLEANUP])
+    assert d.outcome is Outcome.CREATE
 
 
 # --- BLOCKER regression: a rule whose extent is UNKNOWN must never be treated as out-of-path -----
@@ -320,17 +346,19 @@ def _fake_session_factory(calls, hosts=None, services=None, fail_on=None):
     return FS
 
 
-def test_execute_widen_group_publishes(monkeypatch):
+def test_execute_widen_adds_to_source_cell(monkeypatch):
     calls = []
-    monkeypatch.setattr(aa, "MgmtSession", _fake_session_factory(calls, hosts={}))
+    monkeypatch.setattr(aa, "MgmtSession", _fake_session_factory(calls))
     monkeypatch.setattr(aa, "load_layer", lambda s, layer, package=None: [WEB, CLEANUP])
     res = aa.execute(object(), "secret",
                      AccessRequest(["192.168.9.9/32"], ["172.16.5.10/32"], "tcp", "443"),
                      "Network", ticket_id="INC1", publish=True)
     assert res["ok"] and res["outcome"] == "widen" and res["published"] is True
     cmds = [c for c, _ in calls]
-    assert "add-host" in cmds and "set-group" in cmds and "publish" in cmds
-    assert "add-access-rule" not in cmds            # widening a group never adds a rule
+    assert "add-host" in cmds and "set-access-rule" in cmds and "publish" in cmds
+    assert "set-group" not in cmds and "add-access-rule" not in cmds   # cell add: no group, no new rule
+    setr = next(p for c, p in calls if c == "set-access-rule")
+    assert setr["source"] == {"add": "h-192-168-9-9"}
 
 
 def test_execute_create_publishes_rule_and_objects(monkeypatch):
