@@ -9,7 +9,9 @@ skip-verify path. Each call is recorded on ``session.trace`` so the UI can show 
 from __future__ import annotations
 
 import base64
+import contextlib
 import ssl
+import threading
 import time
 
 import httpx
@@ -46,10 +48,16 @@ class MgmtSession:
             layers = s.list_access_layers()
     """
 
-    def __init__(self, server, secret: str, timeout: float = 30.0):
+    def __init__(self, server, secret: str, timeout: float = 30.0, *, read_only: bool = False,
+                 session_timeout: int | None = None, session_description: str = "",
+                 auto_relogin: bool = False):
         self.server = server
         self._secret = secret
         self.base = f"https://{server.host}:{server.port}/web_api"
+        self._read_only = read_only          # read-only sessions take no locks; safe to share + reuse
+        self._session_timeout = session_timeout
+        self._session_description = session_description
+        self._auto_relogin = auto_relogin    # pooled read sessions transparently re-login on expiry
         try:
             verify = _verify_for(server)
         except ssl.SSLError as exc:
@@ -79,6 +87,12 @@ class MgmtSession:
         payload: dict = {"user": self.server.username, "password": self._secret}
         if (self.server.domain or "").strip():
             payload["domain"] = self.server.domain.strip()   # MDS/CMA target; omitted for a single SMS
+        if self._read_only:
+            payload["read-only"] = True          # no object/rule locks; doesn't consume a write slot
+        if self._session_timeout:
+            payload["session-timeout"] = int(self._session_timeout)
+        if self._session_description:
+            payload["session-description"] = self._session_description
         try:
             t = time.perf_counter()
             r = self._client.post(f"{self.base}/login", json=payload)
@@ -106,17 +120,34 @@ class MgmtSession:
         self.sid = None
 
     # --- calls -------------------------------------------------------------------------------
-    def call(self, command: str, payload: dict | None = None) -> dict:
+    def call(self, command: str, payload: dict | None = None, *, _retry: bool = True) -> dict:
         if not self.sid:
-            raise MgmtError("Not logged in.")
+            if self._auto_relogin:
+                self.login()
+            else:
+                raise MgmtError("Not logged in.")
         t = time.perf_counter()
         r = self._client.post(f"{self.base}/{command}", json=payload or {},
                               headers={"X-chkp-sid": self.sid})
         self._record(command, payload or {}, r, t)
         data = _safe_json(r)
         if r.status_code != 200:
+            # A shared/reused read session can have expired server-side (idle timeout). Re-login ONCE
+            # and retry. NEVER for a write session (auto_relogin off): a re-login would silently drop
+            # its uncommitted changes mid-transaction — fail loudly instead.
+            if _retry and self._auto_relogin and command != "logout" and _is_session_expired(r, data):
+                self.login()
+                return self.call(command, payload, _retry=False)
             raise MgmtError(_cp_error_detail(data) or f"{command} failed (HTTP {r.status_code}).")
         return data
+
+    def keepalive(self) -> None:
+        """Reset the session's idle timer without a new login (does NOT count against the login
+        throttle). Best-effort; auto_relogin in call() is the real expiry safety net."""
+        try:
+            self.call("keepalive")
+        except MgmtError:
+            pass
 
     def call_paged(self, command: str, payload: dict | None = None, *,
                    key: str = "objects", limit: int = 500) -> list[dict]:
@@ -265,6 +296,90 @@ def _login_error(resp) -> str:
     return f"Management login failed (HTTP {resp.status_code})." + (f" {msg}" if msg else "")
 
 
+def _is_session_expired(resp, data: dict) -> bool:
+    """Does this error mean our session id is no longer valid (idle-expired / disconnected)? Used to
+    decide whether a pooled read session should transparently re-login and retry."""
+    if resp.status_code == 401:
+        return True
+    msg = (_cp_error_detail(data) or "").lower()
+    code = str(data.get("code") or "").lower()
+    if "err_session" in code or "expired" in code or "wrong_session" in code:
+        return True
+    return "session" in msg and any(w in msg for w in
+                                    ("expired", "invalid", "timed out", "wrong", "not logged in"))
+
+
+# --- shared read-only session pool -----------------------------------------------------------
+# Real integrations do NOT log in per request — Check Point throttles remote logins (3/admin/domain/
+# 60s) and caps concurrent sessions (100). So all READS share one long-lived read-only session per
+# (server, domain): one login, reused across requests, keepalive'd when idle, re-logged-in on expiry,
+# and serialized by a per-session lock (a sid is a transaction handle, not a stateless bearer token).
+# WRITES never use this pool — they get an isolated read-write session (see apply_changes / execute).
+_POOL: dict = {}
+_POOL_LOCK = threading.Lock()
+
+
+class _PooledRead:
+    __slots__ = ("session", "call_lock", "last_used")
+
+    def __init__(self, session: "MgmtSession"):
+        self.session = session
+        self.call_lock = threading.Lock()
+        self.last_used = time.monotonic()
+
+
+def _pool_key(server):
+    return (getattr(server, "id", None) or f"{server.host}:{server.port}",
+            (getattr(server, "domain", "") or "").strip())
+
+
+@contextlib.contextmanager
+def read_session(server, secret: str):
+    """Yield a shared, long-lived READ-ONLY session for ``server``, serialized so only one request uses
+    its sid at a time. One login is amortised across every read. Falls back to a private per-call
+    session when reuse is disabled in Settings. The yielded session's ``trace`` holds ONLY this
+    operation's calls."""
+    from . import app_settings
+    if not app_settings.get("mgmt_session_reuse"):
+        with MgmtSession(server, secret, read_only=True,
+                         session_timeout=app_settings.get("mgmt_session_timeout")) as s:
+            yield s
+        return
+
+    with _POOL_LOCK:
+        entry = _POOL.get(_pool_key(server))
+        if entry is None:
+            sess = MgmtSession(server, secret, read_only=True, auto_relogin=True,
+                               session_timeout=app_settings.get("mgmt_session_timeout"),
+                               session_description="DC-Sim portal (read-only)")
+            sess.login()
+            entry = _PooledRead(sess)
+            _POOL[_pool_key(server)] = entry
+
+    with entry.call_lock:
+        if app_settings.get("mgmt_keepalive") and (time.monotonic() - entry.last_used) > 60:
+            entry.session.keepalive()          # cheap insurance; call() auto-relogin is the real net
+        entry.session.trace = []               # fresh trace for this (serialized) operation
+        try:
+            yield entry.session
+        finally:
+            entry.last_used = time.monotonic()
+
+
+def close_pool() -> None:
+    """Log out + close every pooled read session. Wire into the app shutdown (lifespan) hook so we
+    don't leave sessions lingering toward the 100-session ceiling."""
+    with _POOL_LOCK:
+        for entry in _POOL.values():
+            try:
+                entry.session.logout()
+            except Exception:  # noqa: BLE001
+                pass
+            with contextlib.suppress(Exception):
+                entry.session._client.close()
+        _POOL.clear()
+
+
 # --- rulebase pull + structuring (the read-only viewer) -------------------------------------
 
 def _obj_names(cell, objdict: dict) -> list[str]:
@@ -360,7 +475,7 @@ def _structure_rulebase(items: list[dict], objdict: dict) -> list[dict]:
 
 
 def pull_layers(server, secret: str) -> dict:
-    with MgmtSession(server, secret) as s:
+    with read_session(server, secret) as s:
         layers = s.list_access_layers()
         return {"layers": [{"name": l.get("name"), "uid": l.get("uid")} for l in layers], "trace": s.trace}
 
@@ -368,7 +483,7 @@ def pull_layers(server, secret: str) -> dict:
 def pull_rulebase(server, secret: str, layer: str, max_rules: int = 5000) -> dict:
     """Pull a layer's access rulebase with its object dictionary, paginating, and resolve every cell
     to names. Returns {layer, rows, total, shown, trace}."""
-    with MgmtSession(server, secret) as s:
+    with read_session(server, secret) as s:
         items: list[dict] = []
         objdict: dict = {}
         total, offset = 0, 0
@@ -420,7 +535,7 @@ def _collect_export_objects(objdict: dict) -> dict:
 def pull_for_export(server, secret: str, layer: str, max_rules: int = 5000) -> dict:
     """Pull a layer's rulebase with FULL object details, returning the structured rows plus the
     referenced objects grouped by type. Feeds ``mgmt_export.generate`` — no rendering here."""
-    with MgmtSession(server, secret) as s:
+    with read_session(server, secret) as s:
         items: list[dict] = []
         objdict: dict = {}
         total, offset = 0, 0
@@ -447,7 +562,9 @@ def test_connection(server, secret: str) -> dict:
     """Login, read the API version + domains, log out. Returns {ok, version, domains, layers, trace}."""
     out: dict = {"ok": False, "version": "", "domains": [], "layers": 0, "trace": [], "message": ""}
     try:
-        with MgmtSession(server, secret) as s:
+        # A deliberate, user-initiated connectivity + credential check -> a fresh isolated read-only
+        # login (not the pool), so it always validates the live credentials.
+        with MgmtSession(server, secret, read_only=True) as s:
             ver = s.call("show-api-versions")
             out["version"] = ver.get("current-version", "")
             out["domains"] = [d.get("name") for d in s.show_domains() if d.get("name")]
@@ -497,7 +614,8 @@ def apply_changes(server, secret: str, ops: list[dict], *, publish: bool) -> dic
     change never lingers. Returns {ok, published, results, trace, error?}."""
     results: list[dict] = []
     try:
-        with MgmtSession(server, secret) as s:
+        with MgmtSession(server, secret,
+                         session_description="DC-Sim portal (apply changes)") as s:
             try:
                 for op in ops:
                     s.call(op["command"], op.get("payload") or {})

@@ -1,5 +1,28 @@
 """Management web_api client: rulebase structuring + UID→name resolution (no live SMS needed)."""
-from app.services import mgmt_api, mgmt_export
+import types
+
+from app.services import app_settings, mgmt_api, mgmt_export
+
+
+class _Resp:
+    def __init__(self, code, body):
+        self.status_code = code
+        self._body = body
+
+    def json(self):
+        return self._body
+
+
+def _settings(**over):
+    vals = app_settings.defaults()
+    vals.update(over)
+    return lambda key: vals[key]
+
+
+def _srv(**kw):
+    base = {"id": 1, "host": "h", "port": 443, "domain": "", "username": "u", "cert_pem": ""}
+    base.update(kw)
+    return types.SimpleNamespace(**base)
 
 OBJDICT = {
     "u-any": {"uid": "u-any", "name": "Any", "type": "CpmiAnyObject"},
@@ -230,7 +253,7 @@ def test_export_collect_objects_recurses_groups_and_skips_predefined():
 def _fake_session(rec, fail_on=None):
     """A stand-in for MgmtSession that records calls instead of hitting a server."""
     class FS:
-        def __init__(self, server, secret, timeout=30.0):
+        def __init__(self, server, secret, timeout=30.0, **kwargs):
             self.trace = []
 
         def __enter__(self):
@@ -239,7 +262,7 @@ def _fake_session(rec, fail_on=None):
         def __exit__(self, *a):
             return False
 
-        def call(self, command, payload=None):
+        def call(self, command, payload=None, **kwargs):
             rec["calls"].append((command, payload))
             if fail_on and command == fail_on:
                 raise mgmt_api.MgmtError("server said no")
@@ -251,6 +274,139 @@ def _fake_session(rec, fail_on=None):
         def discard(self):
             rec["calls"].append(("discard", {}))
     return FS
+
+
+# --- session reuse pool + read-only login + expiry re-login (the login-storm fix) ------------
+def test_login_sends_read_only_and_session_timeout():
+    s = mgmt_api.MgmtSession(_srv(), "pw", read_only=True, session_timeout=3600)
+    captured = {}
+
+    def fake_post(url, json=None, headers=None):
+        captured.update(json or {})
+        return _Resp(200, {"sid": "x"})
+
+    s._client = types.SimpleNamespace(post=fake_post, close=lambda: None)
+    s.login()
+    assert captured.get("read-only") is True and captured.get("session-timeout") == 3600
+
+
+def test_read_session_pools_one_login_across_calls(monkeypatch):
+    mgmt_api.close_pool()
+    monkeypatch.setattr(app_settings, "get", _settings())
+    logins = []
+
+    class FakeSess:
+        _client = types.SimpleNamespace(close=lambda: None)
+
+        def __init__(self, server, secret, **kw):
+            self.kw = kw
+            self.sid = None
+            self.trace = []
+
+        def login(self):
+            logins.append(self.kw)
+            self.sid = "x"
+
+        def keepalive(self):
+            self.trace.append("keepalive")
+
+        def call(self, command, payload=None, **k):
+            self.trace.append(command)
+            return {}
+
+        def logout(self):
+            self.sid = None
+
+    monkeypatch.setattr(mgmt_api, "MgmtSession", FakeSess)
+    srv = _srv(id=101)
+    for _ in range(3):
+        with mgmt_api.read_session(srv, "s") as sess:
+            sess.call("show-access-layers")
+    assert len(logins) == 1                          # logged in ONCE, reused for all 3 reads
+    assert logins[0].get("read_only") is True        # and it's a read-only session
+    mgmt_api.close_pool()
+
+
+def test_read_session_reuse_off_logs_in_each_time(monkeypatch):
+    mgmt_api.close_pool()
+    monkeypatch.setattr(app_settings, "get", _settings(mgmt_session_reuse=False))
+    logins = []
+
+    class FakeSess:
+        _client = types.SimpleNamespace(close=lambda: None)
+
+        def __init__(self, server, secret, **kw):
+            self.sid = None
+            self.trace = []
+
+        def login(self):
+            logins.append(1)
+            self.sid = "x"
+
+        def __enter__(self):
+            self.login()
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def call(self, command, payload=None, **k):
+            return {}
+
+        def logout(self):
+            self.sid = None
+
+    monkeypatch.setattr(mgmt_api, "MgmtSession", FakeSess)
+    srv = _srv(id=102)
+    for _ in range(2):
+        with mgmt_api.read_session(srv, "s") as sess:
+            sess.call("x")
+    assert len(logins) == 2                           # reuse disabled -> a login per request
+
+
+def test_call_relogins_once_on_expired_session():
+    s = mgmt_api.MgmtSession(_srv(), "pw", auto_relogin=True)
+    s.sid = "stale"
+    posts = []
+
+    def fake_post(url, json=None, headers=None):
+        posts.append(url)
+        if url.endswith("/login"):
+            return _Resp(200, {"sid": "fresh"})
+        if len([p for p in posts if p.endswith("/show-x")]) == 1:
+            return _Resp(401, {"message": "session expired"})   # first call: expired
+        return _Resp(200, {"ok": 1})                            # after re-login: ok
+
+    s._client = types.SimpleNamespace(post=fake_post, close=lambda: None)
+    assert s.call("show-x") == {"ok": 1}
+    assert sum(1 for p in posts if p.endswith("/login")) == 1   # re-logged in exactly once
+    assert s.sid == "fresh"
+
+
+def test_write_session_does_not_silently_relogin():
+    s = mgmt_api.MgmtSession(_srv(), "pw")           # auto_relogin defaults False (write session)
+    s.sid = "stale"
+
+    def fake_post(url, json=None, headers=None):
+        return _Resp(401, {"message": "session expired"})
+
+    s._client = types.SimpleNamespace(post=fake_post, close=lambda: None)
+    try:
+        s.call("set-access-rule")
+        assert False, "expected MgmtError"
+    except mgmt_api.MgmtError:
+        pass
+
+
+def test_app_settings_validation_and_clamp():
+    timeout = app_settings._BY_KEY["mgmt_session_timeout"]
+    assert app_settings._coerce(timeout, "999999") == 3600        # clamp to max
+    assert app_settings._coerce(timeout, "5") == 60               # clamp to min
+    assert app_settings._coerce(timeout, "garbage") == 3600       # bad -> default
+    reuse = app_settings._BY_KEY["mgmt_session_reuse"]
+    assert app_settings._coerce(reuse, "1") is True and app_settings._coerce(reuse, "0") is False
+    assert app_settings._to_text(reuse, True) == "1" and app_settings._to_text(reuse, "no") == "0"
+    assert app_settings._to_text(timeout, 99999) == "3600"
 
 
 def test_build_set_rule_op_only_sends_changed_fields():

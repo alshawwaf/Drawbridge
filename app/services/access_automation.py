@@ -42,9 +42,10 @@ from enum import Enum
 from typing import Optional
 
 try:  # keep the engine import-safe outside the app runtime (offline smoke test)
-    from .mgmt_api import MgmtError, MgmtSession
+    from .mgmt_api import MgmtError, MgmtSession, read_session
 except Exception:  # pragma: no cover
     MgmtSession = object  # type: ignore
+    read_session = None  # type: ignore
 
     class MgmtError(Exception):
         pass
@@ -937,7 +938,7 @@ def _apply(session, decision: Decision, req: AccessRequest, layer: str,
 def preview(server, secret, req: AccessRequest, layer: str, *, package: Optional[str] = None) -> dict:
     """Read-only: load -> decide -> describe. Returns {ok, outcome, reason, ..., trace}."""
     try:
-        with MgmtSession(server, secret) as s:
+        with read_session(server, secret) as s:          # read-only, pooled — no login per preview
             rules = load_layer(s, layer, package)
             decision = decide(req, rules)
             return {"ok": True, **build_preview(s, decision, req, rules), "trace": s.trace}
@@ -950,7 +951,11 @@ def execute(server, secret, req: AccessRequest, layer: str, *, package: Optional
     """Load -> decide -> apply in ONE session. ``publish`` commits; otherwise the change is made
     then DISCARDED (validates against the SMS with zero commit). Discards on any error."""
     try:
-        with MgmtSession(server, secret) as s:
+        # WRITE path: an isolated read-write session (NOT the shared read pool) that loads the live
+        # policy, decides, applies, and publishes/discards in one transaction -> always decided on
+        # fresh rules, locks held only for this commit.
+        with MgmtSession(server, secret,
+                         session_description="DC-Sim access automation (apply)") as s:
             rules = load_layer(s, layer, package)
             decision = decide(req, rules)
             base = {"outcome": decision.outcome.value, "reason": decision.reason,
