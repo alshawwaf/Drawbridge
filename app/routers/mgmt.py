@@ -195,7 +195,7 @@ def mgmt_export_run(sid: int, request: Request, name: str = "", db: Session = De
         bundle = mgmt_api.pull_for_export(ms, secret, name)
     except mgmt_api.MgmtError as exc:
         return JSONResponse({"error": str(exc)}, status_code=400)
-    return JSONResponse(mgmt_export.generate(bundle))
+    return JSONResponse(mgmt_export.generate(bundle, host=ms.host, domain=ms.domain or ""))
 
 
 @router.post("/management/{sid}/apply")
