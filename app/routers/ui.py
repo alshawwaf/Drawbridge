@@ -298,7 +298,17 @@ def _selections_label(feed: Feed) -> str:
 
 
 def _flash(request: Request, text: str, kind: str = "success") -> None:
-    request.session["flash"] = {"text": text, "type": kind}
+    # Cap length: the flash rides in the signed session cookie (~4KB browser limit); an overlong
+    # message would silently drop the whole cookie and log the user out.
+    request.session["flash"] = {"text": (text or "")[:800], "type": kind}
+
+
+def _clamp_interval(value, default: int = 3600) -> int:
+    """Server-side guard for poll intervals (the client min=1 isn't authoritative): 1s .. 24h."""
+    try:
+        return max(1, min(int(value), 86400))
+    except (TypeError, ValueError):
+        return default
 
 
 def _pop_flash(request: Request) -> dict | None:
@@ -334,7 +344,7 @@ def login_submit(
     return RedirectResponse("/", status_code=303)
 
 
-@router.get("/logout")
+@router.post("/logout")
 def logout(request: Request):
     request.session.clear()
     return RedirectResponse("/login", status_code=303)
@@ -382,8 +392,12 @@ async def portal_import(request: Request, file: UploadFile = File(None), db: Ses
     if file is None or not file.filename:
         _flash(request, "Choose a bundle file to import.", "error")
         return RedirectResponse("/", status_code=303)
+    raw = await file.read()
+    if len(raw) > 8 * 1024 * 1024:
+        _flash(request, "Bundle too large (max 8 MB).", "error")
+        return RedirectResponse("/", status_code=303)
     try:
-        data = json.loads((await file.read()).decode("utf-8"))
+        data = json.loads(raw.decode("utf-8"))
         result = bundle.import_bundle(db, user, data)
     except (ValueError, json.JSONDecodeError, UnicodeDecodeError) as exc:
         _flash(request, f"Import failed: {exc}", "error")
@@ -485,7 +499,7 @@ def create_generic(
         name=name,
         description=description,
         content=content,
-        interval_seconds=interval_seconds,
+        interval_seconds=_clamp_interval(interval_seconds),
         auth_header_key=auth_header_key or None,
         auth_header_value=auth_header_value or None,
         owner_id=user.id,
@@ -549,7 +563,7 @@ def create_network(
         name=name,
         description=description,
         content=content,
-        interval_seconds=interval_seconds,
+        interval_seconds=_clamp_interval(interval_seconds),
         auth_header_key=basic_user or None,
         auth_header_value=basic_pass or None,
         owner_id=user.id,
@@ -613,7 +627,7 @@ def create_ioc(
         name=name,
         description=description,
         content=content,
-        interval_seconds=interval_seconds,
+        interval_seconds=_clamp_interval(interval_seconds),
         auth_header_key=basic_user or None,
         auth_header_value=basic_pass or None,
         owner_id=user.id,
