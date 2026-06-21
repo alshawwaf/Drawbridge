@@ -91,9 +91,13 @@ def api_explorer_page(request: Request, api: str = "management", version: str = 
         return RedirectResponse("/login", status_code=303)
     if api not in ("management", "gaia"):
         api = "management"
+    servers = _explorer_servers(db, user)
+    # Pre-select a registered server when one exists, so examples + Try it out target it by default
+    # (falling back to the docs placeholder only when nothing is registered for this API).
+    default_server = servers.get(api, [{}])[0].get("url", "") if servers.get(api) else ""
     return templates.TemplateResponse(request, "api_explorer.html", {
         "api_type": api, "version": version or coverage.latest(api),
-        "versions": coverage.versions(), "servers": _explorer_servers(db, user),
+        "versions": coverage.versions(), "servers": servers, "default_server": default_server,
     })
 
 
