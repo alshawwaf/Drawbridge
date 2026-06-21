@@ -98,10 +98,26 @@
   #swagger-ui .dialog-ng .modal-ux-header h3,
   #swagger-ui .dialog-ng .modal-ux-content h4, #swagger-ui .dialog-ng p { color:var(--text); }
   #swagger-ui .backdrop-ux { background:var(--overlay); }
-  /* misc text Swagger leaves dark-on-dark */
-  #swagger-ui .opblock-body pre.microlight,
-  #swagger-ui .highlight-code { border-radius:8px; }
-  #swagger-ui .copy-to-clipboard { background:var(--surface-3); }
+  /* responses: example/schema code blocks, media-type select, sub-tabs */
+  #swagger-ui .responses-inner { background:transparent; }
+  #swagger-ui table.responses-table td, #swagger-ui table.responses-table th { background:transparent; }
+  #swagger-ui .model-example { background:transparent; border:0; }
+  #swagger-ui .microlight, #swagger-ui pre.microlight, #swagger-ui .highlight-code,
+  #swagger-ui .body-param__example, #swagger-ui .example { background:var(--input-bg) !important;
+    border:1px solid var(--line); border-radius:8px; color:var(--text); }
+  #swagger-ui .microlight code, #swagger-ui .renderedMarkdown pre code { color:var(--text); }
+  #swagger-ui select, #swagger-ui .content-type, #swagger-ui .examples-select select {
+    background:var(--input-bg); color:var(--text); border:1px solid var(--line); }
+  /* the "Example Value | Schema" / "Model | Example" sub-tabs */
+  #swagger-ui .tab li { color:var(--muted); }
+  #swagger-ui .tab li.active, #swagger-ui .tab li button.tablinks.active { color:var(--text); }
+  #swagger-ui .tab li button.tablinks { color:var(--muted); }
+  #swagger-ui .response-control-media-type__title,
+  #swagger-ui .response-control-media-type__accept-message,
+  #swagger-ui .response-control-examples__title { color:var(--muted); }
+  #swagger-ui .response-control-media-type--accept-controller select { border-color:var(--accent); }
+  #swagger-ui .copy-to-clipboard { background:var(--surface-3); border-radius:6px; }
+  #swagger-ui .copy-to-clipboard button { background:var(--surface-3); }
   #swagger-ui svg.arrow { fill:var(--muted); }
 </style>
 
