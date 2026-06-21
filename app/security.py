@@ -39,6 +39,27 @@ def new_feed_token(nbytes: int = 24) -> str:
     return secrets.token_urlsafe(nbytes)
 
 
+_MIN_PASSWORD = 10
+_COMMON_PASSWORDS = {
+    "password", "password1", "123456", "12345678", "123456789", "qwerty", "qwerty123",
+    "letmein", "admin", "admin123", "changeme", "checkpoint", "welcome", "iloveyou",
+}
+
+
+def password_strength_error(password: str) -> str | None:
+    """Return a human message if the password is too weak, else None. Enforced on change-password
+    (the env-seeded admin password can't be validated here, so the change-password page is the path
+    to a strong one)."""
+    pw = password or ""
+    if len(pw) < _MIN_PASSWORD:
+        return f"Password must be at least {_MIN_PASSWORD} characters."
+    if pw.lower() in _COMMON_PASSWORDS:
+        return "That password is too common — choose another."
+    if pw.isdigit() or pw.isalpha():
+        return "Use a mix of letters and numbers (symbols help too)."
+    return None
+
+
 def get_user_or_none(request: Request, db: Session) -> User | None:
     uid = request.session.get("uid")
     if not uid:

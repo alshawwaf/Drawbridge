@@ -258,6 +258,18 @@ class Notification(Base):
     created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
 
 
+class LoginThrottle(Base):
+    """Brute-force protection for the login form, keyed by CLIENT IP (never username — locking a
+    username would let anyone DoS the admin out of their own portal). Too many failures -> a cooldown."""
+
+    __tablename__ = "login_throttle"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)     # client IP
+    fails: Mapped[int] = mapped_column(Integer, default=0)
+    first_fail: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    locked_until: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class ManagementServer(Base):
     """A saved Check Point Management Server (or MDS domain/CMA) connection the portal drives over the
     `web_api`: pull layers/objects, view/edit them, export to IaC. Login password / API key is stored
