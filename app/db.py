@@ -2,7 +2,7 @@
 import os
 from collections.abc import Iterator
 
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from .config import get_settings
@@ -13,9 +13,20 @@ class Base(DeclarativeBase):
 
 
 _settings = get_settings()
-_connect_args = {"check_same_thread": False} if _settings.database_url.startswith("sqlite") else {}
+_is_sqlite = _settings.database_url.startswith("sqlite")
+_connect_args = {"check_same_thread": False, "timeout": 30} if _is_sqlite else {}
 engine = create_engine(_settings.database_url, connect_args=_connect_args)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+
+
+if _is_sqlite:
+    @event.listens_for(engine, "connect")
+    def _sqlite_pragmas(dbapi_conn, _record):   # WAL + 30s busy wait so readers and one writer coexist
+        cur = dbapi_conn.cursor()                # instead of raising "database is locked" under contention
+        cur.execute("PRAGMA journal_mode=WAL")
+        cur.execute("PRAGMA busy_timeout=30000")
+        cur.execute("PRAGMA synchronous=NORMAL")
+        cur.close()
 
 
 def get_db() -> Iterator[Session]:

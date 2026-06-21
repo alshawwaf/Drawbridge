@@ -165,7 +165,7 @@ def _vm_propset(vm: dict, index: int) -> str:
         ("guest.hostName", "xsd:string", name),
         ("guest.guestState", "xsd:string", "running" if power == "poweredOn" else "notRunning"),
         ("config.guestFullName", "xsd:string", guest_os),
-        ("config.uuid", "xsd:string", str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{name}-{ip}"))),
+        ("config.uuid", "xsd:string", str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{moid}-{name}-{ip}"))),
     ]
     propset = "".join(
         f'<propSet><name>{n}</name><val xsi:type="{t}">{_esc(v)}</val></propSet>'
@@ -321,7 +321,7 @@ def inventory_object_updates(dc) -> list[str]:
             _change("guest.ipAddress", _str_val(ip) if ip else None),
             _change("resourcePool", _moref("ResourcePool", _RP)),
             _change("config.managedBy"),                                 # unset
-            _change("config.instanceUuid", _str_val(str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{name}-iu")))),
+            _change("config.instanceUuid", _str_val(str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{dc.token}-{moid}-iu")))),
             _change("config.tools"),                                     # ToolsConfigInfo not modeled
         ]))
     # Emit CHILDREN before PARENTS. CloudGuard's scanner resolves downward refs (childEntity,

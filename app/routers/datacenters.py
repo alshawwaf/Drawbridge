@@ -849,7 +849,12 @@ def _dc_parse_edit(dc: Datacenter, raw) -> dict:
         _edit_auth(content, dc, raw, identity={"os_username": "username", "os_project": "project"},
                    secret_form="os_password", secret_key="password")
     elif p == "vcenter":
-        content = {"vms": parse_vms(raw.get("vms_text", ""))}
+        vms = parse_vms(raw.get("vms_text", ""))
+        prev = {v.get("name"): v for v in (dc.content or {}).get("vms", [])}
+        for v in vms:                       # editing names/IPs/tags must not wipe stored power/guest_os
+            old = prev.get(v["name"], {})
+            v["power"], v["guest_os"] = old.get("power", v["power"]), old.get("guest_os", v["guest_os"])
+        content = {"vms": vms}
         if not content["vms"]:
             raise ValueError("Add at least one VM.")
         _edit_auth(content, dc, raw, identity={"vc_username": "username"},

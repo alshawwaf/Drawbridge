@@ -120,9 +120,9 @@ def endpoints(dc) -> list[dict]:
     res = []
     for g in _epgs(dc):
         for ip in g.get("ips", []) or []:
-            mac = _mac(ip)
-            res.append(_mo("fvCEp", _attrs({"dn": f"{_ap_dn(dc)}/epg-{g['name']}/cep-{mac}",
-                                            "name": mac, "mac": mac, "ip": ip, "encap": "vlan-100"})))
+            cep = ip.replace(":", "-").replace(".", "-")   # unique per full IP (v4/v6); no '/' so DN parsing holds
+            res.append(_mo("fvCEp", _attrs({"dn": f"{_ap_dn(dc)}/epg-{g['name']}/cep-{cep}",
+                                            "name": cep, "mac": _mac(ip), "ip": ip, "encap": "vlan-100"})))
     return res
 
 

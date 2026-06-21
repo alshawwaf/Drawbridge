@@ -525,6 +525,50 @@ def resolve_host(session, ip: str, name_hint: Optional[str] = None) -> str:
     return name
 
 
+def _endpoint_name(net) -> str:
+    base = str(net.network_address).replace(".", "-").replace(":", "-")
+    return f"h-{base}" if net.prefixlen == net.max_prefixlen else f"n-{base}-{net.prefixlen}"
+
+
+def lookup_network(session, net) -> Optional[str]:
+    """Existing network object name matching this subnet + prefix, or None (dedup by value)."""
+    sub_key = "subnet6" if net.version == 6 else "subnet4"
+    mask_key = "mask-length6" if net.version == 6 else "mask-length4"
+    found = session.call("show-objects",
+                         {"filter": str(net.network_address), "type": "network", "limit": 25})  # VERIFY
+    for o in found.get("objects", []):
+        if str(o.get(sub_key)) == str(net.network_address) and int(o.get(mask_key, -1)) == net.prefixlen:
+            return o["name"]
+    return None
+
+
+def lookup_endpoint(session, cidr: str) -> Optional[str]:
+    """Existing object for a request endpoint — a host for /32 & /128, else a network — or None."""
+    net = ipaddress.ip_network(cidr, strict=False)
+    if net.prefixlen == net.max_prefixlen:
+        return lookup_host(session, str(net.network_address))
+    return lookup_network(session, net)
+
+
+def resolve_endpoint(session, cidr: str) -> str:
+    """Reuse-or-create the object that represents a request endpoint. Critically, a CIDR wider than a
+    single address materializes as a NETWORK object (not a /32 host), so the committed rule covers the
+    full requested scope that decide() reasoned over — never silently narrowed to one IP."""
+    net = ipaddress.ip_network(cidr, strict=False)
+    if net.prefixlen == net.max_prefixlen:
+        return resolve_host(session, str(net.network_address), name_hint=_endpoint_name(net))
+    existing = lookup_network(session, net)
+    if existing:
+        return existing
+    name = _endpoint_name(net)
+    addr = str(net.network_address)
+    if net.version == 6:
+        session.call("add-network", {"name": name, "subnet6": addr, "mask-length6": net.prefixlen})  # VERIFY
+    else:
+        session.call("add-network", {"name": name, "subnet4": addr, "mask-length4": net.prefixlen})  # VERIFY
+    return name
+
+
 def lookup_service(session, protocol: str, port: str) -> Optional[str]:
     """Existing service object name for this exact port/proto (incl. predefined), or None."""
     proto = protocol.lower()
@@ -579,19 +623,19 @@ def build_preview(session, decision: Decision, req: AccessRequest, rules: list[P
     if decision.outcome in (Outcome.NO_OP, Outcome.REVIEW):
         return out
 
-    src_ip = req.src_cidrs[0].split("/")[0]
-    existing = lookup_host(session, src_ip)
-    out["source"] = {"ip": src_ip, "exists": bool(existing),
-                     "name": existing or f"h-{src_ip.replace('.', '-')}"}
+    src_cidr = req.src_cidrs[0]
+    existing = lookup_endpoint(session, src_cidr)
+    out["source"] = {"ip": src_cidr, "exists": bool(existing),
+                     "name": existing or _endpoint_name(ipaddress.ip_network(src_cidr, strict=False))}
 
     if decision.outcome == Outcome.WIDEN:
         out["widen"] = {"group_uid": decision.widen_group_uid,
                         "via": "group object" if decision.widen_group_uid else "rule source cell"}
     elif decision.outcome == Outcome.CREATE:
-        dst_ip = req.dst_cidrs[0].split("/")[0]
-        d_exist = lookup_host(session, dst_ip)
-        out["destination"] = {"ip": dst_ip, "exists": bool(d_exist),
-                              "name": d_exist or f"h-{dst_ip.replace('.', '-')}"}
+        dst_cidr = req.dst_cidrs[0]
+        d_exist = lookup_endpoint(session, dst_cidr)
+        out["destination"] = {"ip": dst_cidr, "exists": bool(d_exist),
+                              "name": d_exist or _endpoint_name(ipaddress.ip_network(dst_cidr, strict=False))}
         s_exist = lookup_service(session, req.protocol, req.ports)
         out["service"] = {"exists": bool(s_exist),
                           "name": s_exist or f"{req.protocol.upper()}-{req.ports}"}
@@ -604,7 +648,7 @@ def build_preview(session, decision: Decision, req: AccessRequest, rules: list[P
 def _apply(session, decision: Decision, req: AccessRequest, layer: str,
            rules: list[ParsedRule], ticket_id: str) -> dict:
     out: dict = {"ops": []}
-    src_name = resolve_host(session, req.src_cidrs[0].split("/")[0])
+    src_name = resolve_endpoint(session, req.src_cidrs[0])
     out["source_object"] = src_name
 
     if decision.outcome == Outcome.WIDEN:
@@ -619,7 +663,7 @@ def _apply(session, decision: Decision, req: AccessRequest, layer: str,
                           "source": {"add": src_name}})                        # VERIFY
             out["ops"].append(f"set-access-rule {decision.target_rule.uid} source.add {src_name}")
     else:  # CREATE
-        dst_name = resolve_host(session, req.dst_cidrs[0].split("/")[0])
+        dst_name = resolve_endpoint(session, req.dst_cidrs[0])
         svc_name = resolve_service(session, req.protocol, req.ports)
         position = _position_payload(decision.position or {})
         payload = {
