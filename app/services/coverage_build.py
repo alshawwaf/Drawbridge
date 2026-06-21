@@ -2,9 +2,10 @@
 in-app "check for updates" endpoint.
 
 ``build_from_spec(api_type, version, spec)`` turns one OpenAPI document into the compact artifact the
-/coverage page reads. The endpoint fetches a newer spec from the user's CP-Docs-To-Swagger service
-(``fetch_spec``) and runs this on it — the deployed portal has no local spec files. TF/Ansible support is
-derived from the API schema + documented divergences (the web_api side is authoritative).
+/coverage page reads. The "check for updates" endpoint builds a fresh spec from Check Point's published
+API docs via the in-portal converter (``fetch_spec`` → ``app.services.cp_docs``, vendored from
+CP-Docs-To-Swagger) and runs this on it — no external service and no local spec files needed. TF/Ansible
+support is derived from the API schema + documented divergences (the web_api side is authoritative).
 """
 from __future__ import annotations
 
@@ -12,11 +13,7 @@ import json
 import os
 import re
 
-import httpx
-
 OUT_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "coverage_data")
-# The user's CP-Docs-To-Swagger service (override with COVERAGE_SPEC_URL). Used only for check-for-updates.
-SPEC_BASE_URL = os.environ.get("COVERAGE_SPEC_URL", "https://swagger.ai.alshawwaf.ca")
 
 TOOL_VERSIONS = {
     "terraform": "CheckPointSW/checkpoint v3.2.0",
@@ -199,12 +196,13 @@ def write_artifact(art: dict, out_dir: str | None = None) -> str:
     return fn
 
 
-def fetch_spec(api_type: str, version: str = "", timeout: float = 60.0) -> dict:
-    """Fetch an OpenAPI spec from the CP-Docs-To-Swagger service (TLS verified). version='' = latest."""
-    url = f"{SPEC_BASE_URL}/openapi.json?api_type={api_type}" + (f"&version={version}" if version else "")
-    r = httpx.get(url, timeout=timeout, follow_redirects=True)
-    r.raise_for_status()
-    return r.json()
+def fetch_spec(api_type: str, version: str = "") -> dict:
+    """Build the OpenAPI spec for ``api_type``/``version`` straight from Check Point's published API
+    documentation, using the in-portal converter (``app.services.cp_docs``, vendored from
+    CP-Docs-To-Swagger). ``version=''`` discovers and uses the latest published version. No external
+    service dependency — the portal converts the docs itself over TLS-verified httpx."""
+    from app.services.cp_docs.generator import convert_checkpoint_to_openapi
+    return convert_checkpoint_to_openapi(api_type=api_type, api_version=version or None)
 
 
 def _norm_version(spec: dict, fallback: str) -> str:
