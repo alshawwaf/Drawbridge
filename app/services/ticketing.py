@@ -80,14 +80,23 @@ def _validate_port(port) -> str:
     return port
 
 
+def _norm_endpoint(value) -> str:
+    """A request endpoint is an IP / CIDR, or the literal Any (also accepts *, all, 0.0.0.0/0, ::/0)
+    which maps to Check Point's predefined Any object."""
+    v = str(value).strip()
+    if v.lower() in ("any", "all", "*", "0.0.0.0/0", "::/0"):
+        return "Any"
+    return _norm_cidr(v)
+
+
 def build_request(source, destination, protocol, port, application=None) -> AccessRequest:
     """Validate + normalise a raw tuple into an AccessRequest. Shared by the UI and the webhook. When
     `application` is given (e.g. "Facebook") it's an app request and protocol/port are ignored.
-    Raises ValueError (clean message) on anything malformed."""
+    Source/destination may be an IP, a CIDR, or 'Any'. Raises ValueError (clean) on anything malformed."""
     if source in (None, "") or destination in (None, ""):
         raise ValueError("source and destination are required.")
     try:
-        src_cidr, dst_cidr = _norm_cidr(source), _norm_cidr(destination)
+        src_cidr, dst_cidr = _norm_endpoint(source), _norm_endpoint(destination)
     except ValueError as exc:
         raise ValueError(f"Invalid source/destination: {exc}")
     application = str(application).strip() if application else ""

@@ -292,6 +292,56 @@ def test_decide_disjoint_drop_does_not_review():
     assert d.outcome is Outcome.CREATE
 
 
+# --- audit fixes D/E + Any endpoints ----------------------------------------------------------
+def test_decide_non_bottom_catchall_drop_is_review():
+    # an Any/Any/Any DROP that ISN'T the bottom cleanup is an intentional broad block (e.g. lockdown)
+    lockdown = _rule("rL", 1, "Drop", ANY, ANY, ServiceSet(any=True))
+    d = aa.decide(AccessRequest(["10.0.0.5/32"], ["172.16.0.5/32"], "tcp", "443"), [lockdown, CLEANUP])
+    assert d.outcome is Outcome.REVIEW and d.target_rule.uid == "rL"
+
+
+def test_decide_bottom_cleanup_is_the_create_floor():
+    d = aa.decide(AccessRequest(["10.0.0.5/32"], ["172.16.0.5/32"], "tcp", "443"), [CLEANUP])
+    assert d.outcome is Outcome.CREATE and d.position == {"above": "rC"}
+
+
+def test_decide_opaque_app_drop_reviews_a_port_request():
+    # an app category/group DROP might match L7 over tcp/443 -> can't prove it doesn't -> REVIEW
+    drop = _rule("rD", 5, "Drop", _host("10.1.1.1"), _host("8.8.8.8"), _app(opaque=True))
+    d = aa.decide(AccessRequest(["10.1.1.1/32"], ["8.8.8.8/32"], "tcp", "443"), [drop, CLEANUP])
+    assert d.outcome is Outcome.REVIEW and d.target_rule.uid == "rD"
+
+
+def test_decide_opaque_app_accept_does_not_block_a_port_create():
+    acc = _rule("rA", 5, "Accept", _host("10.1.1.1"), _host("8.8.8.8"), _app(opaque=True))
+    d = aa.decide(AccessRequest(["10.1.1.1/32"], ["8.8.8.8/32"], "tcp", "443"), [acc, CLEANUP])
+    assert d.outcome is Outcome.CREATE   # an app ACCEPT is harmless to create around (redundant at worst)
+
+
+def test_build_request_accepts_any_endpoint():
+    r = tk.build_request("10.1.2.250", "any", "tcp", "443")
+    assert r.dst_cidrs == ["Any"] and r.dst_iv() == aa.ANY_IP
+    r2 = tk.build_request("Any", "1.1.1.1", "tcp", "443")
+    assert r2.src_cidrs == ["Any"] and r2.src_iv() == aa.ANY_IP
+
+
+def test_decide_create_with_any_destination():
+    d = aa.decide(AccessRequest(["10.1.2.250/32"], ["Any"], application="Facebook"), [CLEANUP])
+    assert d.outcome is Outcome.CREATE
+
+
+def test_execute_any_destination_references_predefined_any(monkeypatch):
+    calls = []
+    monkeypatch.setattr(aa, "MgmtSession", _fake_session_factory(calls))
+    monkeypatch.setattr(aa, "load_layer", lambda s, layer, package=None: [CLEANUP])
+    res = aa.execute(object(), "secret",
+                     AccessRequest(["10.1.2.250/32"], ["Any"], application="Facebook"), "L", publish=True)
+    assert res["outcome"] == "create" and res["destination_object"] == "Any"
+    rule = next(p for c, p in calls if c == "add-access-rule")
+    assert rule["destination"] == "Any"
+    assert not any(c == "add-network" for c, _ in calls)   # Any is predefined, never created
+
+
 # --- BLOCKER regression: a rule whose extent is UNKNOWN must never be treated as out-of-path -----
 def _zone_rule(uid, num, action, dst, svc):
     """An accept/drop whose source is a security-zone / dynamic-object: parses to [] + src_unknown."""
