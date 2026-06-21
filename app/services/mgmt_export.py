@@ -581,6 +581,8 @@ def _api_rule_body(row, layer):
         for k in ("accounting", "per_connection", "per_session", "enable_firewall_session"):
             if tk.get(k):
                 track[k.replace("_", "-")] = True
+        if tk.get("alert"):
+            track["alert"] = tk["alert"]      # parity with the TF / Ansible renderers
         b["track"] = track
     elif row.get("track"):
         b["track"] = {"type": row["track"]}
@@ -811,7 +813,7 @@ def _render_ansible(layer, emit, rules, skipped, host="", domain="") -> str:
          '#      ansible_network_os=check_point.mgmt.checkpoint',
          '#      ansible_connection=httpapi',
          '#      ansible_httpapi_use_ssl=True',
-         '#      ansible_httpapi_validate_certs=False',
+         '#      ansible_httpapi_validate_certs=True   # keep TLS verification on; import the SMS CA if self-signed',
          '#      ansible_httpapi_port=443',
          '#      # ansible_password: "{{ vault_cp_password }}"']
     if domain:

@@ -126,6 +126,12 @@ def _q(s) -> str:
     return f'"{text}"'
 
 
+def _clq(s) -> str:
+    """A clish-safe double-quoted argument: collapse newlines and neutralise embedded double-quotes so
+    a comment / value can't break out of (or inject into) the generated set-command."""
+    return '"' + re.sub(r"\s*\n\s*", " ", str(s)).replace('"', "'") + '"'
+
+
 def _slug(s: str, used: set[str]) -> str:
     out = re.sub(r"[^0-9A-Za-z_]", "_", str(s or "")).strip("_").lower() or "x"
     if out[0].isdigit():
@@ -256,7 +262,7 @@ def _clish_set_iface(i: dict) -> list[str]:
     if str(i.get("mtu", "")).isdigit():
         out.append(f'set interface {nm} mtu {i.get("mtu")}')
     if _present(i.get("comments")):
-        out.append(f'set interface {nm} comments "{i.get("comments")}"')
+        out.append(f'set interface {nm} comments {_clq(i.get("comments"))}')
     return out
 
 
@@ -577,7 +583,7 @@ def _clish(cfg: dict) -> str:
             if _present(i.get(cpk)):
                 L.append(f'set interface {nm} {kw} {i.get(cpk)}')
         if _present(i.get("comments")):
-            L.append(f'set interface {nm} comments "{i.get("comments")}"')
+            L.append(f'set interface {nm} comments {_clq(i.get("comments"))}')
 
     L += _iface_clish(cfg)         # vlan / bond / bridge / loopback (incl. their create commands)
 
