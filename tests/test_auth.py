@@ -66,3 +66,10 @@ def test_password_strength_rule():
 def test_change_password_roundtrip_hash():
     h = hash_password("Sup3r-Secret-Pass")
     assert verify_password("Sup3r-Secret-Pass", h) and not verify_password("wrong", h)
+
+
+def test_user_display_name():
+    u = models.User(username="admin", first_name="", last_name="")
+    assert u.display_name == "admin"                      # falls back to username
+    u.first_name, u.last_name = "Khalid", "Alshawwaf"
+    assert u.display_name == "Khalid Alshawwaf"
