@@ -24,6 +24,26 @@ def _srv(**kw):
     base.update(kw)
     return types.SimpleNamespace(**base)
 
+
+class _RawSess:
+    """Fake read session for the policy-cache tests: serves a one-page rulebase + a controllable
+    published-revision token, and records the commands it receives."""
+
+    def __init__(self, token="rev-1"):
+        self.token = token
+        self.calls = []
+
+    def call(self, command, payload=None, **k):
+        self.calls.append(command)
+        if command == "show-sessions":
+            return {"objects": [{"uid": "s1", "publish-time": {"posix": self.token}}]}
+        if command == "show-access-rulebase":
+            if (payload or {}).get("offset", 0) == 0:
+                return {"rulebase": [{"type": "access-rule", "uid": "r1"}],
+                        "objects-dictionary": [{"uid": "o1", "name": "x"}], "total": 1, "to": 1}
+            return {"rulebase": [], "total": 1, "to": 1}
+        return {}
+
 OBJDICT = {
     "u-any": {"uid": "u-any", "name": "Any", "type": "CpmiAnyObject"},
     "u-net": {"uid": "u-net", "name": "dmz-net", "type": "network"},
@@ -407,6 +427,65 @@ def test_app_settings_validation_and_clamp():
     assert app_settings._coerce(reuse, "1") is True and app_settings._coerce(reuse, "0") is False
     assert app_settings._to_text(reuse, True) == "1" and app_settings._to_text(reuse, "no") == "0"
     assert app_settings._to_text(timeout, 99999) == "3600"
+
+
+# --- revision-based policy cache -------------------------------------------------------------
+def test_cached_raw_serves_within_revalidate_window(monkeypatch):
+    mgmt_api.invalidate_cache()
+    monkeypatch.setattr(app_settings, "get", _settings(mgmt_cache_revalidate=9999))
+    sess, srv = _RawSess(), _srv(id=201)
+    r1 = mgmt_api.cached_raw(sess, srv, "L")
+    after_cold = len(sess.calls)
+    r2 = mgmt_api.cached_raw(sess, srv, "L")
+    assert r1["cached"] is False and r2["cached"] is True
+    assert sess.calls.count("show-access-rulebase") == 1     # second served from cache
+    assert len(sess.calls) == after_cold                     # within window: made no calls at all
+    mgmt_api.invalidate_cache()
+
+
+def test_cached_raw_token_unchanged_serves_cache(monkeypatch):
+    mgmt_api.invalidate_cache()
+    monkeypatch.setattr(app_settings, "get", _settings(mgmt_cache_revalidate=0))   # always check token
+    sess, srv = _RawSess(token="rev-1"), _srv(id=202)
+    mgmt_api.cached_raw(sess, srv, "L")
+    r2 = mgmt_api.cached_raw(sess, srv, "L")
+    assert r2["cached"] is True
+    assert sess.calls.count("show-access-rulebase") == 1     # unchanged revision -> no re-pull
+    assert sess.calls.count("show-sessions") >= 1            # but it did check the token
+    mgmt_api.invalidate_cache()
+
+
+def test_cached_raw_repulls_when_revision_changes(monkeypatch):
+    mgmt_api.invalidate_cache()
+    monkeypatch.setattr(app_settings, "get", _settings(mgmt_cache_revalidate=0))
+    sess, srv = _RawSess(token="rev-1"), _srv(id=203)
+    mgmt_api.cached_raw(sess, srv, "L")
+    sess.token = "rev-2"                                     # someone published
+    r2 = mgmt_api.cached_raw(sess, srv, "L")
+    assert r2["cached"] is False
+    assert sess.calls.count("show-access-rulebase") == 2     # re-pulled on the new revision
+    mgmt_api.invalidate_cache()
+
+
+def test_cached_raw_disabled_always_pulls(monkeypatch):
+    mgmt_api.invalidate_cache()
+    monkeypatch.setattr(app_settings, "get", _settings(mgmt_policy_cache=False))
+    sess, srv = _RawSess(), _srv(id=204)
+    mgmt_api.cached_raw(sess, srv, "L")
+    mgmt_api.cached_raw(sess, srv, "L")
+    assert sess.calls.count("show-access-rulebase") == 2
+    assert "show-sessions" not in sess.calls                 # cache off -> never checks the token
+
+
+def test_invalidate_cache_forces_repull(monkeypatch):
+    mgmt_api.invalidate_cache()
+    monkeypatch.setattr(app_settings, "get", _settings(mgmt_cache_revalidate=9999))
+    sess, srv = _RawSess(), _srv(id=205)
+    mgmt_api.cached_raw(sess, srv, "L")
+    mgmt_api.invalidate_cache(srv)                           # e.g. after our own publish
+    r2 = mgmt_api.cached_raw(sess, srv, "L")
+    assert r2["cached"] is False and sess.calls.count("show-access-rulebase") == 2
+    mgmt_api.invalidate_cache()
 
 
 def test_build_set_rule_op_only_sends_changed_fields():

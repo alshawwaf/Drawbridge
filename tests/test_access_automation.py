@@ -669,7 +669,7 @@ def test_preview_is_read_only_and_reports_reuse(monkeypatch):
     calls = []
     monkeypatch.setattr(aa, "read_session",
                         _fake_read_session(calls, hosts={"192.168.9.9": "existing-host"}))
-    monkeypatch.setattr(aa, "load_layer", lambda s, layer, package=None: [WEB, CLEANUP])
+    monkeypatch.setattr(aa, "load_layer_cached", lambda s, srv, layer, package=None: ([WEB, CLEANUP], False))
     res = aa.preview(object(), "secret",
                      AccessRequest(["192.168.9.9/32"], ["172.16.5.10/32"], "tcp", "443"), "Network")
     assert res["ok"] and res["outcome"] == "widen" and res["widen"]["field"] == "source"
@@ -708,7 +708,7 @@ def test_execute_cidr_create_uses_network_for_src_and_dst(monkeypatch):
 def test_preview_cidr_reports_network_and_stays_read_only(monkeypatch):
     calls = []
     monkeypatch.setattr(aa, "read_session", _fake_read_session(calls))
-    monkeypatch.setattr(aa, "load_layer", lambda s, layer, package=None: [WEB, CLEANUP])
+    monkeypatch.setattr(aa, "load_layer_cached", lambda s, srv, layer, package=None: ([WEB, CLEANUP], False))
     res = aa.preview(object(), "secret",
                      AccessRequest(["10.50.0.0/24"], ["172.16.5.10/32"], "tcp", "443"), "Network")
     assert res["widen"]["object"]["name"] == "n-10-50-0-0-24" and res["widen"]["object"]["ip"] == "10.50.0.0/24"
