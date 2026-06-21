@@ -75,7 +75,7 @@ Content-Type: application/json
 <div class="card">
   <h2 style="margin-top:0;">How it decides — behind the scenes</h2>
   <p class="muted" style="margin-top:4px;">Every request runs the same first-match decision tree the market leaders use. It reuses a rule that already permits the traffic; widens a rule only when it matches the request exactly in the other two columns (so it never grants access nobody asked for); creates a least-privilege rule when nothing fits; and refuses to touch policy it can’t safely reason about.</p>
-  <svg id="aa-flow" viewBox="0 0 660 416" width="100%" role="img" aria-label="Access automation decision flow" style="max-width:660px;display:block;margin:10px auto 0;">
+  <svg id="aa-flow" viewBox="0 0 660 466" width="100%" role="img" aria-label="Access automation decision flow" style="max-width:660px;display:block;margin:10px auto 0;">
     <style>
       #aa-flow text{font-family:Inter,system-ui,sans-serif;dominant-baseline:middle;}
       #aa-flow .t{font-size:13px;font-weight:600;fill:var(--text);}
@@ -95,52 +95,64 @@ Content-Type: application/json
     <line class="arr" x1="149" y1="132" x2="149" y2="150" marker-end="url(#aa-ar)"/>
     <line class="arr" x1="149" y1="196" x2="149" y2="214" marker-end="url(#aa-ar)"/>
     <line class="arr" x1="149" y1="260" x2="149" y2="278" marker-end="url(#aa-ar)"/>
-    <line class="arr" x1="149" y1="324" x2="149" y2="352" marker-end="url(#aa-ar)"/>
-    <line class="arr" x1="274" y1="173" x2="388" y2="173" marker-end="url(#aa-ar)"/>
+    <line class="arr" x1="149" y1="324" x2="149" y2="342" marker-end="url(#aa-ar)"/>
+    <line class="arr" x1="149" y1="388" x2="149" y2="406" marker-end="url(#aa-ar)"/>
+    <line class="arr" x1="274" y1="109" x2="388" y2="109" marker-end="url(#aa-ar)"/>
     <line class="arr" x1="274" y1="237" x2="388" y2="237" marker-end="url(#aa-ar)"/>
     <line class="arr" x1="274" y1="301" x2="388" y2="301" marker-end="url(#aa-ar)"/>
-    <text class="lbl" x="322" y="165" text-anchor="middle">YES</text>
+    <line class="arr" x1="274" y1="365" x2="388" y2="365" marker-end="url(#aa-ar)"/>
+    <text class="lbl" x="322" y="101" text-anchor="middle">YES</text>
     <text class="lbl" x="322" y="229" text-anchor="middle">YES</text>
     <text class="lbl" x="322" y="293" text-anchor="middle">YES</text>
-    <text class="lbl" x="156" y="205" text-anchor="start">no</text>
-    <text class="lbl" x="156" y="269" text-anchor="start">no</text>
-    <text class="lbl" x="156" y="338" text-anchor="start">no</text>
+    <text class="lbl" x="322" y="357" text-anchor="middle">YES</text>
+    <text class="lbl" x="156" y="143" text-anchor="start">no</text>
+    <text class="lbl" x="156" y="271" text-anchor="start">no</text>
+    <text class="lbl" x="156" y="335" text-anchor="start">no</text>
+    <text class="lbl" x="156" y="399" text-anchor="start">no</text>
 
     <rect class="box" x="24" y="22" width="250" height="46" rx="8"/>
     <text class="t" x="149" y="39" text-anchor="middle">Access request</text>
     <text class="s" x="149" y="55" text-anchor="middle">source · destination · service/app</text>
 
-    <rect class="box" x="24" y="86" width="250" height="46" rx="8"/>
-    <text class="t" x="149" y="103" text-anchor="middle">Resolve objects + service/app</text>
-    <text class="s" x="149" y="119" text-anchor="middle">reuse by IP / port / name, else add</text>
+    <rect class="box dec" x="24" y="86" width="250" height="46" rx="8"/>
+    <text class="t" x="149" y="103" text-anchor="middle">Unsupported / malformed?</text>
+    <text class="s" x="149" y="119" text-anchor="middle">IPv6 · no concrete service</text>
 
-    <rect class="box dec" x="24" y="150" width="250" height="46" rx="8"/>
-    <text class="t" x="149" y="167" text-anchor="middle">Already permitted?</text>
-    <text class="s" x="149" y="183" text-anchor="middle">first-match, top-down</text>
+    <rect class="box" x="24" y="150" width="250" height="46" rx="8"/>
+    <text class="t" x="149" y="167" text-anchor="middle">Resolve objects + service/app</text>
+    <text class="s" x="149" y="183" text-anchor="middle">reuse by IP / port / name, else add</text>
 
     <rect class="box dec" x="24" y="214" width="250" height="46" rx="8"/>
-    <text class="t" x="149" y="231" text-anchor="middle">Denied or unresolved in path?</text>
-    <text class="s" x="149" y="247" text-anchor="middle">drop / negation / app category</text>
+    <text class="t" x="149" y="231" text-anchor="middle">Already permitted?</text>
+    <text class="s" x="149" y="247" text-anchor="middle">first-match, top-down</text>
 
     <rect class="box dec" x="24" y="278" width="250" height="46" rx="8"/>
-    <text class="t" x="149" y="295" text-anchor="middle">Two cells match exactly?</text>
-    <text class="s" x="149" y="311" text-anchor="middle">widen the third (else create)</text>
+    <text class="t" x="149" y="295" text-anchor="middle">Denied or can't verify in path?</text>
+    <text class="s" x="149" y="311" text-anchor="middle">drop · negate · app-cat · VPN/time/data</text>
 
-    <rect class="box o-warn" x="24" y="352" width="250" height="46" rx="8"/>
-    <text class="t c-warn" x="149" y="369" text-anchor="middle">Create least-privilege rule</text>
-    <text class="s" x="149" y="385" text-anchor="middle">above cleanup / blocking drop</text>
+    <rect class="box dec" x="24" y="342" width="250" height="46" rx="8"/>
+    <text class="t" x="149" y="359" text-anchor="middle">Two cells match exactly?</text>
+    <text class="s" x="149" y="375" text-anchor="middle">widen the third (else create)</text>
 
-    <rect class="box o-ok" x="388" y="150" width="248" height="46" rx="8"/>
-    <text class="t c-ok" x="512" y="167" text-anchor="middle">No-op</text>
-    <text class="s" x="512" y="183" text-anchor="middle">already allowed — attach rule</text>
+    <rect class="box o-warn" x="24" y="406" width="250" height="46" rx="8"/>
+    <text class="t c-warn" x="149" y="423" text-anchor="middle">Create least-privilege rule</text>
+    <text class="s" x="149" y="439" text-anchor="middle">above cleanup / blocking drop</text>
 
-    <rect class="box o-bad" x="388" y="214" width="248" height="46" rx="8"/>
-    <text class="t c-bad" x="512" y="231" text-anchor="middle">Review</text>
-    <text class="s" x="512" y="247" text-anchor="middle">flagged for a human</text>
+    <rect class="box o-bad" x="388" y="86" width="248" height="46" rx="8"/>
+    <text class="t c-bad" x="512" y="103" text-anchor="middle">Review</text>
+    <text class="s" x="512" y="119" text-anchor="middle">unsupported / malformed</text>
 
-    <rect class="box o-info" x="388" y="278" width="248" height="46" rx="8"/>
-    <text class="t c-info" x="512" y="295" text-anchor="middle">Widen the rule</text>
-    <text class="s" x="512" y="311" text-anchor="middle">add src / dst / service to it</text>
+    <rect class="box o-ok" x="388" y="214" width="248" height="46" rx="8"/>
+    <text class="t c-ok" x="512" y="231" text-anchor="middle">No-op</text>
+    <text class="s" x="512" y="247" text-anchor="middle">already allowed — attach rule</text>
+
+    <rect class="box o-bad" x="388" y="278" width="248" height="46" rx="8"/>
+    <text class="t c-bad" x="512" y="295" text-anchor="middle">Review</text>
+    <text class="s" x="512" y="311" text-anchor="middle">deny, or scope we can't verify</text>
+
+    <rect class="box o-info" x="388" y="342" width="248" height="46" rx="8"/>
+    <text class="t c-info" x="512" y="359" text-anchor="middle">Widen the rule</text>
+    <text class="s" x="512" y="375" text-anchor="middle">add src / dst / service to it</text>
   </svg>
   <div class="row" style="gap:8px;margin-top:14px;flex-wrap:wrap;justify-content:center;">
     <span class="pill ok">No-op · already allowed</span>

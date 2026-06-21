@@ -47,14 +47,21 @@ def _first(data: dict, *names, default=None):
 
 
 def _norm_cidr(value: str) -> str:
-    """A bare IP becomes /32 (/128 for v6); a CIDR is validated and normalised. Raises ValueError."""
+    """A bare IP becomes /32; a CIDR is validated and normalised. IPv6 is rejected for now -- the
+    decision engine's address algebra is IPv4-only (see access_automation.decide), so a v6 ticket gets a
+    clean 400 at the boundary rather than reaching the engine. Raises ValueError."""
     value = str(value).strip()
     if not value:
         raise ValueError("missing address")
     if "/" not in value:
         ip = ipaddress.ip_address(value)               # raises on garbage
-        value = f"{value}/{32 if ip.version == 4 else 128}"
-    return str(ipaddress.ip_network(value, strict=False))
+        if ip.version == 6:
+            raise ValueError("IPv6 is not supported yet (the engine is IPv4-only).")
+        value = f"{value}/32"
+    net = ipaddress.ip_network(value, strict=False)
+    if net.version == 6:
+        raise ValueError("IPv6 is not supported yet (the engine is IPv4-only).")
+    return str(net)
 
 
 def _validate_port(port) -> str:
