@@ -121,13 +121,18 @@
   #swagger-ui svg.arrow { fill:var(--muted); }
 </style>
 
-<h1 style="margin-bottom:2px;">API explorer</h1>
-<p class="ax-note" style="margin-top:4px;">
-  Live, interactive reference for the Check Point <strong>Management</strong> and <strong>Gaia</strong> APIs —
-  every command, request schema, and example — converted in-portal straight from Check Point's published
-  documentation (no external service). Pick the API version a server runs, and pre-fill the target so the
-  examples and <em>Try it out</em> point at it.
-</p>
+<div class="page-head">
+  <span class="icon-chip lg"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg></span>
+  <div class="ph-main">
+    <h1>API explorer</h1>
+    <p class="ph-sub">
+      Live, interactive reference for the Check Point <strong>Management</strong> and <strong>Gaia</strong> APIs —
+      every command, request schema, and example — converted in-portal straight from Check Point's published
+      documentation (no external service). Pick the API version a server runs, and pre-fill the target so the
+      examples and <em>Try it out</em> point at it.
+    </p>
+  </div>
+</div>
 
 <div class="ax-tabs">
   <a href="/api-explorer?api=management" class="{{ 'active' if api_type=='management' else '' }}">Management API</a>

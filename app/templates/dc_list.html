@@ -1,22 +1,25 @@
 {% extends "base.html" %}
 {% block title %}Data Centers{% endblock %}
 {% block content %}
-<div class="row">
-  <div class="grow">
+<div class="page-head">
+  <span class="icon-chip lg"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg></span>
+  <div class="ph-main">
     <h1>Data Centers</h1>
-    <p class="muted">Mock cloud/datacenter providers Check Point connects to. Point a SmartConsole Data Center object at the portal — it serves the inventory in the provider's own API.</p>
+    <p class="ph-sub">Mock cloud/datacenter providers Check Point connects to. Point a SmartConsole Data Center object at the portal — it serves the inventory in the provider's own API.</p>
   </div>
-  <div class="menu">
-    <a href="#" class="btn menu-trigger">+ New Data Center ▾</a>
-    <div class="menu-items">
-      <a href="/datacenters/new">OpenStack</a>
-      <a href="/datacenters/new/vcenter">vCenter</a>
-      <a href="/datacenters/new/nsxt">NSX-T</a>
-      <a href="/datacenters/new/globalnsxt">Global NSX-T</a>
-      <a href="/datacenters/new/proxmox">Proxmox</a>
-      <a href="/datacenters/new/aci">Cisco ACI</a>
-      <a href="/datacenters/new/kubernetes">Kubernetes</a>
-      <a href="/datacenters/new/nutanix">Nutanix</a>
+  <div class="ph-actions">
+    <div class="menu">
+      <a href="#" class="btn menu-trigger">+ New Data Center ▾</a>
+      <div class="menu-items">
+        <a href="/datacenters/new">OpenStack</a>
+        <a href="/datacenters/new/vcenter">vCenter</a>
+        <a href="/datacenters/new/nsxt">NSX-T</a>
+        <a href="/datacenters/new/globalnsxt">Global NSX-T</a>
+        <a href="/datacenters/new/proxmox">Proxmox</a>
+        <a href="/datacenters/new/aci">Cisco ACI</a>
+        <a href="/datacenters/new/kubernetes">Kubernetes</a>
+        <a href="/datacenters/new/nutanix">Nutanix</a>
+      </div>
     </div>
   </div>
 </div>
@@ -24,6 +27,9 @@
 {% if not rows %}
 <div class="card"><p class="muted">No datacenters yet. Use <b>+ New Data Center</b> to create an OpenStack, vCenter, NSX-T, Global NSX-T, or Proxmox mock and connect a SmartConsole Data Center object without a real cloud.</p></div>
 {% else %}
+<div class="statrow" style="margin:2px 0 20px;">
+  <div class="stat"><span class="n">{{ rows|length }}</span><span class="l">Data Centers</span></div>
+</div>
 <div class="card" style="padding:6px 6px 2px;">
 <div class="tablewrap">
 <table data-paginate="10">

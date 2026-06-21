@@ -1,8 +1,13 @@
 {% extends "base.html" %}
 {% block title %}Scenarios{% endblock %}
 {% block content %}
-<h1>Scenarios <span class="pill">live demo control</span></h1>
-<p class="muted">Mutate a data center's inventory on cue — flip a tag, scale out/in. CloudGuard <b>polls every ~30s</b>, so there's nothing to push: the next scan re-resolves the affected dynamic objects and rules live. Watch it land in the <a href="/activity?kind=datacenter">Activity log</a> and in SmartConsole.</p>
+<div class="page-head">
+  <span class="icon-chip lg"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg></span>
+  <div class="ph-main">
+    <h1>Scenarios <span class="pill">live demo control</span></h1>
+    <p class="ph-sub">Mutate a data center's inventory on cue — flip a tag, scale out/in. CloudGuard <b>polls every ~30s</b>, so there's nothing to push: the next scan re-resolves the affected dynamic objects and rules live. Watch it land in the <a href="/activity?kind=datacenter">Activity log</a> and in SmartConsole.</p>
+  </div>
+</div>
 
 {% if not rows %}
 <div class="card"><p class="muted" style="margin:0;">No data centers yet. <a href="/datacenters">Create one</a> first, then come back to drive live changes.</p></div>

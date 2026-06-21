@@ -1,8 +1,14 @@
 {% extends "base.html" %}
 {% block title %}{{ 'Edit' if editing|default(false) else 'New' }} IoC Feed{% endblock %}
 {% block content %}
-<h1>{{ 'Edit' if editing|default(false) else 'New' }} IoC Feed <span class="pill">Custom Intelligence</span></h1>
-<p class="muted">A threat-intel feed Anti-Bot / Anti-Virus (or IPS, for Snort) fetch and enforce. Pick the wire format the gateway expects, fill in the content, then Create.</p>
+<div class="page-head">
+  <span class="icon-chip lg"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11a9 9 0 0 1 9 9"/><path d="M4 4a16 16 0 0 1 16 16"/><circle cx="5" cy="19" r="1"/></svg></span>
+  <div class="ph-main">
+    <h1>{{ 'Edit' if editing|default(false) else 'New' }} IoC Feed</h1>
+    <p class="ph-sub">A threat-intel feed Anti-Bot / Anti-Virus (or IPS, for Snort) fetch and enforce. Pick the wire format the gateway expects, fill in the content, then Create.</p>
+  </div>
+  <div class="ph-actions"><span class="pill">Custom Intelligence</span></div>
+</div>
 {% if error %}<div class="err" style="margin:12px 0;">{{ error }}</div>{% endif %}
 
 <form method="post" action="{{ action|default('/feeds/new/ioc') }}" class="card">

@@ -2,12 +2,15 @@
 {% block title %}{{ ms.name }} — export policy{% endblock %}
 {% block main_class %}wide{% endblock %}
 {% block content %}
-<div class="row" style="align-items:flex-start;">
-  <div class="grow">
+<div class="page-head">
+  <span class="icon-chip lg"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span>
+  <div class="ph-main">
     <h1>{{ ms.name }} <span class="pill">Export</span></h1>
-    <p class="muted">Pull a layer's rulebase + objects from <code>{{ ms.host }}:{{ ms.port }}</code>{% if ms.domain %} · domain <b>{{ ms.domain }}</b>{% endif %} and generate <b>Terraform</b>, <b>Ansible</b> and a <b>mgmt_cli</b> script — a backup-as-code of the policy.</p>
+    <p class="ph-sub">Pull a layer's rulebase + objects from <code>{{ ms.host }}:{{ ms.port }}</code>{% if ms.domain %} · domain <b>{{ ms.domain }}</b>{% endif %} and generate <b>Terraform</b>, <b>Ansible</b> and a <b>mgmt_cli</b> script — a backup-as-code of the policy.</p>
   </div>
-  <a class="btn secondary" href="/management/{{ ms.id }}">← Policy viewer</a>
+  <div class="ph-actions">
+    <a class="btn secondary" href="/management/{{ ms.id }}">← Policy viewer</a>
+  </div>
 </div>
 
 {% if not has_secret %}

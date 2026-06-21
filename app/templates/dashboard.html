@@ -1,12 +1,13 @@
 {% extends "base.html" %}
 {% block title %}Dashboard{% endblock %}
 {% block content %}
-<div class="row" style="margin-bottom:16px;">
-  <div class="grow">
+<div class="page-head">
+  <span class="icon-chip lg"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11a9 9 0 0 1 9 9"/><path d="M4 4a16 16 0 0 1 16 16"/><circle cx="5" cy="19" r="1"/></svg></span>
+  <div class="ph-main">
     <h1>Your simulated feeds</h1>
-    <p class="muted">Signed in as {{ user.username }}. Each URL below is what the gateway polls.</p>
+    <p class="ph-sub">Signed in as {{ user.username }}. Each URL below is what the gateway polls.</p>
   </div>
-  <div class="row" style="gap:8px; align-items:center;">
+  <div class="ph-actions">
     <div class="menu">
       <button class="btn menu-trigger" type="button">PoV Bundle ▾</button>
       <div class="menu-items">
@@ -43,6 +44,10 @@
 <div class="card"><p class="muted">No feeds yet. Create your first feed to get a pollable URL for SmartConsole — or use <b>PoV Bundle ▾ → Seed</b> above for a ready-made set.</p></div>
 {% else %}
 {% set typelabels = {'generic_dc': 'Generic Data Center', 'network_feed': 'Network Feed', 'ioc': 'IoC'} %}
+<div class="statrow" style="margin:2px 0 20px;">
+  <div class="stat"><span class="n">{{ rows|length }}</span><span class="l">Feeds</span></div>
+  {% for t, n in type_counts.items() %}<div class="stat"><span class="n">{{ n }}</span><span class="l">{{ typelabels.get(t, t) }}</span></div>{% endfor %}
+</div>
 <div class="filterbar">
   <button class="chip active" type="button" data-filter="all">All <span class="chipcount">{{ rows|length }}</span></button>
   {% for t, n in type_counts.items() %}

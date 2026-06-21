@@ -2,10 +2,13 @@
 {% import "_layers_view.html" as lv %}
 {% block title %}{{ gw.name }}{% endblock %}
 {% block content %}
-<div class="row">
-  <div class="grow"><h1>{{ gw.name }} <span class="pill">gateway</span></h1>
-    <p class="muted">Saved gateway connection profile.</p></div>
-  <div class="row" style="gap:8px;">
+<div class="page-head">
+  <span class="icon-chip lg"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></span>
+  <div class="ph-main">
+    <h1>{{ gw.name }} <span class="pill">gateway</span></h1>
+    <p class="ph-sub">Saved gateway connection profile.</p>
+  </div>
+  <div class="ph-actions">
     <a class="btn secondary" href="/gateways/{{ gw.id }}/gaia-export">Export Gaia config →</a>
     <a class="btn secondary" href="/gateways/{{ gw.id }}/edit">Edit</a>
     <form method="post" action="/gateways/{{ gw.id }}/delete">

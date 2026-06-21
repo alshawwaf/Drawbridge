@@ -2,12 +2,15 @@
 {% block title %}{{ title }} — Gaia config export{% endblock %}
 {% block main_class %}wide{% endblock %}
 {% block content %}
-<div class="row" style="align-items:flex-start;">
-  <div class="grow">
+<div class="page-head">
+  <span class="icon-chip lg"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span>
+  <div class="ph-main">
     <h1>{{ title }} <span class="pill">Gaia config</span></h1>
-    <p class="muted">Pull the live <b>Gaia OS configuration</b> from <code>{{ host }}</code> over the <code>gaia_api</code> (hostname, DNS, NTP, timezone, interfaces, static routes, proxy) and generate <b>Terraform</b>, <b>Ansible</b> and a <b>clish</b> script — a backup-as-code of the appliance.</p>
+    <p class="ph-sub">Pull the live <b>Gaia OS configuration</b> from <code>{{ host }}</code> over the <code>gaia_api</code> (hostname, DNS, NTP, timezone, interfaces, static routes, proxy) and generate <b>Terraform</b>, <b>Ansible</b> and a <b>clish</b> script — a backup-as-code of the appliance.</p>
   </div>
-  <a class="btn secondary" href="{{ back_url }}">← {{ back_label or 'Back' }}</a>
+  <div class="ph-actions">
+    <a class="btn secondary" href="{{ back_url }}">← {{ back_label or 'Back' }}</a>
+  </div>
 </div>
 
 <div class="card" id="gaia-root" data-run="{{ run_url }}" style="padding:14px 18px;">

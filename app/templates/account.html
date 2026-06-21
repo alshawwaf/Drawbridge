@@ -1,8 +1,13 @@
 {% extends "base.html" %}
 {% block title %}Account{% endblock %}
 {% block content %}
-<h1>Account</h1>
-<p class="muted">Signed in as <strong>{{ user.display_name }}</strong> (<code>{{ user.username }}</code>).</p>
+<div class="page-head">
+  <span class="icon-chip lg"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span>
+  <div class="ph-main">
+    <h1>Account</h1>
+    <p class="ph-sub">Signed in as <strong>{{ user.display_name }}</strong> (<code>{{ user.username }}</code>).</p>
+  </div>
+</div>
 
 <div class="card" style="max-width:460px;">
   <h2 style="margin-top:0;">Profile</h2>

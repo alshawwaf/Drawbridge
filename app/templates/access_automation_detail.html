@@ -2,12 +2,15 @@
 {% block title %}{{ ms.name }} — access automation{% endblock %}
 {% block main_class %}wide{% endblock %}
 {% block content %}
-<div class="row" style="align-items:flex-start;">
-  <div class="grow">
+<div class="page-head">
+  <span class="icon-chip lg"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></span>
+  <div class="ph-main">
     <h1>{{ ms.name }} <span class="pill">Access automation</span></h1>
-    <p class="muted"><code>{{ ms.host }}:{{ ms.port }}</code>{% if ms.domain %} · domain <b>{{ ms.domain }}</b>{% endif %} · decided + applied live over the <code>web_api</code>.</p>
+    <p class="ph-sub"><code>{{ ms.host }}:{{ ms.port }}</code>{% if ms.domain %} · domain <b>{{ ms.domain }}</b>{% endif %} · decided + applied live over the <code>web_api</code>.</p>
   </div>
-  <a class="btn secondary" href="/access-automation">← All servers</a>
+  <div class="ph-actions">
+    <a class="btn secondary" href="/access-automation">← All servers</a>
+  </div>
 </div>
 
 {% if not has_secret %}

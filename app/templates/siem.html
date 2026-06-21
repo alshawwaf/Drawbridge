@@ -2,16 +2,19 @@
 {% block title %}SIEM receiver{% endblock %}
 {% block main_class %}wide{% endblock %}
 {% block content %}
-<div class="row" style="align-items:flex-start;">
-  <div class="grow">
+<div class="page-head">
+  <span class="icon-chip lg"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg></span>
+  <div class="ph-main">
     <h1>SIEM receiver <span class="pill">Log Exporter</span></h1>
-    <p class="muted">Point Check Point's <b>Log Exporter</b> at the portal and watch the logs land here — live proof that gateway logs reach the SIEM. Parses <b>CEF</b>, <b>LEEF</b>, <b>JSON</b>, <b>key=value</b> field lists (Splunk / LogRhythm / Generic / RSA), and plain syslog over TCP/UDP.</p>
+    <p class="ph-sub">Point Check Point's <b>Log Exporter</b> at the portal and watch the logs land here — live proof that gateway logs reach the SIEM. Parses <b>CEF</b>, <b>LEEF</b>, <b>JSON</b>, <b>key=value</b> field lists (Splunk / LogRhythm / Generic / RSA), and plain syslog over TCP/UDP.</p>
   </div>
-  <span class="livewrap">
-    {% if not enabled %}<span class="livedot off"></span><span>Listener off</span>
-    {% elif paused %}<span class="livedot" style="background:#f5a623; box-shadow:0 0 0 3px rgba(245,166,35,.18);"></span><span>Paused — dropping logs</span>
-    {% else %}<span class="livedot on"></span><span>Listening</span>{% endif %}
-  </span>
+  <div class="ph-actions">
+    <span class="livewrap">
+      {% if not enabled %}<span class="livedot off"></span><span>Listener off</span>
+      {% elif paused %}<span class="livedot" style="background:#f5a623; box-shadow:0 0 0 3px rgba(245,166,35,.18);"></span><span>Paused — dropping logs</span>
+      {% else %}<span class="livedot on"></span><span>Listening</span>{% endif %}
+    </span>
+  </div>
 </div>
 
 <div class="card">
