@@ -57,7 +57,8 @@ def siem_rows(request: Request, fmt: str = "", page: int = 1,
     matched = db.scalar(cnt) or 0
     pages = max(1, (matched + ps - 1) // ps)
     page = min(max(1, page), pages)
-    rows = db.scalars(base.order_by(SiemLog.at.desc()).limit(ps).offset((page - 1) * ps)).all()
+    rows = db.scalars(base.order_by(SiemLog.at.desc(), SiemLog.id.desc())
+                      .limit(ps).offset((page - 1) * ps)).all()
     counts = dict(db.execute(select(SiemLog.fmt, func.count()).group_by(SiemLog.fmt)).all())
     total = db.scalar(select(func.count()).select_from(SiemLog)) or 0
     return templates.TemplateResponse(request, "_siem_rows.html",

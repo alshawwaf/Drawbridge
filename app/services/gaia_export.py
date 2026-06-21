@@ -77,6 +77,9 @@ def pull_gaia(host: str, port: int, user: str, secret: str, cert_pem: str | None
             if login.status_code >= 400:
                 return {"ok": False, "config": {}, "trace": trace, "error": _login_error(login)}
             sid = (login.json() or {}).get("sid")
+            if not sid:
+                return {"ok": False, "config": {}, "trace": trace,
+                        "error": "Gaia login returned no session id (sid)."}
             headers = {"X-chkp-sid": sid, "Content-Type": "application/json"}
 
             def show(cmd, body=None):
