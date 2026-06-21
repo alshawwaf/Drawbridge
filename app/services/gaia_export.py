@@ -94,6 +94,10 @@ def pull_gaia(host: str, port: int, user: str, secret: str, cert_pem: str | None
                 cfg["ntp"] = show("show-ntp")
                 cfg["time"] = show("show-time-and-date")
                 cfg["interfaces"] = show("show-physical-interfaces", {"limit": 500}).get("objects", [])
+                cfg["vlan_interfaces"] = show("show-vlan-interfaces", {"limit": 500}).get("objects", [])
+                cfg["bond_interfaces"] = show("show-bond-interfaces", {"limit": 500}).get("objects", [])
+                cfg["bridge_interfaces"] = show("show-bridge-interfaces", {"limit": 500}).get("objects", [])
+                cfg["loopback_interfaces"] = show("show-loopback-interfaces", {"limit": 500}).get("objects", [])
                 cfg["routes"] = show("show-static-routes", {"limit": 500}).get("objects", [])
                 cfg["proxy"] = show("show-proxy")
             finally:
@@ -153,6 +157,140 @@ def _priority(nh: dict):
 
 def _iface_ip(i: dict) -> bool:
     return _present(i.get("ipv4-address"))
+
+
+# --- extra interface types (vlan / bond / bridge / loopback) ----------------------------------
+# Common L3 fields on every Gaia interface; bonds add link-aggregation params; bonds+bridges add members.
+# Each (cp-key, kind) → rendered with the tool's arg name (hyphens→underscores for TF/Ansible).
+_IFACE_COMMON = [("ipv4-address", "str"), ("ipv4-mask-length", "int"), ("ipv6-address", "str"),
+                 ("ipv6-mask-length", "int"), ("ipv6-autoconfig", "bool"), ("enabled", "bool"),
+                 ("mtu", "int"), ("comments", "str")]
+_BOND_EXTRA = [("mode", "str"), ("lacp-rate", "str"), ("xmit-hash-policy", "str"), ("mii-interval", "int"),
+               ("min-links", "int"), ("up-delay", "int"), ("down-delay", "int"), ("primary", "str")]
+# (config key set by pull_gaia, slug for resource/module/command, extra fields, carries a members list)
+_IFACE_TYPES = [
+    ("vlan_interfaces", "vlan", [], False),
+    ("bond_interfaces", "bond", _BOND_EXTRA, True),
+    ("bridge_interfaces", "bridge", [], True),
+    ("loopback_interfaces", "loopback", [], False),
+]
+
+
+def _members(i: dict) -> list[str]:
+    return [m.get("name") if isinstance(m, dict) else m for m in (i.get("members") or []) if m]
+
+
+def _iface_count(cfg: dict) -> int:
+    return sum(len(cfg.get(key) or []) for key, *_ in _IFACE_TYPES)
+
+
+def _iface_tf(cfg: dict) -> list[str]:
+    out, used = [], set()
+    for key, slug, extra, has_members in _IFACE_TYPES:
+        for i in cfg.get(key) or []:
+            blk = [f'resource "checkpoint_gaia_{slug}_interface" "{_slug(slug + "_" + str(i.get("name", "")), used)}" {{',
+                   f'  name = {_q(i.get("name", ""))}']
+            for cpk, knd in _IFACE_COMMON + extra:
+                v = i.get(cpk)
+                if knd == "bool" and cpk in i:
+                    blk.append(f'  {cpk.replace("-", "_")} = {"true" if v else "false"}')
+                elif knd == "int" and str(v).lstrip("-").isdigit():
+                    blk.append(f'  {cpk.replace("-", "_")} = {v}')
+                elif knd == "str" and _present(v):
+                    blk.append(f'  {cpk.replace("-", "_")} = {_q(v)}')
+            if has_members and _members(i):
+                blk.append("  members = [%s]" % ", ".join(_q(m) for m in _members(i)))
+            out += [*blk, "}", ""]
+    return out
+
+
+def _iface_ansible(cfg: dict) -> list[str]:
+    out = []
+    for key, slug, extra, has_members in _IFACE_TYPES:
+        for i in cfg.get(key) or []:
+            out.append(f'    - name: {slug.capitalize()} interface {i.get("name", "")}')
+            out.append(f"      cp_gaia_{slug}_interface:")
+            out.append(f'        name: {_q(i.get("name", ""))}')
+            for cpk, knd in _IFACE_COMMON + extra:
+                v = i.get(cpk)
+                if knd == "bool" and cpk in i:
+                    out.append(f'        {cpk.replace("-", "_")}: {"true" if v else "false"}')
+                elif knd == "int" and str(v).lstrip("-").isdigit():
+                    out.append(f'        {cpk.replace("-", "_")}: {v}')
+                elif knd == "str" and _present(v):
+                    out.append(f'        {cpk.replace("-", "_")}: {_q(v)}')
+            if has_members and _members(i):
+                out.append(f"        members: {_yaml_dict_list([_q(m) for m in _members(i)])}")
+            out.append("        state: present")
+    return out
+
+
+def _iface_web_api(cfg: dict) -> list[dict]:
+    ops = []
+    for key, slug, extra, has_members in _IFACE_TYPES:
+        for i in cfg.get(key) or []:
+            body = {"name": i.get("name", "")}
+            for cpk, knd in _IFACE_COMMON + extra:
+                v = i.get(cpk)
+                if knd == "bool" and cpk in i:
+                    body[cpk] = bool(v)
+                elif knd == "int" and str(v).lstrip("-").isdigit():
+                    body[cpk] = int(v)
+                elif knd == "str" and _present(v):
+                    body[cpk] = v
+            if has_members and _members(i):
+                body["members"] = _members(i)
+            ops.append({"command": f"set-{slug}-interface", "body": body})
+    return ops
+
+
+def _clish_set_iface(i: dict) -> list[str]:
+    """The `set interface <name> …` lines shared once an interface exists (any type)."""
+    nm, out = i.get("name", ""), []
+    if _present(i.get("ipv4-address")) and str(i.get("ipv4-mask-length", "")).isdigit():
+        out.append(f'set interface {nm} ipv4-address {i.get("ipv4-address")} mask-length {i.get("ipv4-mask-length")}')
+    if _present(i.get("ipv6-address")) and str(i.get("ipv6-mask-length", "")).isdigit():
+        out.append(f'set interface {nm} ipv6-address {i.get("ipv6-address")} mask-length {i.get("ipv6-mask-length")}')
+    if "enabled" in i:
+        out.append(f'set interface {nm} state {"on" if i.get("enabled") else "off"}')
+    if str(i.get("mtu", "")).isdigit():
+        out.append(f'set interface {nm} mtu {i.get("mtu")}')
+    if _present(i.get("comments")):
+        out.append(f'set interface {nm} comments "{i.get("comments")}"')
+    return out
+
+
+def _iface_clish(cfg: dict) -> list[str]:
+    """Native Gaia clish, including the create command each type needs before `set` (the VLAN parent/id,
+    the bonding/bridging group + member adds)."""
+    out: list[str] = []
+    for i in cfg.get("loopback_interfaces") or []:        # loopbacks pre-exist (loopN) — just set
+        out += _clish_set_iface(i)
+    for i in cfg.get("vlan_interfaces") or []:
+        nm = i.get("name", "")
+        if "." in nm:                                     # eth1.100 → add interface eth1 vlan 100
+            parent, vid = nm.rsplit(".", 1)
+            out.append(f"add interface {parent} vlan {vid}")
+        out += _clish_set_iface(i)
+    for i in cfg.get("bond_interfaces") or []:
+        nm = i.get("name", "")
+        gid = nm[4:] if nm.startswith("bond") else nm     # bond0 → group 0
+        out.append(f"add bonding group {gid}")
+        for m in _members(i):
+            out.append(f"add bonding group {gid} interface {m}")
+        for cpk in ("mode", "lacp-rate", "xmit-hash-policy", "mii-interval", "min-links",
+                    "up-delay", "down-delay", "primary"):
+            if _present(i.get(cpk)):
+                out.append(f"set bonding group {gid} {cpk} {i.get(cpk)}")
+        out += _clish_set_iface(i)
+    for i in cfg.get("bridge_interfaces") or []:
+        nm = i.get("name", "")
+        gid = nm[2:] if nm.startswith("br") else nm       # br0 → group 0
+        out.append(f"add bridging group {gid}")
+        for m in _members(i):
+            out.append(f"add bridging group {gid} interface {m}")
+        out += _clish_set_iface(i)
+    return out
 
 
 # --- Terraform (checkpoint_gaia_*, context = "gaia_api") --------------------------------------
@@ -227,6 +365,8 @@ def _tf(cfg: dict) -> str:
         if _present(i.get("comments")):
             blk.append(f'  comments = {_q(i.get("comments"))}')
         L += [*blk, "}", ""]
+
+    L += _iface_tf(cfg)            # vlan / bond / bridge / loopback interfaces
 
     rused: set[str] = set()
     for r in cfg.get("routes") or []:
@@ -354,6 +494,8 @@ def _ansible(cfg: dict) -> str:
             lines.append(f'comments: {_q(i.get("comments"))}')
         task(f'Interface {i.get("name", "")}', "cp_gaia_physical_interface", lines)
 
+    L += _iface_ansible(cfg)       # vlan / bond / bridge / loopback interfaces
+
     for r in cfg.get("routes") or []:
         rtype = r.get("type") or "gateway"
         lines = ["state: present",
@@ -437,6 +579,8 @@ def _clish(cfg: dict) -> str:
         if _present(i.get("comments")):
             L.append(f'set interface {nm} comments "{i.get("comments")}"')
 
+    L += _iface_clish(cfg)         # vlan / bond / bridge / loopback (incl. their create commands)
+
     for r in cfg.get("routes") or []:
         dst = _route_dst(r)
         rtype = r.get("type") or "gateway"
@@ -491,6 +635,7 @@ def _web_api(cfg: dict) -> str:
             if k in i:
                 body[k] = bool(i[k])
         ops.append({"command": "set-physical-interface", "body": body})
+    ops += _iface_web_api(cfg)     # vlan / bond / bridge / loopback interfaces
     for r in cfg.get("routes") or []:
         body = {"address": "0.0.0.0" if _route_dst(r) == "default" else r.get("address"),
                 "mask-length": r.get("mask-length"), "type": r.get("type") or "gateway"}
@@ -522,7 +667,7 @@ def generate(cfg: dict) -> dict:
     sections = [s for s in _SECTIONS
                 if (cfg.get(s) and (cfg[s] if s in ("interfaces", "routes") else
                                     any(_present(v) for v in (cfg[s] or {}).values())))]
-    stats = {"sections": sections, "interfaces": len(ifaces), "routes": len(routes),
+    stats = {"sections": sections, "interfaces": len(ifaces) + _iface_count(cfg), "routes": len(routes),
              "ntp_servers": len((cfg.get("ntp") or {}).get("servers") or [])}
     return {"terraform": _tf(cfg), "ansible": _ansible(cfg), "clish": _clish(cfg),
             "web_api": _web_api(cfg), "stats": stats}
