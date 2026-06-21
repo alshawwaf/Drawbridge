@@ -312,6 +312,39 @@ def test_export_mgmt_cli_is_shell_safe():
     assert "comments 'owner `whoami`'" in cli
 
 
+def test_publish_waits_for_task_and_returns_on_success(monkeypatch):
+    """publish is async — it must poll show-task and only return once the task actually succeeded."""
+    monkeypatch.setattr(mgmt_api.time, "sleep", lambda *_: None)
+    s = mgmt_api.MgmtSession.__new__(mgmt_api.MgmtSession)
+    seq = iter([
+        {"task-id": "t1"},                                              # publish
+        {"tasks": [{"task-id": "t1", "status": "in progress"}]},        # show-task #1
+        {"tasks": [{"task-id": "t1", "status": "succeeded"}]},          # show-task #2
+    ])
+    cmds = []
+
+    def fake_call(command, payload=None):
+        cmds.append(command)
+        return next(seq)
+
+    s.call = fake_call
+    res = s.publish()
+    assert cmds == ["publish", "show-task", "show-task"]   # polled until the task left 'in progress'
+    assert res["task"]["status"] == "succeeded"
+
+
+def test_publish_raises_when_task_fails(monkeypatch):
+    monkeypatch.setattr(mgmt_api.time, "sleep", lambda *_: None)
+    s = mgmt_api.MgmtSession.__new__(mgmt_api.MgmtSession)
+    seq = iter([{"task-id": "t1"}, {"tasks": [{"task-id": "t1", "status": "failed"}]}])
+    s.call = lambda command, payload=None: next(seq)
+    try:
+        s.publish()
+        assert False, "expected MgmtError on a failed publish task"
+    except mgmt_api.MgmtError as exc:
+        assert "not committed" in str(exc).lower()
+
+
 def test_export_ansible_negate_underscored_and_names_quoted():
     bundle = {"layer": "Net: prod", "objects_by_type": {}, "rules": [
         {"kind": "rule", "number": 1, "name": "allow: web", "enabled": True, "source": [],
