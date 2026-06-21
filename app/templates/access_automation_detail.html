@@ -120,8 +120,8 @@ Content-Type: application/json
     <text class="s" x="149" y="247" text-anchor="middle">explicit drop / zone / negation</text>
 
     <rect class="box dec" x="24" y="278" width="250" height="46" rx="8"/>
-    <text class="t" x="149" y="295" text-anchor="middle">Covers dst + svc, src differs?</text>
-    <text class="s" x="149" y="311" text-anchor="middle">widen candidate</text>
+    <text class="t" x="149" y="295" text-anchor="middle">Service + one side covered?</text>
+    <text class="s" x="149" y="311" text-anchor="middle">widen the side that differs</text>
 
     <rect class="box o-warn" x="24" y="352" width="250" height="46" rx="8"/>
     <text class="t c-warn" x="149" y="369" text-anchor="middle">Create least-privilege rule</text>
@@ -137,7 +137,7 @@ Content-Type: application/json
 
     <rect class="box o-info" x="388" y="278" width="248" height="46" rx="8"/>
     <text class="t c-info" x="512" y="295" text-anchor="middle">Widen the rule</text>
-    <text class="s" x="512" y="311" text-anchor="middle">add to group / source cell</text>
+    <text class="s" x="512" y="311" text-anchor="middle">add source or destination</text>
   </svg>
   <div class="row" style="gap:8px;margin-top:14px;flex-wrap:wrap;justify-content:center;">
     <span class="pill ok">No-op · already allowed</span>
@@ -204,14 +204,19 @@ Content-Type: application/json
       if (j.anomaly) h += '<div class="err-inline">Heads-up: an existing ordering anomaly was detected near the insert point — review placement.</div>';
 
       var rows = '';
-      // preview shape (source/destination/service objects) and apply shape (source_object/…)
+      // WIDEN — preview (j.widen) and apply (j.widen_field / j.widen_object)
+      if (j.widen) {
+        rows += objLine('Add ' + j.widen.field, j.widen.object);
+        rows += '<tr><td class="nowrap"><b>Widen via</b></td><td>' + esc(j.widen.via) + '</td></tr>';
+      }
+      if (j.widen_field) rows += '<tr><td class="nowrap"><b>Add ' + esc(j.widen_field) + '</b></td><td><code>' + esc(j.widen_object) + '</code></td></tr>';
+      // CREATE — preview objects (source/destination/service) and apply objects (*_object)
       rows += objLine('Source', j.source);
       rows += objLine('Destination', j.destination);
       if (j.service) rows += objLine('Service', j.service);
       if (j.source_object) rows += '<tr><td class="nowrap"><b>Source</b></td><td><code>' + esc(j.source_object) + '</code></td></tr>';
       if (j.destination_object) rows += '<tr><td class="nowrap"><b>Destination</b></td><td><code>' + esc(j.destination_object) + '</code></td></tr>';
       if (j.service_object) rows += '<tr><td class="nowrap"><b>Service</b></td><td><code>' + esc(j.service_object) + '</code></td></tr>';
-      if (j.widen) rows += '<tr><td class="nowrap"><b>Widen via</b></td><td>' + esc(j.widen.via) + '</td></tr>';
       if (j.position) rows += '<tr><td class="nowrap"><b>Position</b></td><td>' + esc(j.position) + '</td></tr>';
       if (j.target_rule) rows += '<tr><td class="nowrap"><b>Anchor rule</b></td><td>#' + esc(j.target_rule.number) + ' ' + esc(j.target_rule.name) + '</td></tr>';
       if (rows) h += '<table class="acttable" style="margin-top:10px;"><tbody>' + rows + '</tbody></table>';

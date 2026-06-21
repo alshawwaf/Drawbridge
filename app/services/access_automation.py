@@ -174,6 +174,7 @@ class ParsedRule:
     dst: list
     svc: ServiceSet
     source_group_uids: list = field(default_factory=list)
+    dest_group_uids: list = field(default_factory=list)
     complex: bool = False                       # negation / unresolved -> excluded from reuse
     # Per-cell "extent unknown": the cell was negated or held an object we could not resolve, so its
     # real reach is uncertain. Such a cell is never "provably disjoint" -> the rule stays in the path.
@@ -203,7 +204,8 @@ class Decision:
     reason: str
     target_rule: Optional[ParsedRule] = None    # rule we reuse / widen / anchor on
     position: Optional[dict] = None             # internal placement hint (resolved at apply)
-    widen_group_uid: Optional[str] = None       # preferred widen target
+    widen_group_uid: Optional[str] = None       # group to add the object to, if that cell uses one
+    widen_field: Optional[str] = None           # "source" | "destination" — the dimension to extend
 
 
 # --------------------------------------------------------------------------- #
@@ -316,8 +318,8 @@ def _parse_svc(cell, objdict: dict) -> ServiceSet:
 
 
 def _parse_rule(e, objdict: dict) -> ParsedRule:
-    src, src_cx, groups = _parse_net(e.get("source", []), objdict)
-    dst, dst_cx, _ = _parse_net(e.get("destination", []), objdict)
+    src, src_cx, src_groups = _parse_net(e.get("source", []), objdict)
+    dst, dst_cx, dst_groups = _parse_net(e.get("destination", []), objdict)
     svc = _parse_svc(e.get("service", []), objdict)
     action = e.get("action")
     if isinstance(action, str):
@@ -335,7 +337,7 @@ def _parse_rule(e, objdict: dict) -> ParsedRule:
         enabled=e.get("enabled", True),
         action=action or "",
         src=src, dst=dst, svc=svc,
-        source_group_uids=groups,
+        source_group_uids=src_groups, dest_group_uids=dst_groups,
         complex=bool(src_unknown or dst_unknown or svc_unknown),
         src_unknown=src_unknown, dst_unknown=dst_unknown, svc_unknown=svc_unknown,
     )
@@ -355,6 +357,11 @@ def _flatten(items):
 def _is_subset(rel_src, rel_dst, rel_svc) -> bool:
     sub = (Relation.SUBSET, Relation.EQUAL)
     return rel_src in sub and rel_dst in sub and rel_svc in sub
+
+
+def _dim_covered(rel: Relation) -> bool:
+    """One request dimension is covered by a rule cell when the request is a subset of (or equals) it."""
+    return rel in (Relation.SUBSET, Relation.EQUAL)
 
 
 def _is_proper_superset(rel_src, rel_dst, rel_svc) -> bool:
@@ -380,7 +387,9 @@ def decide(req: AccessRequest, rules: list[ParsedRule]) -> Decision:
     """
     req_src, req_dst, req_svc = req.src_iv(), req.dst_iv(), req.svc()
     covering_drop: Optional[ParsedRule] = None   # the catch-all cleanup that floors placement
-    widen_target: Optional[ParsedRule] = None    # first reachable accept matching dst+svc
+    widen_target: Optional[ParsedRule] = None    # reachable accept matching 2 dims, differing in 1
+    widen_field: Optional[str] = None            # the dimension to extend: "source" | "destination"
+    widen_group: Optional[str] = None            # a group on that dimension, if the rule references one
     lower_anchor: Optional[ParsedRule] = None     # last rule strictly more specific than req
 
     for r in rules:
@@ -432,27 +441,35 @@ def decide(req: AccessRequest, rules: list[ParsedRule]) -> Decision:
                     target_rule=r,
                 )
 
-        # (2) widen candidate: dst+svc already covered by a reachable ACCEPT, only src missing. Prefer
-        # a rule that references a GROUP (cleanest widen -- add the host to the group) over a bare-cell
-        # rule, even if the group-backed one appears later in the (still reachable) scan.
-        if (r.is_accept and not r.complex and covering_drop is None
-                and rel_dst in (Relation.SUBSET, Relation.EQUAL)
-                and rel_svc in (Relation.SUBSET, Relation.EQUAL)
-                and rel_src in (Relation.DISJOINT, Relation.OVERLAP, Relation.SUPERSET)):
-            if widen_target is None or (not widen_target.source_group_uids and r.source_group_uids):
-                widen_target = r
+        # (2) widen candidate: a reachable ACCEPT that already covers the SERVICE and exactly ONE of
+        # source/destination, differing only in the other -> widen that single dimension. This handles
+        # both "same dst+svc, add the source" and the rule-7.4 case "same src+svc, add the destination".
+        # Prefer a candidate whose widened cell references a GROUP (add the member to the group) over a
+        # bare-cell edit, even if the group-backed one appears later in the (still reachable) scan.
+        if r.is_accept and not r.complex and covering_drop is None and _dim_covered(rel_svc):
+            src_cov, dst_cov = _dim_covered(rel_src), _dim_covered(rel_dst)
+            field = cell_groups = None
+            if dst_cov and not src_cov:
+                field, cell_groups = "source", r.source_group_uids
+            elif src_cov and not dst_cov:
+                field, cell_groups = "destination", r.dest_group_uids
+            if field is not None:
+                grp = cell_groups[0] if cell_groups else None
+                if widen_target is None or (widen_group is None and grp is not None):
+                    widen_target, widen_field, widen_group = r, field, grp
 
         # Placement lower bound: a fully-resolved rule strictly MORE specific than req (don't shadow it).
         if not r.complex and _is_proper_superset(rel_src, rel_dst, rel_svc):
             lower_anchor = r
 
     if widen_target is not None:
-        grp = widen_target.source_group_uids[0] if widen_target.source_group_uids else None
-        how = "add source to the group it references" if grp else "add source to the rule"
+        covered = "destination + service" if widen_field == "source" else "source + service"
+        how = (f"add the {widen_field} to the group it references" if widen_group
+               else f"add the {widen_field} to the rule")
         return Decision(
             Outcome.WIDEN,
-            f"rule {widen_target.number} ({widen_target.name}) already allows dst+svc; {how}",
-            target_rule=widen_target, widen_group_uid=grp,
+            f"rule {widen_target.number} ({widen_target.name}) already allows {covered}; {how}",
+            target_rule=widen_target, widen_group_uid=widen_group, widen_field=widen_field,
         )
 
     return Decision(
@@ -623,19 +640,19 @@ def build_preview(session, decision: Decision, req: AccessRequest, rules: list[P
     if decision.outcome in (Outcome.NO_OP, Outcome.REVIEW):
         return out
 
-    src_cidr = req.src_cidrs[0]
-    existing = lookup_endpoint(session, src_cidr)
-    out["source"] = {"ip": src_cidr, "exists": bool(existing),
-                     "name": existing or _endpoint_name(ipaddress.ip_network(src_cidr, strict=False))}
+    def _obj(cidr):
+        ex = lookup_endpoint(session, cidr)
+        return {"ip": cidr, "exists": bool(ex),
+                "name": ex or _endpoint_name(ipaddress.ip_network(cidr, strict=False))}
 
     if decision.outcome == Outcome.WIDEN:
-        out["widen"] = {"group_uid": decision.widen_group_uid,
-                        "via": "group object" if decision.widen_group_uid else "rule source cell"}
+        field = decision.widen_field or "source"
+        cidr = req.src_cidrs[0] if field == "source" else req.dst_cidrs[0]
+        out["widen"] = {"field": field, "group_uid": decision.widen_group_uid, "object": _obj(cidr),
+                        "via": "group object" if decision.widen_group_uid else f"rule {field} cell"}
     elif decision.outcome == Outcome.CREATE:
-        dst_cidr = req.dst_cidrs[0]
-        d_exist = lookup_endpoint(session, dst_cidr)
-        out["destination"] = {"ip": dst_cidr, "exists": bool(d_exist),
-                              "name": d_exist or _endpoint_name(ipaddress.ip_network(dst_cidr, strict=False))}
+        out["source"] = _obj(req.src_cidrs[0])
+        out["destination"] = _obj(req.dst_cidrs[0])
         s_exist = lookup_service(session, req.protocol, req.ports)
         out["service"] = {"exists": bool(s_exist),
                           "name": s_exist or f"{req.protocol.upper()}-{req.ports}"}
@@ -648,39 +665,42 @@ def build_preview(session, decision: Decision, req: AccessRequest, rules: list[P
 def _apply(session, decision: Decision, req: AccessRequest, layer: str,
            rules: list[ParsedRule], ticket_id: str) -> dict:
     out: dict = {"ops": []}
-    src_name = resolve_endpoint(session, req.src_cidrs[0])
-    out["source_object"] = src_name
 
     if decision.outcome == Outcome.WIDEN:
+        field = decision.widen_field or "source"
+        cidr = req.src_cidrs[0] if field == "source" else req.dst_cidrs[0]
+        obj_name = resolve_endpoint(session, cidr)
+        out.update(widen_field=field, widen_object=obj_name)
         if decision.widen_group_uid:
             session.call("set-group",
-                         {"uid": decision.widen_group_uid,
-                          "members": {"add": src_name}})                       # VERIFY
-            out["ops"].append(f"set-group {decision.widen_group_uid} members.add {src_name}")
+                         {"uid": decision.widen_group_uid, "members": {"add": obj_name}})       # VERIFY
+            out["ops"].append(f"set-group {decision.widen_group_uid} members.add {obj_name}")
         else:
             session.call("set-access-rule",
                          {"uid": decision.target_rule.uid, "layer": layer,
-                          "source": {"add": src_name}})                        # VERIFY
-            out["ops"].append(f"set-access-rule {decision.target_rule.uid} source.add {src_name}")
-    else:  # CREATE
-        dst_name = resolve_endpoint(session, req.dst_cidrs[0])
-        svc_name = resolve_service(session, req.protocol, req.ports)
-        position = _position_payload(decision.position or {})
-        payload = {
-            "layer": layer,
-            "position": position,
-            "name": f"TKT-{ticket_id}" if ticket_id else None,
-            "source": src_name,
-            "destination": dst_name,
-            "service": svc_name,
-            "action": "Accept",
-            "track": "Log",
-            "comments": f"Automated from ticket {ticket_id}".strip(),
-        }
-        session.call("add-access-rule", {k: v for k, v in payload.items() if v is not None})  # VERIFY
-        out.update(destination_object=dst_name, service_object=svc_name,
-                   position=_position_human(decision.position, rules))
-        out["ops"].append("add-access-rule")
+                          field: {"add": obj_name}})                                            # VERIFY
+            out["ops"].append(f"set-access-rule {decision.target_rule.uid} {field}.add {obj_name}")
+        return out
+
+    # CREATE
+    src_name = resolve_endpoint(session, req.src_cidrs[0])
+    dst_name = resolve_endpoint(session, req.dst_cidrs[0])
+    svc_name = resolve_service(session, req.protocol, req.ports)
+    payload = {
+        "layer": layer,
+        "position": _position_payload(decision.position or {}),
+        "name": f"TKT-{ticket_id}" if ticket_id else None,
+        "source": src_name,
+        "destination": dst_name,
+        "service": svc_name,
+        "action": "Accept",
+        "track": "Log",
+        "comments": f"Automated from ticket {ticket_id}".strip(),
+    }
+    session.call("add-access-rule", {k: v for k, v in payload.items() if v is not None})  # VERIFY
+    out.update(source_object=src_name, destination_object=dst_name, service_object=svc_name,
+               position=_position_human(decision.position, rules))
+    out["ops"].append("add-access-rule")
     return out
 
 
@@ -757,5 +777,6 @@ if __name__ == "__main__":
 
     show("already allowed", AccessRequest(["10.1.0.50/32"], ["172.16.5.10/32"], "tcp", "443"))
     show("widen (new src)", AccessRequest(["192.168.9.9/32"], ["172.16.5.10/32"], "tcp", "443"))
+    show("widen (new dst)", AccessRequest(["10.1.0.50/32"], ["172.16.9.9/32"], "tcp", "443"))
     show("create (new dst)", AccessRequest(["192.168.9.9/32"], ["172.16.9.9/32"], "tcp", "22"))
     show("explicit deny -> review", AccessRequest(["192.168.9.9/32"], ["172.16.5.20/32"], "tcp", "1521"))
