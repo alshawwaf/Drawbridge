@@ -278,9 +278,75 @@ def fetch_spec(api_type: str, version: str = "") -> dict:
 # (api_type, version). The target server URL only affects the small top-level ``servers`` block, which
 # we patch onto a shallow copy per request — the shared paths/components are never mutated.
 
+def _spec_sample(schema: dict, spec: dict, name: str = "", depth: int = 0):
+    """A realistic example for a spec schema (request OR response), filling EVERY field. Used to
+    pre-fill the explorer's "Example Value" where the CP docs gave no example — otherwise Swagger UI
+    shows the schema with bare ``"string"`` placeholders, which reads as "we're showing the schema".
+    (Distinct from _example_value, which OMITS unmodelled fields for the compact /coverage snippets.)"""
+    schema = _resolve(schema, spec)
+    if "example" in schema:
+        return schema["example"]
+    if schema.get("enum"):
+        return schema["enum"][0]
+    t, n = schema.get("type"), name.lower()
+    if depth > 6:
+        return "..."
+    if t == "object" or schema.get("properties") or schema.get("allOf"):
+        return {k: _spec_sample(v, spec, k, depth + 1) for k, v in _properties(schema, spec).items()}
+    if t == "array":
+        item = _resolve(schema.get("items", {}), spec)
+        return [_spec_sample(item, spec, name, depth + 1)] if item else []
+    if t == "boolean":
+        return True
+    if t in ("integer", "number"):
+        return (443 if "port" in n else 12345 if "pid" in n else
+                (64 if "ipv6" in n else 24) if "mask" in n else 1500 if "mtu" in n else 1)
+    if "uid" in n or n == "task-id" or n.endswith("-uid"):
+        return "53de74b7-91a2-4e1c-8f0b-1a2b3c4d5e6f"
+    if "pid" in n:
+        return "12345"
+    if "state" in n or "status" in n:
+        return "started"
+    if "version" in n:
+        return "R81.20"
+    if "ipv6" in n:
+        return "2001:db8::10"
+    if "mask" in n and "length" not in n:
+        return "255.255.255.0"
+    if any(x in n for x in ("ip-address", "ipv4", "address", "gateway", "subnet")):
+        return "192.0.2.10"
+    if "color" in n:
+        return "black"
+    if any(x in n for x in ("comment", "more-info", "message", "description", "info")):
+        return ""
+    if "domain" in n:
+        return "SMC User"
+    if n == "name" or n.endswith("-name"):
+        return "object-name"
+    return "value"
+
+
+def _inject_examples(spec: dict) -> None:
+    """In place: give each operation's request/response a synthesized example where the docs gave none,
+    so the explorer never shows a schema full of "string" placeholders as if it were an example."""
+    for item in (spec.get("paths") or {}).values():
+        op = item.get("post") or {}
+        for holder in (op.get("requestBody"), ((op.get("responses") or {}).get("200") or {})):
+            media = ((holder or {}).get("content") or {}).get("application/json")
+            if not media or media.get("examples"):
+                continue                                  # real doc examples already present → leave them
+            sch = media.get("schema")
+            if isinstance(sch, dict) and "example" not in sch:
+                sample = _spec_sample(sch, spec)
+                if sample not in (None, {}, [], "value"):
+                    sch["example"] = sample
+
+
 @functools.lru_cache(maxsize=6)
 def _cached_spec(api_type: str, version: str) -> dict:
-    return fetch_spec(api_type, version)
+    spec = fetch_spec(api_type, version)
+    _inject_examples(spec)        # fill request/response examples the CP docs omit (explorer only)
+    return spec
 
 
 def openapi_spec(api_type: str, version: str = "", server_url: str = "") -> dict:
