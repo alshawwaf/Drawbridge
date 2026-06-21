@@ -165,8 +165,13 @@ def svc_relation(req: ServiceSet, rule: ServiceSet) -> Relation:
         return Relation.DISJOINT
     a_in_b = _portset_covers(rule.by_proto, req.by_proto)
     b_in_a = _portset_covers(req.by_proto, rule.by_proto)
+    # If the rule cell ALSO holds applications / an opaque container / an unparsable member, it grants
+    # strictly more than the ports, so a pure-port request can never be EXACTLY EQUAL to it -- only a
+    # SUBSET (still 'covered', so a genuine no-op stays a no-op). Returning EQUAL would let a widen treat
+    # the service as an exact match and drag the rule's extra apps onto the new source/destination.
+    rule_port_only = not (rule.apps or rule.opaque or rule.complex)
     if a_in_b and b_in_a:
-        return Relation.EQUAL
+        return Relation.EQUAL if rule_port_only else Relation.SUBSET
     if a_in_b:
         return Relation.SUBSET
     if b_in_a:
@@ -224,6 +229,13 @@ class ParsedRule:
     @property
     def is_drop(self) -> bool:
         return self.action.lower() in ("drop", "reject")
+
+    @property
+    def is_resolved_action(self) -> bool:
+        """True only for a plain Accept/Drop we can reason about. An inline-layer rule's action resolves
+        to the sub-layer name, and Ask/Inform/Client-Auth delegate elsewhere -- we can't evaluate those,
+        so a rule with such an action that lies in the path must route to REVIEW."""
+        return self.is_accept or self.is_drop
 
 
 class Outcome(str, Enum):
@@ -461,11 +473,12 @@ def decide(req: AccessRequest, rules: list[ParsedRule]) -> Decision:
                           or _provably_disjoint(rel_dst, r.dst_unknown)
                           or _provably_disjoint(rel_svc, r.svc_unknown or svc_uncertain))
 
-        if (r.complex or svc_uncertain) and interferes:
+        if (r.complex or svc_uncertain or not r.is_resolved_action) and interferes:
             return Decision(
                 Outcome.REVIEW,
-                f"rule {r.number} ({r.name}) uses negation, an unresolved object, or an application "
-                f"category we can't expand in the traffic path -- needs human review",
+                f"rule {r.number} ({r.name}) lies in the traffic path but can't be reasoned about "
+                f"(negation, an unresolved object, an application category, or a non-Accept/Drop action "
+                f"such as an inline layer) -- needs human review",
                 target_rule=r,
             )
 
@@ -493,6 +506,19 @@ def decide(req: AccessRequest, rules: list[ParsedRule]) -> Decision:
                     f"above it would override an intentional block -- needs human review",
                     target_rule=r,
                 )
+
+        # A reachable DROP that overlaps the request but does NOT fully cover it partially blocks the
+        # flow (e.g. a /32 deny inside a /24 request, or an overlapping range). We can neither grant the
+        # request (it would override that intentional partial block) nor split it into allowed/denied
+        # sub-flows -> REVIEW. (A fully-covering deny is handled above; the catch-all cleanup is excluded.)
+        if (r.is_drop and not r.complex and covering_drop is None
+                and interferes and not fully_covers and not _is_catchall(r)):
+            return Decision(
+                Outcome.REVIEW,
+                f"rule {r.number} ({r.name}) partially denies the requested scope (an overlapping DROP "
+                f"in the path); granting it would override that block -- needs human review",
+                target_rule=r,
+            )
 
         # (2) widen candidate: a reachable ACCEPT that is EXACTLY EQUAL to the request in two of the
         # three dimensions {source, destination, service} and differs in the third -> add the request's

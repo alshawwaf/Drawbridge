@@ -244,6 +244,54 @@ def test_decide_no_widen_when_service_cell_broader_creates_instead():
     assert d.outcome is Outcome.CREATE
 
 
+# --- audit fixes A/B/C: inline layers, mixed port+app service cells, partial drops --------------
+def _mixed_svc(port, app):
+    return ServiceSet(by_proto={"tcp": aa._ports_to_iv(str(port))}, apps={app})
+
+
+def test_decide_inline_layer_covering_request_is_review():
+    inl = _rule("ri", 2, "Some Inline Layer", _host("10.0.0.5"), _host("9.9.9.9"), _tcp(53))
+    d = aa.decide(AccessRequest(["10.0.0.5/32"], ["9.9.9.9/32"], "tcp", "53"), [inl, CLEANUP])
+    assert d.outcome is Outcome.REVIEW and d.target_rule.uid == "ri"
+
+
+def test_decide_inline_layer_disjoint_is_create():
+    inl = _rule("ri", 2, "Some Inline Layer", _host("10.0.0.5"), _host("9.9.9.9"), _tcp(53))
+    d = aa.decide(AccessRequest(["10.0.0.5/32"], ["8.8.8.8/32"], "tcp", "53"), [inl, CLEANUP])
+    assert d.outcome is Outcome.CREATE
+
+
+def test_svc_relation_mixed_port_app_is_subset_not_equal():
+    assert aa.svc_relation(_tcp(443), _mixed_svc(443, "Facebook")) is Relation.SUBSET
+
+
+def test_decide_no_overgrant_when_service_cell_mixes_port_and_app():
+    # rule svc = {tcp/443 + Facebook}; src equal, dst differs. Widening dst would drag Facebook in -> CREATE
+    mixed = _rule("rm", 5, "Accept", _host("10.0.0.1"), _host("9.9.9.9"), _mixed_svc(443, "Facebook"))
+    d = aa.decide(AccessRequest(["10.0.0.1/32"], ["1.1.1.1/32"], "tcp", "443"), [mixed, CLEANUP])
+    assert d.outcome is Outcome.CREATE
+
+
+def test_decide_no_op_when_port_already_in_mixed_service_cell():
+    mixed = _rule("rm", 5, "Accept", _host("10.0.0.1"), _host("9.9.9.9"), _mixed_svc(443, "Facebook"))
+    d = aa.decide(AccessRequest(["10.0.0.1/32"], ["9.9.9.9/32"], "tcp", "443"), [mixed, CLEANUP])
+    assert d.outcome is Outcome.NO_OP   # rule already permits tcp/443 (plus Facebook) for that exact flow
+
+
+def test_decide_partial_drop_in_path_is_review():
+    # a /32 deny inside the /24 request, above the accept -> first-match drops part of it -> REVIEW
+    drop = _rule("d1", 1, "Drop", _host("10.0.0.5"), _host("9.9.9.9"), _tcp(53))
+    acc = _rule("a1", 2, "Accept", _net("10.0.0.0/24"), _host("9.9.9.9"), _tcp(53))
+    d = aa.decide(AccessRequest(["10.0.0.0/24"], ["9.9.9.9/32"], "tcp", "53"), [drop, acc, CLEANUP])
+    assert d.outcome is Outcome.REVIEW and d.target_rule.uid == "d1"
+
+
+def test_decide_disjoint_drop_does_not_review():
+    drop = _rule("d1", 1, "Drop", _host("10.0.0.5"), _host("9.9.9.9"), _tcp(53))
+    d = aa.decide(AccessRequest(["192.168.0.0/24"], ["8.8.8.8/32"], "tcp", "53"), [drop, CLEANUP])
+    assert d.outcome is Outcome.CREATE
+
+
 # --- BLOCKER regression: a rule whose extent is UNKNOWN must never be treated as out-of-path -----
 def _zone_rule(uid, num, action, dst, svc):
     """An accept/drop whose source is a security-zone / dynamic-object: parses to [] + src_unknown."""
