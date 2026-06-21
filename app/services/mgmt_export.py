@@ -475,10 +475,11 @@ def _cell(values: list[str]) -> list[str]:
 
 # --- public entry point ----------------------------------------------------------------------
 
-def generate(bundle: dict) -> dict:
-    """Render a pulled-policy bundle to all three targets.
-    bundle = {layer, rules (structured rows), objects_by_type {type: [obj]}}.
-    Returns {layer, terraform, ansible, mgmt_cli, stats}."""
+def generate(bundle: dict, host: str = "", domain: str = "") -> dict:
+    """Render a pulled-policy bundle to all targets.
+    bundle = {layer, rules (structured rows), objects_by_type {type: [obj]}}; ``host``/``domain`` (the
+    source SMS / MDS domain) pre-fill the Ansible inventory. Returns {layer, terraform, ansible, mgmt_cli,
+    web_api, stats}."""
     layer = bundle.get("layer", "")
     rules = [dict(r) for r in bundle.get("rules", [])]
     objects_by_type: dict[str, list] = bundle.get("objects_by_type", {})
@@ -511,7 +512,7 @@ def generate(bundle: dict) -> dict:
     return {
         "layer": layer,
         "terraform": _render_terraform(layer, emit, rules, ref_map, skipped),
-        "ansible": _render_ansible(layer, emit, rules, skipped),
+        "ansible": _render_ansible(layer, emit, rules, skipped, host, domain),
         "mgmt_cli": _render_mgmt_cli(layer, emit, rules, skipped),
         "web_api": _render_web_api(layer, emit, rules),
         "stats": stats,
@@ -783,14 +784,35 @@ def _ansible_fields(fields, obj, indent) -> list[str]:
     return out
 
 
-def _render_ansible(layer, emit, rules, skipped) -> str:
-    L = [f'# Ansible export of Check Point access layer "{layer}".',
-         "# Collection: check_point.mgmt. Run against a host configured for the Management API.",
-         "# Restore into an EMPTY layer/domain to reproduce rule order."]
+def _render_ansible(layer, emit, rules, skipped, host="", domain="") -> str:
+    """check_point.mgmt runs over the httpapi connection plugin targeting the Management server (NOT
+    localhost). Emit a copy-paste inventory so the play talks to the SMS; the password comes from Vault/env."""
+    target = host or "MGMT_SERVER_IP"
+    L = [f'# Ansible export of Check Point access layer "{layer}" (collection: check_point.mgmt).',
+         '#',
+         '# 1) Save this inventory as "hosts" (source the password from Vault/env — never inline it):',
+         '#      [checkpoint]',
+         f'#      cp-mgmt ansible_host={target}',
+         '#      [checkpoint:vars]',
+         '#      ansible_user=admin',
+         '#      ansible_network_os=check_point.mgmt.checkpoint',
+         '#      ansible_connection=httpapi',
+         '#      ansible_httpapi_use_ssl=True',
+         '#      ansible_httpapi_validate_certs=False',
+         '#      ansible_httpapi_port=443',
+         '#      # ansible_password: "{{ vault_cp_password }}"']
+    if domain:
+        L.append(f'#      # MDS/Multi-Domain: this layer lives in domain "{domain}" — point ansible_host')
+        L.append(f'#      #   at that domain\'s CMA (or its Management API IP).')
+    L += ['#',
+          '# 2) ansible-galaxy collection install check_point.mgmt',
+          '# 3) ansible-playbook -i hosts restore_policy.yml',
+          '#',
+          '# Restore into an EMPTY layer/domain to reproduce rule order.']
     if skipped:
         L.append(_skip_banner(skipped, "#"))
-    L += ["---", f'- name: Restore Check Point policy — layer "{layer}"', "  hosts: localhost",
-          "  gather_facts: false", "  tasks:"]
+    L += ["---", f'- name: Restore Check Point policy — layer "{layer}"',
+          "  hosts: checkpoint", "  connection: httpapi", "  gather_facts: false", "  tasks:"]
 
     for e in emit:
         spec, o = e["spec"], e["obj"]
