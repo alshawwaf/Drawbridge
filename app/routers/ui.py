@@ -12,9 +12,11 @@ from ..config import get_settings
 from ..db import get_db
 from ..links import public_url
 from ..models import Feed, FeedPoll, FeedType, Gateway, ManagementServer, User
-from ..security import get_user_or_none, new_feed_token, verify_password
+from ..security import (
+    get_user_or_none, hash_password, new_feed_token, password_strength_error, verify_password,
+)
 from ..schemas.ioc import IOC_FORMATS, IOC_LEVELS, IOC_TYPES
-from ..services import bundle, coverage
+from ..services import bundle, coverage, login_guard
 from ..services.render import (
     custom_csv_command,
     normalize_generic_dc_content,
@@ -346,11 +348,19 @@ def login_submit(
     password: str = Form(...),
     db: Session = Depends(get_db),
 ):
+    ip = login_guard.client_ip(request)
+    wait = login_guard.locked_for(db, ip)
+    if wait:
+        return templates.TemplateResponse(
+            request, "login.html",
+            {"error": f"Too many failed attempts. Try again in {wait}s."}, status_code=429)
     user = db.scalar(select(User).where(User.username == username))
     if user is None or not verify_password(password, user.password_hash):
+        login_guard.record_failure(db, ip)
         return templates.TemplateResponse(
             request, "login.html", {"error": "Invalid credentials"}, status_code=401
         )
+    login_guard.record_success(db, ip)
     request.session["uid"] = user.id
     return RedirectResponse("/", status_code=303)
 
@@ -359,6 +369,39 @@ def login_submit(
 def logout(request: Request):
     request.session.clear()
     return RedirectResponse("/login", status_code=303)
+
+
+@router.get("/account", response_class=HTMLResponse)
+def account_page(request: Request, db: Session = Depends(get_db)):
+    user = get_user_or_none(request, db)
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+    return templates.TemplateResponse(request, "account.html",
+                                      {"user": user, "flash": _pop_flash(request)})
+
+
+@router.post("/account/password")
+def change_password(
+    request: Request,
+    current: str = Form(...),
+    new: str = Form(...),
+    confirm: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    user = get_user_or_none(request, db)
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+    if not verify_password(current, user.password_hash):
+        _flash(request, "Current password is incorrect.", "error")
+    elif new != confirm:
+        _flash(request, "New passwords do not match.", "error")
+    elif (err := password_strength_error(new)):
+        _flash(request, err, "error")
+    else:
+        user.password_hash = hash_password(new)
+        db.commit()
+        _flash(request, "Password changed.")
+    return RedirectResponse("/account", status_code=303)
 
 
 # --- Dashboard -------------------------------------------------------------------------
