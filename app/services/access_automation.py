@@ -262,9 +262,15 @@ def _ip_int(addr: str) -> int:
     return int(ipaddress.IPv4Address(addr))
 
 
+def _is_any(cidr) -> bool:
+    return str(cidr).strip().lower() == "any"
+
+
 def _cidrs_to_iv(cidrs):
     iv = []
     for c in cidrs:
+        if _is_any(c):
+            return ANY_IP
         net = ipaddress.ip_network(c, strict=False)
         iv.append((int(net.network_address), int(net.broadcast_address)))
     return _merge(iv)
@@ -429,6 +435,20 @@ def _svc_uncertain(req_svc: ServiceSet, rule_svc: ServiceSet) -> bool:
     return False
 
 
+def _svc_indeterminate(req_svc: ServiceSet, rule_svc: ServiceSet) -> bool:
+    """Can we PROVE the service dimension does NOT match? Not when a PORT request meets a rule whose
+    service carries an application (concrete or category) that its port leg doesn't already cover --
+    App Control identifies L7 over ports, so the rule MIGHT match this port's traffic. Keeping such a
+    rule 'in the path' lets a DROP route to REVIEW (don't override a possible block); an ACCEPT is
+    harmless to create around. Subsumes the application-request uncertainty (_svc_uncertain)."""
+    if _svc_uncertain(req_svc, rule_svc):
+        return True
+    if (req_svc.by_proto and (rule_svc.apps or rule_svc.opaque)
+            and not _portset_covers(rule_svc.by_proto, req_svc.by_proto)):
+        return True
+    return False
+
+
 def _is_proper_superset(rel_src, rel_dst, rel_svc) -> bool:
     sup = (Relation.SUPERSET, Relation.EQUAL)
     all_equal = rel_src == rel_dst == rel_svc == Relation.EQUAL
@@ -455,8 +475,9 @@ def decide(req: AccessRequest, rules: list[ParsedRule]) -> Decision:
     widen_target: Optional[ParsedRule] = None    # reachable accept EQUAL in 2 dims, differing in the 3rd
     widen_field: Optional[str] = None            # the dimension to extend: source | destination | service
     lower_anchor: Optional[ParsedRule] = None     # last rule strictly more specific than req
+    last_enabled = max((i for i, r in enumerate(rules) if r.enabled), default=-1)
 
-    for r in rules:
+    for i, r in enumerate(rules):
         if not r.enabled:
             continue
 
@@ -469,9 +490,10 @@ def decide(req: AccessRequest, rules: list[ParsedRule]) -> Decision:
         # provably disjoint -- so a rule with such a cell stays in the path and routes to REVIEW below.
         # (This is the safety invariant: never reason past a rule whose real reach is unknown.)
         svc_uncertain = _svc_uncertain(req_svc, r.svc)
+        svc_indeterminate = _svc_indeterminate(req_svc, r.svc)
         interferes = not (_provably_disjoint(rel_src, r.src_unknown)
                           or _provably_disjoint(rel_dst, r.dst_unknown)
-                          or _provably_disjoint(rel_svc, r.svc_unknown or svc_uncertain))
+                          or _provably_disjoint(rel_svc, r.svc_unknown or svc_indeterminate))
 
         if (r.complex or svc_uncertain or not r.is_resolved_action) and interferes:
             return Decision(
@@ -497,8 +519,8 @@ def decide(req: AccessRequest, rules: list[ParsedRule]) -> Decision:
         # A covering DROP. The catch-all cleanup is a placement floor; a *specific* deny is an
         # intentional block -- never silently insert an allow above it.
         if fully_covers and r.is_drop and covering_drop is None:
-            if _is_catchall(r):
-                covering_drop = r
+            if _is_catchall(r) and i == last_enabled:
+                covering_drop = r        # the real bottom cleanup -> placement floor
             else:
                 return Decision(
                     Outcome.REVIEW,
@@ -527,7 +549,7 @@ def decide(req: AccessRequest, rules: list[ParsedRule]) -> Decision:
         # other cells. If a rule's source is {win_client, win_server} and only win_server was requested,
         # widening its destination would also grant win_client -> over-grant. Requiring equality (and
         # adding to the cell, never to a shared group) means we grant precisely src x dst x svc.
-        if (widen_target is None and r.is_accept and not r.complex and not svc_uncertain
+        if (widen_target is None and r.is_accept and not r.complex and not svc_indeterminate
                 and covering_drop is None):
             eq = {"source": rel_src == Relation.EQUAL, "destination": rel_dst == Relation.EQUAL,
                   "service": rel_svc == Relation.EQUAL}
@@ -641,7 +663,10 @@ def lookup_network(session, net) -> Optional[str]:
 
 
 def lookup_endpoint(session, cidr: str) -> Optional[str]:
-    """Existing object for a request endpoint — a host for /32 & /128, else a network — or None."""
+    """Existing object for a request endpoint — the predefined Any, a host for /32 & /128, else a
+    network — or None."""
+    if _is_any(cidr):
+        return "Any"
     net = ipaddress.ip_network(cidr, strict=False)
     if net.prefixlen == net.max_prefixlen:
         return lookup_host(session, str(net.network_address))
@@ -651,7 +676,10 @@ def lookup_endpoint(session, cidr: str) -> Optional[str]:
 def resolve_endpoint(session, cidr: str) -> str:
     """Reuse-or-create the object that represents a request endpoint. Critically, a CIDR wider than a
     single address materializes as a NETWORK object (not a /32 host), so the committed rule covers the
-    full requested scope that decide() reasoned over — never silently narrowed to one IP."""
+    full requested scope that decide() reasoned over — never silently narrowed to one IP. The literal
+    Any references Check Point's predefined Any object and is never created."""
+    if _is_any(cidr):
+        return "Any"
     net = ipaddress.ip_network(cidr, strict=False)
     if net.prefixlen == net.max_prefixlen:
         return resolve_host(session, str(net.network_address), name_hint=_endpoint_name(net))
