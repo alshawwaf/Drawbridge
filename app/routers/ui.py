@@ -301,6 +301,17 @@ def _flash(request: Request, text: str, kind: str = "success") -> None:
     # Cap length: the flash rides in the signed session cookie (~4KB browser limit); an overlong
     # message would silently drop the whole cookie and log the user out.
     request.session["flash"] = {"text": (text or "")[:800], "type": kind}
+    # Also persist it as a notification for the header bell (review/delete later). Best-effort: a
+    # notification write must never break the request that flashed.
+    uid = request.session.get("uid")
+    if uid:
+        try:
+            from ..db import SessionLocal
+            from ..services import notifications
+            with SessionLocal() as db:
+                notifications.add(db, uid, text or "", kind)
+        except Exception:  # noqa: BLE001
+            pass
 
 
 def _clamp_interval(value, default: int = 3600) -> int:
