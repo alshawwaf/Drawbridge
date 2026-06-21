@@ -187,7 +187,7 @@ def update_feed(
     if body.description is not None:
         feed.description = body.description
     if body.interval_seconds is not None:
-        feed.interval_seconds = body.interval_seconds
+        feed.interval_seconds = max(1, min(int(body.interval_seconds), 86400))
     if body.auth_header_key is not None:
         feed.auth_header_key = body.auth_header_key or None
     if body.auth_header_value is not None:
