@@ -23,8 +23,8 @@
     <button class="copybtn" type="submit" title="Populate a ready-to-demo set of feeds, datacenters, a gateway, a dynamic layer + a live scenario">✨ Seed demo environment</button>
   </form>
   <form method="post" action="/portal/seed" style="margin:0;">
-    <input type="hidden" name="preset" value="hq_lab">
-    <button class="copybtn" type="submit" title="Seed a training lab that mirrors the HQ topology: mock vCenter + NSX-T advertising the real lab VMs/IPs, threat feeds, plus SMS + gateway connection profiles">🏛 Seed HQ Training Lab</button>
+    <input type="hidden" name="preset" value="sbt_lab">
+    <button class="copybtn" type="submit" title="Seed the SBT Lab Environment: mock vCenter + NSX-T advertising the real lab VMs/IPs, threat feeds, plus SMS + gateway connection profiles">🏛 Seed SBT Lab Environment</button>
   </form>
   <a class="copybtn" href="/portal/export" download title="Download this whole environment as a shareable bundle (no credentials)">⤓ Export</a>
   <form method="post" action="/portal/import" enctype="multipart/form-data" id="import-form" style="margin:0;">
