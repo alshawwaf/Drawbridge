@@ -74,7 +74,7 @@ Content-Type: application/json
 
 <div class="card">
   <h2 style="margin-top:0;">How it decides — behind the scenes</h2>
-  <p class="muted" style="margin-top:4px;">Every request runs the same first-match decision tree the market leaders use. It reuses a rule that already permits the traffic, widens one that almost does, creates a least-privilege rule only when nothing covers it — and refuses to touch policy it can’t safely reason about.</p>
+  <p class="muted" style="margin-top:4px;">Every request runs the same first-match decision tree the market leaders use. It reuses a rule that already permits the traffic; widens a rule only when it matches the request exactly in the other two columns (so it never grants access nobody asked for); creates a least-privilege rule when nothing fits; and refuses to touch policy it can’t safely reason about.</p>
   <svg id="aa-flow" viewBox="0 0 660 416" width="100%" role="img" aria-label="Access automation decision flow" style="max-width:660px;display:block;margin:10px auto 0;">
     <style>
       #aa-flow text{font-family:Inter,system-ui,sans-serif;dominant-baseline:middle;}
@@ -108,11 +108,11 @@ Content-Type: application/json
 
     <rect class="box" x="24" y="22" width="250" height="46" rx="8"/>
     <text class="t" x="149" y="39" text-anchor="middle">Access request</text>
-    <text class="s" x="149" y="55" text-anchor="middle">source · destination · service</text>
+    <text class="s" x="149" y="55" text-anchor="middle">source · destination · service/app</text>
 
     <rect class="box" x="24" y="86" width="250" height="46" rx="8"/>
-    <text class="t" x="149" y="103" text-anchor="middle">Resolve objects + service</text>
-    <text class="s" x="149" y="119" text-anchor="middle">reuse by IP / port, else create</text>
+    <text class="t" x="149" y="103" text-anchor="middle">Resolve objects + service/app</text>
+    <text class="s" x="149" y="119" text-anchor="middle">reuse by IP / port / name, else add</text>
 
     <rect class="box dec" x="24" y="150" width="250" height="46" rx="8"/>
     <text class="t" x="149" y="167" text-anchor="middle">Already permitted?</text>
@@ -120,11 +120,11 @@ Content-Type: application/json
 
     <rect class="box dec" x="24" y="214" width="250" height="46" rx="8"/>
     <text class="t" x="149" y="231" text-anchor="middle">Denied or unresolved in path?</text>
-    <text class="s" x="149" y="247" text-anchor="middle">explicit drop / zone / negation</text>
+    <text class="s" x="149" y="247" text-anchor="middle">drop / negation / app category</text>
 
     <rect class="box dec" x="24" y="278" width="250" height="46" rx="8"/>
-    <text class="t" x="149" y="295" text-anchor="middle">Service + one side covered?</text>
-    <text class="s" x="149" y="311" text-anchor="middle">widen the side that differs</text>
+    <text class="t" x="149" y="295" text-anchor="middle">Two cells match exactly?</text>
+    <text class="s" x="149" y="311" text-anchor="middle">widen the third (else create)</text>
 
     <rect class="box o-warn" x="24" y="352" width="250" height="46" rx="8"/>
     <text class="t c-warn" x="149" y="369" text-anchor="middle">Create least-privilege rule</text>
@@ -140,7 +140,7 @@ Content-Type: application/json
 
     <rect class="box o-info" x="388" y="278" width="248" height="46" rx="8"/>
     <text class="t c-info" x="512" y="295" text-anchor="middle">Widen the rule</text>
-    <text class="s" x="512" y="311" text-anchor="middle">add source or destination</text>
+    <text class="s" x="512" y="311" text-anchor="middle">add src / dst / service to it</text>
   </svg>
   <div class="row" style="gap:8px;margin-top:14px;flex-wrap:wrap;justify-content:center;">
     <span class="pill ok">No-op · already allowed</span>
