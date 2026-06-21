@@ -10,7 +10,7 @@ gateway reference is remapped by bundle index so it re-links to the imported gat
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..models import Datacenter, DynamicLayer, Feed, FeedType, Gateway, User
+from ..models import Datacenter, DynamicLayer, Feed, FeedType, Gateway, ManagementServer, User
 from ..security import new_feed_token
 
 BUNDLE_VERSION = 1
@@ -37,6 +37,8 @@ def export_bundle(db: Session, user: User) -> dict:
     feeds = db.scalars(select(Feed).where(Feed.owner_id == user.id).order_by(Feed.id)).all()
     dcs = db.scalars(select(Datacenter).where(Datacenter.owner_id == user.id).order_by(Datacenter.id)).all()
     gws = db.scalars(select(Gateway).where(Gateway.owner_id == user.id).order_by(Gateway.id)).all()
+    mgmt = db.scalars(select(ManagementServer).where(ManagementServer.owner_id == user.id)
+                      .order_by(ManagementServer.id)).all()
     layers = db.scalars(select(DynamicLayer).where(DynamicLayer.owner_id == user.id).order_by(DynamicLayer.id)).all()
     gw_index = {g.id: i for i, g in enumerate(gws)}  # real gateway id → position in the exported list
     return {
@@ -47,6 +49,9 @@ def export_bundle(db: Session, user: User) -> dict:
                          "content": _strip_dc_auth(d.content)} for d in dcs],
         "gateways": [{"name": g.name, "host": g.host, "port": g.port, "username": g.username,
                       "cert_pem": g.cert_pem or "", "auto_trust": bool(g.auto_trust)} for g in gws],
+        "management_servers": [{"name": m.name, "host": m.host, "port": m.port, "username": m.username,
+                                "domain": m.domain or "", "cert_pem": m.cert_pem or "",
+                                "auto_trust": bool(m.auto_trust)} for m in mgmt],
         "dynamic_layers": [_export_layer(layer, gw_index) for layer in layers],
     }
 
@@ -56,7 +61,7 @@ def import_bundle(db: Session, user: User, data: dict) -> dict:
     per-type counts plus a list of skipped items. Raises ValueError if it isn't a bundle."""
     if not isinstance(data, dict) or int(data.get("dcsim_bundle") or 0) < 1:
         raise ValueError("This file isn't a DC Simulator bundle.")
-    counts = {"feeds": 0, "datacenters": 0, "gateways": 0, "dynamic_layers": 0}
+    counts = {"feeds": 0, "datacenters": 0, "gateways": 0, "management_servers": 0, "dynamic_layers": 0}
     skipped: list[str] = []
 
     for f in data.get("feeds") or []:
@@ -86,6 +91,13 @@ def import_bundle(db: Session, user: User, data: dict) -> dict:
         gw_objs.append(gw)
         counts["gateways"] += 1
     db.flush()  # assign gateway ids so layer references can be remapped
+
+    for m in data.get("management_servers") or []:
+        db.add(ManagementServer(name=m.get("name") or "Imported SMS", host=m.get("host") or "",
+                                port=int(m.get("port") or 443), username=m.get("username") or "",
+                                domain=m.get("domain") or "", cert_pem=m.get("cert_pem") or "",
+                                auto_trust=bool(m.get("auto_trust", True)), owner_id=user.id))
+        counts["management_servers"] += 1
 
     for layer in data.get("dynamic_layers") or []:
         content = dict(layer.get("content") or {})
@@ -154,5 +166,81 @@ def seed_bundle() -> dict:
                  "rulebase": [
                      {"name": "Allow web to app", "action": "Accept"},
                      {"name": "Block known-bad", "action": "Drop"}]}},
+        ],
+    }
+
+
+def hq_training_lab_bundle() -> dict:
+    """The **HQ Training Lab** preset — mock datacenters + feeds that MIRROR the instructor's real HQ lab
+    topology (Smart-1 SMS 10.1.1.100, HQ-GW, segments 10.1.1/2/3.0/24 + the external contractor net
+    203.0.113.0/24). The mock vCenter / NSX-T advertise the VMs at their **real lab IPs on purpose**, so a
+    trainee can connect CloudGuard, import a VM, drop it into a rule, and verify with a *real* ping through
+    the live HQ-GW. The SMS + gateway connection profiles are seeded credential-less (re-enter on connect)."""
+    vcenter_vms = [   # vCenter tags are bare strings (imported as tag objects)
+        {"name": "Windows-Client", "ip": "10.1.1.222", "tags": ["HQ", "client", "Windows", "seg-mgmt"],
+         "power": "poweredOn", "guest_os": "windows9_64Guest"},
+        {"name": "Windows-Server", "ip": "10.1.2.250", "tags": ["HQ", "server", "Windows", "seg-app"],
+         "power": "poweredOn", "guest_os": "windows9Server64Guest"},
+        {"name": "AI-Ubuntu", "ip": "10.1.3.33", "tags": ["HQ", "server", "Linux", "seg-dmz", "ai"],
+         "power": "poweredOn", "guest_os": "ubuntu64Guest"},
+        {"name": "Kali-Linux", "ip": "203.0.113.5", "tags": ["contractor", "untrusted", "Linux", "external"],
+         "power": "poweredOn", "guest_os": "otherLinux64Guest"},
+    ]
+    nsxt_vms = [   # NSX-T tags are scope=value pairs; groups below match on a member tag
+        {"name": "Windows-Client", "ip": "10.1.1.222", "tags": ["zone=hq", "role=client", "os=windows"]},
+        {"name": "Windows-Server", "ip": "10.1.2.250", "tags": ["zone=hq", "role=server", "os=windows"]},
+        {"name": "AI-Ubuntu", "ip": "10.1.3.33", "tags": ["zone=hq", "role=server", "os=linux"]},
+        {"name": "Kali-Linux", "ip": "203.0.113.5", "tags": ["zone=external", "role=contractor", "trust=untrusted"]},
+    ]
+    return {
+        "dcsim_bundle": BUNDLE_VERSION,
+        "feeds": [
+            {"type": "generic_dc", "name": "HQ-Network-Segments", "interval_seconds": 60,
+             "description": "HQ network segments as importable Data Center objects",
+             "content": {"objects": [
+                 {"name": "HQ-Mgmt-Net", "id": "aaaa0001-0000-0000-0000-000000000001",
+                  "description": "Management / client segment", "ranges": ["10.1.1.0/24"]},
+                 {"name": "HQ-App-Net", "id": "aaaa0001-0000-0000-0000-000000000002",
+                  "description": "Server / application segment", "ranges": ["10.1.2.0/24"]},
+                 {"name": "HQ-DMZ-Net", "id": "aaaa0001-0000-0000-0000-000000000003",
+                  "description": "DMZ / AI workloads", "ranges": ["10.1.3.0/24"]},
+                 {"name": "Contractor-Net", "id": "aaaa0001-0000-0000-0000-000000000004",
+                  "description": "External PenTest contractor (ISP1)", "ranges": ["203.0.113.0/24"]}]}},
+            {"type": "network_feed", "name": "HQ-Threat-Blocklist", "interval_seconds": 3600,
+             "description": "IPs the HQ gateway should block (incl. the contractor host)",
+             "content": {"format": "flat", "data_type": "ip",
+                         "entries": ["203.0.113.5", "198.51.100.0/24", "192.0.2.0/24"]}},
+            {"type": "ioc", "name": "HQ-C2-Indicators", "interval_seconds": 3600,
+             "description": "Threat indicators relevant to the HQ lab",
+             "content": {"format": "cp_csv", "indicators": [
+                 {"name": "contractor-host", "value": "203.0.113.5", "type": "IP", "confidence": "high",
+                  "severity": "critical", "product": "AB", "comment": "PenTest contractor (Kali) — untrusted"},
+                 {"name": "phishing-host", "value": "malicious.example.net", "type": "Domain",
+                  "confidence": "medium", "severity": "high", "product": "AB", "comment": "phishing domain"}]}},
+        ],
+        "datacenters": [
+            {"provider": "vcenter", "name": "HQ-vCenter",
+             "description": "Mock vCenter mirroring the HQ lab VMs (real IPs)", "content": {"vms": vcenter_vms}},
+            {"provider": "nsxt", "name": "HQ-NSX-T",
+             "description": "Mock NSX-T: the HQ VMs + dynamic security groups", "content": {
+                 "vms": nsxt_vms, "groups": [
+                     {"name": "HQ-Servers", "member_tag": "role=server", "tags": ["env=hq"]},
+                     {"name": "Untrusted-Contractors", "member_tag": "trust=untrusted", "tags": []},
+                     {"name": "HQ-Zone", "member_tag": "zone=hq", "tags": []}]}},
+        ],
+        "gateways": [
+            {"name": "HQ-GW", "host": "10.1.1.111", "port": 443, "username": "admin",
+             "cert_pem": "", "auto_trust": True},
+        ],
+        "management_servers": [
+            {"name": "HQ-Smart-1", "host": "10.1.1.100", "port": 443, "username": "admin",
+             "domain": "", "cert_pem": "", "auto_trust": True},
+        ],
+        "dynamic_layers": [
+            {"name": "HQ-Quarantine", "layer_name": "quarantine_layer",
+             "description": "Updatable layer for the quarantine lab", "content": {
+                 "operation": "replace", "comments": "HQ training quarantine layer", "tags": ["hq", "lab"],
+                 "gateway_ref": 0, "objects": {}, "referenced_objects": {},
+                 "rulebase": [{"name": "Quarantine untrusted hosts", "action": "Drop"}]}},
         ],
     }

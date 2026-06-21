@@ -399,10 +399,17 @@ async def portal_import(request: Request, file: UploadFile = File(None), db: Ses
 
 
 @router.post("/portal/seed")
-def portal_seed(request: Request, db: Session = Depends(get_db)):
+def portal_seed(request: Request, preset: str = Form("demo"), db: Session = Depends(get_db)):
     user = get_user_or_none(request, db)
     if user is None:
         return RedirectResponse("/login", status_code=303)
+    if preset == "hq_lab":
+        c = bundle.import_bundle(db, user, bundle.hq_training_lab_bundle())["counts"]
+        _flash(request, f"Seeded the HQ Training Lab: {c['datacenters']} datacenters (mock vCenter + NSX-T "
+                        f"mirroring your HQ VMs at their real IPs), {c['feeds']} feeds, "
+                        f"{c['management_servers']} management server + {c['gateways']} gateway profile. "
+                        "Connect CloudGuard to HQ-vCenter, then run the HQ labs from the Scenarios page.")
+        return RedirectResponse("/", status_code=303)
     result = bundle.import_bundle(db, user, bundle.seed_bundle())
     c = result["counts"]
     extra = ""
