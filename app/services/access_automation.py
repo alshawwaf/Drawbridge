@@ -361,6 +361,14 @@ def _parse_svc(cell, objdict: dict) -> ServiceSet:
             iv = _parse_port(o.get("port", ""))
             if iv is None:
                 s.complex = True
+            elif (o.get("enable-tcp-resource") or o.get("match-by-protocol-signature")
+                  or str(o.get("source-port") or "").strip()):
+                # The service matches MORE NARROWLY than its destination port alone -- a URI/CIFS/FTP
+                # resource, an L7 protocol signature, or a specific client source-port. Treating it as a
+                # plain port would let the engine NO_OP / widen / reuse a rule that does not actually
+                # permit all of that port -> silent over-grant. Mark it complex (extent-unknown) so the
+                # rule stays in the path and routes to REVIEW instead.
+                s.complex = True
             else:
                 s.by_proto[proto] = _merge(s.by_proto.get(proto, []) + iv)
         elif t == "application-site":

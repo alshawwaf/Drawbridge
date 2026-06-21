@@ -463,6 +463,29 @@ def test_service_group_members_are_resolved():
     assert d.outcome is Outcome.NO_OP and d.target_rule.uid == "rSG"
 
 
+@pytest.mark.parametrize("extra", [
+    {"enable-tcp-resource": True},           # legacy URI/CIFS/FTP resource match
+    {"match-by-protocol-signature": True},   # L7 protocol-signature match
+    {"source-port": "53"},                   # client-side source-port restriction
+])
+def test_resource_or_signature_service_is_not_reused(extra):
+    # a service that matches more narrowly than its dest port must not be NO_OP'd / widened on the port
+    objd = {"u":  {"uid": "u", "name": "narrow-80", "type": "service-tcp", "port": "80", **extra},
+            "any": {"uid": "any", "name": "Any", "type": "CpmiAnyObject"},
+            "hs":  {"uid": "hs", "name": "c", "type": "host", "ipv4-address": "10.1.2.250"},
+            "hd":  {"uid": "hd", "name": "w", "type": "host", "ipv4-address": "172.16.5.10"}}
+    acc = aa._parse_rule({"uid": "ra", "rule-number": 1, "name": "narrow", "action": "Accept",
+                          "enabled": True, "source": ["hs"], "destination": ["hd"], "service": ["u"]}, objd)
+    cleanup = aa._parse_rule({"uid": "rC", "rule-number": 99, "name": "cleanup", "action": "Drop",
+                              "enabled": True, "source": ["any"], "destination": ["any"],
+                              "service": ["any"]}, objd)
+    # same flow (would have been a false NO_OP) and a differing source (would have been an unsafe WIDEN)
+    same = aa.decide(AccessRequest(["10.1.2.250/32"], ["172.16.5.10/32"], "tcp", "80"), [acc, cleanup])
+    widen = aa.decide(AccessRequest(["192.168.7.7/32"], ["172.16.5.10/32"], "tcp", "80"), [acc, cleanup])
+    assert same.outcome is Outcome.REVIEW and same.target_rule.uid == "ra"
+    assert widen.outcome is not Outcome.WIDEN
+
+
 # --- BLOCKER regression: a rule whose extent is UNKNOWN must never be treated as out-of-path -----
 def _zone_rule(uid, num, action, dst, svc):
     """An accept/drop whose source is a security-zone / dynamic-object: parses to [] + src_unknown."""
