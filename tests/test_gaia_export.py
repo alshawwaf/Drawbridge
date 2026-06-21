@@ -93,3 +93,31 @@ def test_gaia_generate_is_resilient_to_empty_config():
     assert art["stats"]["interfaces"] == 0 and art["stats"]["sections"] == []
     assert 'context = "gaia_api"' in art["terraform"]
     assert "save config" in art["clish"]
+
+
+def test_gaia_extra_interface_types():
+    """vlan / bond / bridge / loopback render across all four targets, incl. clish create commands."""
+    import json as _json
+    cfg = {
+        "vlan_interfaces": [{"name": "eth1.100", "ipv4-address": "10.1.2.1", "ipv4-mask-length": 24,
+                             "enabled": True, "mtu": 1500}],
+        "bond_interfaces": [{"name": "bond0", "ipv4-address": "10.1.3.1", "ipv4-mask-length": 24,
+                             "mode": "8023AD", "lacp-rate": "slow", "members": ["eth2", "eth3"]}],
+        "bridge_interfaces": [{"name": "br0", "members": [{"name": "eth4"}, {"name": "eth5"}]}],
+        "loopback_interfaces": [{"name": "loop0", "ipv4-address": "1.1.1.1", "ipv4-mask-length": 32}],
+    }
+    art = gaia_export.generate(cfg)
+    assert art["stats"]["interfaces"] == 4
+    tf = art["terraform"]
+    for slug in ("vlan", "bond", "bridge", "loopback"):
+        assert f'resource "checkpoint_gaia_{slug}_interface"' in tf
+    assert 'members = ["eth2", "eth3"]' in tf                     # bond members resolved
+    cl = art["clish"]
+    assert "add interface eth1 vlan 100" in cl                    # vlan create
+    assert "add bonding group 0" in cl and "add bonding group 0 interface eth2" in cl
+    assert "set bonding group 0 mode 8023AD" in cl
+    assert "add bridging group 0 interface eth4" in cl
+    cmds = [o["command"] for o in _json.loads(art["web_api"])]
+    assert {"set-vlan-interface", "set-bond-interface", "set-bridge-interface",
+            "set-loopback-interface"} <= set(cmds)
+    assert "cp_gaia_bond_interface:" in art["ansible"]
