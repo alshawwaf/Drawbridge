@@ -345,6 +345,22 @@ def test_publish_raises_when_task_fails(monkeypatch):
         assert "not committed" in str(exc).lower()
 
 
+def test_cp_error_detail_surfaces_validation_messages():
+    msg = mgmt_api._cp_error_detail({
+        "message": "Publish operation failed with Validation Errors.",
+        "blocking-errors": [{"message": "Application & URL Filtering is not enabled on layer DNS_Layer."}]})
+    assert "Validation Errors" in msg and "Application & URL Filtering is not enabled" in msg
+
+
+def test_task_error_text_extracts_and_base64_decodes():
+    import base64 as _b64
+    enc = _b64.b64encode(b"blade not enabled on layer DNS_Layer").decode()
+    task = {"status": "failed",
+            "task-details": [{"statusDescription": "rule verification failed", "responseMessage": enc}]}
+    txt = mgmt_api._task_error_text(task)
+    assert "rule verification failed" in txt and "blade not enabled on layer DNS_Layer" in txt
+
+
 def test_export_ansible_negate_underscored_and_names_quoted():
     bundle = {"layer": "Net: prod", "objects_by_type": {}, "rules": [
         {"kind": "rule", "number": 1, "name": "allow: web", "enabled": True, "source": [],

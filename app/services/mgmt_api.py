@@ -8,6 +8,7 @@ skip-verify path. Each call is recorded on ``session.trace`` so the UI can show 
 """
 from __future__ import annotations
 
+import base64
 import ssl
 import time
 
@@ -114,8 +115,7 @@ class MgmtSession:
         self._record(command, payload or {}, r, t)
         data = _safe_json(r)
         if r.status_code != 200:
-            raise MgmtError(data.get("message") or data.get("errors")
-                            or f"{command} failed (HTTP {r.status_code}).")
+            raise MgmtError(_cp_error_detail(data) or f"{command} failed (HTTP {r.status_code}).")
         return data
 
     def call_paged(self, command: str, payload: dict | None = None, *,
@@ -149,14 +149,16 @@ class MgmtSession:
         raises MgmtError on failure/timeout so the caller can discard and release locks."""
         elapsed = 0.0
         while True:
-            tasks = self.call("show-task", {"task-id": task_id}).get("tasks") or []
+            tasks = self.call("show-task", {"task-id": task_id,
+                                            "details-level": "full"}).get("tasks") or []
             task = tasks[0] if tasks else {}
             status = (task.get("status") or "").lower()
             if status == "succeeded":
                 return task
             if status in ("failed", "partially succeeded"):
-                raise MgmtError(f"{what} failed (task {task_id}: {task.get('status') or 'failed'}) — "
-                                "the change was NOT committed.")
+                detail = _task_error_text(task)
+                raise MgmtError(f"{what} failed — the change was NOT committed."
+                                + (f" {detail}" if detail else f" (task {task_id}: {status})"))
             if elapsed >= timeout:
                 raise MgmtError(f"{what} did not finish within {int(timeout)}s "
                                 f"(task {task_id} still '{task.get('status') or 'pending'}').")
@@ -178,8 +180,11 @@ class MgmtSession:
         return self.call_paged("show-access-layers", key="access-layers")
 
     def _record(self, command: str, payload: dict, resp, t0: float) -> None:
-        self.trace.append({"command": command, "params": payload, "status": resp.status_code,
-                           "ms": round((time.perf_counter() - t0) * 1000)})
+        entry = {"command": command, "params": payload, "status": resp.status_code,
+                 "ms": round((time.perf_counter() - t0) * 1000)}
+        if resp.status_code != 200:
+            entry["error"] = _cp_error_detail(_safe_json(resp))[:500]
+        self.trace.append(entry)
 
 
 def _safe_json(resp) -> dict:
@@ -188,6 +193,62 @@ def _safe_json(resp) -> dict:
         return data if isinstance(data, dict) else {"objects": data} if isinstance(data, list) else {}
     except Exception:  # noqa: BLE001
         return {}
+
+
+def _maybe_b64(s: str) -> str:
+    """Some Check Point task-detail fields are base64-encoded text — decode when it cleanly does."""
+    try:
+        txt = base64.b64decode(s, validate=True).decode("utf-8")
+    except Exception:  # noqa: BLE001
+        return s
+    return txt if (txt and (txt.isprintable() or "\n" in txt)) else s
+
+
+def _cp_error_detail(data: dict) -> str:
+    """A readable error from a web_api error body, surfacing the structured validation detail
+    (blocking-errors / errors / warnings) rather than just the one-line message."""
+    parts: list[str] = []
+    if data.get("message"):
+        parts.append(str(data["message"]))
+    for key in ("blocking-errors", "errors", "warnings"):
+        for item in data.get(key) or []:
+            m = item.get("message") if isinstance(item, dict) else item
+            if m:
+                parts.append(f"• {m}")
+    out, seen = [], set()
+    for p in parts:
+        p = str(p).strip()
+        if p and p not in seen:
+            seen.add(p)
+            out.append(p)
+    return "  ".join(out)
+
+
+def _task_error_text(task: dict) -> str:
+    """Dig the human-readable error(s) out of a failed show-task result (task-details / messages),
+    base64-decoding fields where Check Point encodes them."""
+    found: list[str] = []
+
+    def walk(o):
+        if isinstance(o, dict):
+            for k, v in o.items():
+                if isinstance(v, str) and v and any(w in str(k).lower()
+                        for w in ("message", "error", "description", "warning", "reason")):
+                    found.append(_maybe_b64(v))
+                else:
+                    walk(v)
+        elif isinstance(o, list):
+            for x in o:
+                walk(x)
+
+    walk(task)
+    out, seen = [], set()
+    for f in found:
+        f = (f or "").strip()
+        if f and f.lower() not in ("succeeded", "in progress", "failed") and f not in seen:
+            seen.add(f)
+            out.append(f)
+    return " | ".join(out)[:800]
 
 
 def _login_error(resp) -> str:
