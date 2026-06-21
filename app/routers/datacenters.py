@@ -651,19 +651,19 @@ def dc_detail(dc_id: int, request: Request, db: Session = Depends(get_db)):
     if dc.provider == "vcenter":
         return templates.TemplateResponse(request, "dc_detail.html", {
             "dc": dc, "apex_host": apex_host,
-            "vms": dc.content.get("vms", []) or [], "dc_auth": _auth, "dc_secret": dc_secret,
+            "vms": (dc.content or {}).get("vms", []) or [], "dc_auth": _auth, "dc_secret": dc_secret,
             "flash": _pop_flash(request),
         })
     if dc.provider in ("nsxt", "globalnsxt"):
         return templates.TemplateResponse(request, "dc_detail.html", {
             "dc": dc, "apex_host": apex_host,
-            "vms": dc.content.get("vms", []) or [], "groups": dc.content.get("groups", []) or [],
+            "vms": (dc.content or {}).get("vms", []) or [], "groups": (dc.content or {}).get("groups", []) or [],
             "dc_auth": _auth, "dc_secret": dc_secret, "flash": _pop_flash(request),
         })
     if dc.provider == "proxmox":
         return templates.TemplateResponse(request, "dc_detail.html", {
             "dc": dc, "apex_host": apex_host,
-            "vms": dc.content.get("vms", []) or [], "node": (dc.content or {}).get("node") or "pve",
+            "vms": (dc.content or {}).get("vms", []) or [], "node": (dc.content or {}).get("node") or "pve",
             "dc_auth": _auth, "dc_secret": dc_secret, "flash": _pop_flash(request),
         })
     if dc.provider == "aci":
@@ -671,19 +671,19 @@ def dc_detail(dc_id: int, request: Request, db: Session = Depends(get_db)):
             "dc": dc, "aci_url": base, "apex_host": apex_host,
             "tenant": (dc.content or {}).get("tenant") or "DCSIM",
             "app_profile": (dc.content or {}).get("app_profile") or "DCSIM-AP",
-            "epgs": dc.content.get("epgs", []) or [], "esgs": dc.content.get("esgs", []) or [],
+            "epgs": (dc.content or {}).get("epgs", []) or [], "esgs": (dc.content or {}).get("esgs", []) or [],
             "dc_auth": _auth, "dc_secret": dc_secret, "flash": _pop_flash(request),
         })
     if dc.provider == "kubernetes":
         return templates.TemplateResponse(request, "dc_detail.html", {
             "dc": dc, "apex_host": apex_host,
-            "nodes": dc.content.get("nodes", []) or [], "pods": dc.content.get("pods", []) or [],
-            "services": dc.content.get("services", []) or [], "namespaces": k8s_svc.namespaces(dc),
+            "nodes": (dc.content or {}).get("nodes", []) or [], "pods": (dc.content or {}).get("pods", []) or [],
+            "services": (dc.content or {}).get("services", []) or [], "namespaces": k8s_svc.namespaces(dc),
             "dc_auth": _auth, "dc_secret": dc_secret, "flash": _pop_flash(request),
         })
     if dc.provider == "nutanix":
         return templates.TemplateResponse(request, "dc_detail.html", {
-            "dc": dc, "apex_host": apex_host, "vms": dc.content.get("vms", []) or [],
+            "dc": dc, "apex_host": apex_host, "vms": (dc.content or {}).get("vms", []) or [],
             "categories": nutanix_svc.categories(dc),
             "dc_auth": _auth, "dc_secret": dc_secret, "flash": _pop_flash(request),
         })
@@ -695,9 +695,9 @@ def dc_detail(dc_id: int, request: Request, db: Session = Depends(get_db)):
     }
     return templates.TemplateResponse(request, "dc_detail.html", {
         "dc": dc, "keystone_url": keystone_url,
-        "instances": dc.content.get("instances", []) or [],
-        "subnets": dc.content.get("subnets", []) or [],
-        "secgroups": dc.content.get("security_groups", []) or [],
+        "instances": (dc.content or {}).get("instances", []) or [],
+        "subnets": (dc.content or {}).get("subnets", []) or [],
+        "secgroups": (dc.content or {}).get("security_groups", []) or [],
         "os_auth": _auth, "dc_secret": dc_secret,
         "preview_json": json.dumps(preview, indent=2),
         "flash": _pop_flash(request),
