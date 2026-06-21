@@ -1,40 +1,46 @@
 {% extends "base.html" %}
 {% block title %}Dashboard{% endblock %}
 {% block content %}
-<div class="row">
+<div class="row" style="margin-bottom:16px;">
   <div class="grow">
     <h1>Your simulated feeds</h1>
     <p class="muted">Signed in as {{ user.username }}. Each URL below is what the gateway polls.</p>
   </div>
-  <div class="menu">
-    <button class="btn menu-trigger" type="button">+ New feed ▾</button>
-    <div class="menu-items">
-      <a href="/feeds/new/generic-dc">Generic Data Center</a>
-      <a href="/feeds/new/network-feed">Network Feed</a>
-      <a href="/feeds/new/ioc">IoC Feed</a>
+  <div class="row" style="gap:8px; align-items:center;">
+    <div class="menu">
+      <button class="btn menu-trigger" type="button">PoV Bundle ▾</button>
+      <div class="menu-items">
+        <span class="menu-label">Seed an environment</span>
+        <form method="post" action="/portal/seed">
+          <input type="hidden" name="preset" value="demo">
+          <button type="submit" title="A ready-to-demo set: feeds, datacenters, a gateway, a dynamic layer + a live scenario">✨ Demo environment</button>
+        </form>
+        <form method="post" action="/portal/seed">
+          <input type="hidden" name="preset" value="sbt_lab">
+          <button type="submit" title="Mock vCenter + NSX-T advertising the real lab VMs/IPs, threat feeds, plus SMS + gateway profiles">🏛 SBT Lab Environment</button>
+        </form>
+        <div class="menu-sep"></div>
+        <span class="menu-label">Share</span>
+        <a href="/portal/export" download title="Download this whole environment as a shareable bundle (no credentials)">⤓ Export bundle</a>
+        <form method="post" action="/portal/import" enctype="multipart/form-data" id="import-form">
+          <input type="file" name="file" id="import-file" accept="application/json,.json" hidden>
+          <button type="button" id="import-btn" title="Import a bundle a colleague shared">⤒ Import bundle</button>
+        </form>
+      </div>
+    </div>
+    <div class="menu">
+      <button class="btn menu-trigger" type="button">+ New feed ▾</button>
+      <div class="menu-items">
+        <a href="/feeds/new/generic-dc">Generic Data Center</a>
+        <a href="/feeds/new/network-feed">Network Feed</a>
+        <a href="/feeds/new/ioc">IoC Feed</a>
+      </div>
     </div>
   </div>
 </div>
 
-<div class="row" style="gap:8px; margin:2px 0 14px; flex-wrap:wrap; align-items:center;">
-  <span class="muted" style="font-size:11px; font-weight:700; letter-spacing:.5px;">POV BUNDLE</span>
-  <form method="post" action="/portal/seed" style="margin:0;">
-    <input type="hidden" name="preset" value="demo">
-    <button class="copybtn" type="submit" title="Populate a ready-to-demo set of feeds, datacenters, a gateway, a dynamic layer + a live scenario">✨ Seed demo environment</button>
-  </form>
-  <form method="post" action="/portal/seed" style="margin:0;">
-    <input type="hidden" name="preset" value="sbt_lab">
-    <button class="copybtn" type="submit" title="Seed the SBT Lab Environment: mock vCenter + NSX-T advertising the real lab VMs/IPs, threat feeds, plus SMS + gateway connection profiles">🏛 Seed SBT Lab Environment</button>
-  </form>
-  <a class="copybtn" href="/portal/export" download title="Download this whole environment as a shareable bundle (no credentials)">⤓ Export</a>
-  <form method="post" action="/portal/import" enctype="multipart/form-data" id="import-form" style="margin:0;">
-    <input type="file" name="file" id="import-file" accept="application/json,.json" hidden>
-    <button class="copybtn" type="button" id="import-btn" title="Import a bundle a colleague shared">⤒ Import</button>
-  </form>
-</div>
-
 {% if not rows %}
-<div class="card"><p class="muted">No feeds yet. Create your first feed to get a pollable URL for SmartConsole — or click <b>✨ Seed demo environment</b> above for a ready-made set.</p></div>
+<div class="card"><p class="muted">No feeds yet. Create your first feed to get a pollable URL for SmartConsole — or use <b>PoV Bundle ▾ → Seed</b> above for a ready-made set.</p></div>
 {% else %}
 {% set typelabels = {'generic_dc': 'Generic Data Center', 'network_feed': 'Network Feed', 'ioc': 'IoC'} %}
 <div class="filterbar">
