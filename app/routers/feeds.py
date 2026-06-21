@@ -127,6 +127,13 @@ def feed_to_dict(feed: Feed) -> dict:
     }
 
 
+def _norm_auth(key, value):
+    """A feed credential is all-or-nothing: a username/header without its value would lock the feed out
+    (the value could never match), so collapse a half-set pair back to an OPEN feed."""
+    key, value = (key or None), (value or None)
+    return (key, value) if (key and value) else (None, None)
+
+
 @router.post("/feeds", status_code=201)
 def create_feed(body: FeedCreate, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict:
     content = _build_content(
@@ -144,15 +151,16 @@ def create_feed(body: FeedCreate, user: User = Depends(current_user), db: Sessio
         ioc_comment=body.ioc_comment,
         description=body.description,
     )
+    akey, aval = _norm_auth(body.auth_header_key, body.auth_header_value)
     feed = Feed(
         token=new_feed_token(),
         type=body.type,
         name=body.name,
         description=body.description,
         content=content,
-        interval_seconds=body.interval_seconds,
-        auth_header_key=body.auth_header_key or None,
-        auth_header_value=body.auth_header_value or None,
+        interval_seconds=max(1, min(int(body.interval_seconds), 86400)),
+        auth_header_key=akey,
+        auth_header_value=aval,
         owner_id=user.id,
     )
     db.add(feed)
@@ -212,6 +220,7 @@ def update_feed(
             jq_query=body.jq_query if body.jq_query is not None else feed.content.get("jq_query", ""),
             description=feed.description,
         )
+    feed.auth_header_key, feed.auth_header_value = _norm_auth(feed.auth_header_key, feed.auth_header_value)
     db.commit()
     db.refresh(feed)
     return feed_to_dict(feed)
