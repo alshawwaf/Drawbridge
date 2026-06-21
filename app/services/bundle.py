@@ -170,48 +170,49 @@ def seed_bundle() -> dict:
     }
 
 
-def hq_training_lab_bundle() -> dict:
-    """The **HQ Training Lab** preset — mock datacenters + feeds that MIRROR the instructor's real HQ lab
-    topology (Smart-1 SMS 10.1.1.100, HQ-GW, segments 10.1.1/2/3.0/24 + the external contractor net
-    203.0.113.0/24). The mock vCenter / NSX-T advertise the VMs at their **real lab IPs on purpose**, so a
-    trainee can connect CloudGuard, import a VM, drop it into a rule, and verify with a *real* ping through
-    the live HQ-GW. The SMS + gateway connection profiles are seeded credential-less (re-enter on connect)."""
+def sbt_lab_bundle() -> dict:
+    """The **SBT Lab Environment** preset — mock datacenters + feeds that MIRROR the instructor's real
+    lab topology (Smart-1 SMS 10.1.1.100, the gateway, segments 10.1.1/2/3.0/24 + the external contractor
+    net 203.0.113.0/24). The mock vCenter / NSX-T advertise the VMs at their **real lab IPs on purpose**,
+    so a trainee can connect CloudGuard, import a VM, drop it into a rule, and verify with a *real* ping
+    through the live gateway. The SMS + gateway connection profiles are seeded credential-less (re-enter
+    on connect)."""
     vcenter_vms = [   # vCenter tags are bare strings (imported as tag objects)
-        {"name": "Windows-Client", "ip": "10.1.1.222", "tags": ["HQ", "client", "Windows", "seg-mgmt"],
+        {"name": "Windows-Client", "ip": "10.1.1.222", "tags": ["SBT", "client", "Windows", "seg-mgmt"],
          "power": "poweredOn", "guest_os": "windows9_64Guest"},
-        {"name": "Windows-Server", "ip": "10.1.2.250", "tags": ["HQ", "server", "Windows", "seg-app"],
+        {"name": "Windows-Server", "ip": "10.1.2.250", "tags": ["SBT", "server", "Windows", "seg-app"],
          "power": "poweredOn", "guest_os": "windows9Server64Guest"},
-        {"name": "AI-Ubuntu", "ip": "10.1.3.33", "tags": ["HQ", "server", "Linux", "seg-dmz", "ai"],
+        {"name": "AI-Ubuntu", "ip": "10.1.3.33", "tags": ["SBT", "server", "Linux", "seg-dmz", "ai"],
          "power": "poweredOn", "guest_os": "ubuntu64Guest"},
         {"name": "Kali-Linux", "ip": "203.0.113.5", "tags": ["contractor", "untrusted", "Linux", "external"],
          "power": "poweredOn", "guest_os": "otherLinux64Guest"},
     ]
     nsxt_vms = [   # NSX-T tags are scope=value pairs; groups below match on a member tag
-        {"name": "Windows-Client", "ip": "10.1.1.222", "tags": ["zone=hq", "role=client", "os=windows"]},
-        {"name": "Windows-Server", "ip": "10.1.2.250", "tags": ["zone=hq", "role=server", "os=windows"]},
-        {"name": "AI-Ubuntu", "ip": "10.1.3.33", "tags": ["zone=hq", "role=server", "os=linux"]},
+        {"name": "Windows-Client", "ip": "10.1.1.222", "tags": ["zone=sbt", "role=client", "os=windows"]},
+        {"name": "Windows-Server", "ip": "10.1.2.250", "tags": ["zone=sbt", "role=server", "os=windows"]},
+        {"name": "AI-Ubuntu", "ip": "10.1.3.33", "tags": ["zone=sbt", "role=server", "os=linux"]},
         {"name": "Kali-Linux", "ip": "203.0.113.5", "tags": ["zone=external", "role=contractor", "trust=untrusted"]},
     ]
     return {
         "dcsim_bundle": BUNDLE_VERSION,
         "feeds": [
-            {"type": "generic_dc", "name": "HQ-Network-Segments", "interval_seconds": 60,
-             "description": "HQ network segments as importable Data Center objects",
+            {"type": "generic_dc", "name": "SBT-Network-Segments", "interval_seconds": 60,
+             "description": "SBT lab network segments as importable Data Center objects",
              "content": {"objects": [
-                 {"name": "HQ-Mgmt-Net", "id": "aaaa0001-0000-0000-0000-000000000001",
+                 {"name": "SBT-Mgmt-Net", "id": "aaaa0001-0000-0000-0000-000000000001",
                   "description": "Management / client segment", "ranges": ["10.1.1.0/24"]},
-                 {"name": "HQ-App-Net", "id": "aaaa0001-0000-0000-0000-000000000002",
+                 {"name": "SBT-App-Net", "id": "aaaa0001-0000-0000-0000-000000000002",
                   "description": "Server / application segment", "ranges": ["10.1.2.0/24"]},
-                 {"name": "HQ-DMZ-Net", "id": "aaaa0001-0000-0000-0000-000000000003",
+                 {"name": "SBT-DMZ-Net", "id": "aaaa0001-0000-0000-0000-000000000003",
                   "description": "DMZ / AI workloads", "ranges": ["10.1.3.0/24"]},
                  {"name": "Contractor-Net", "id": "aaaa0001-0000-0000-0000-000000000004",
                   "description": "External PenTest contractor (ISP1)", "ranges": ["203.0.113.0/24"]}]}},
-            {"type": "network_feed", "name": "HQ-Threat-Blocklist", "interval_seconds": 3600,
-             "description": "IPs the HQ gateway should block (incl. the contractor host)",
+            {"type": "network_feed", "name": "SBT-Threat-Blocklist", "interval_seconds": 3600,
+             "description": "IPs the lab gateway should block (incl. the contractor host)",
              "content": {"format": "flat", "data_type": "ip",
                          "entries": ["203.0.113.5", "198.51.100.0/24", "192.0.2.0/24"]}},
-            {"type": "ioc", "name": "HQ-C2-Indicators", "interval_seconds": 3600,
-             "description": "Threat indicators relevant to the HQ lab",
+            {"type": "ioc", "name": "SBT-C2-Indicators", "interval_seconds": 3600,
+             "description": "Threat indicators relevant to the SBT lab",
              "content": {"format": "cp_csv", "indicators": [
                  {"name": "contractor-host", "value": "203.0.113.5", "type": "IP", "confidence": "high",
                   "severity": "critical", "product": "AB", "comment": "PenTest contractor (Kali) — untrusted"},
@@ -219,27 +220,27 @@ def hq_training_lab_bundle() -> dict:
                   "confidence": "medium", "severity": "high", "product": "AB", "comment": "phishing domain"}]}},
         ],
         "datacenters": [
-            {"provider": "vcenter", "name": "HQ-vCenter",
-             "description": "Mock vCenter mirroring the HQ lab VMs (real IPs)", "content": {"vms": vcenter_vms}},
-            {"provider": "nsxt", "name": "HQ-NSX-T",
-             "description": "Mock NSX-T: the HQ VMs + dynamic security groups", "content": {
+            {"provider": "vcenter", "name": "SBT-vCenter",
+             "description": "Mock vCenter mirroring the SBT lab VMs (real IPs)", "content": {"vms": vcenter_vms}},
+            {"provider": "nsxt", "name": "SBT-NSX-T",
+             "description": "Mock NSX-T: the SBT lab VMs + dynamic security groups", "content": {
                  "vms": nsxt_vms, "groups": [
-                     {"name": "HQ-Servers", "member_tag": "role=server", "tags": ["env=hq"]},
+                     {"name": "SBT-Servers", "member_tag": "role=server", "tags": ["env=sbt"]},
                      {"name": "Untrusted-Contractors", "member_tag": "trust=untrusted", "tags": []},
-                     {"name": "HQ-Zone", "member_tag": "zone=hq", "tags": []}]}},
+                     {"name": "SBT-Zone", "member_tag": "zone=sbt", "tags": []}]}},
         ],
         "gateways": [
-            {"name": "HQ-GW", "host": "10.1.1.111", "port": 443, "username": "admin",
+            {"name": "SBT-GW", "host": "10.1.1.111", "port": 443, "username": "admin",
              "cert_pem": "", "auto_trust": True},
         ],
         "management_servers": [
-            {"name": "HQ-Smart-1", "host": "10.1.1.100", "port": 443, "username": "admin",
+            {"name": "SBT-Smart-1", "host": "10.1.1.100", "port": 443, "username": "admin",
              "domain": "", "cert_pem": "", "auto_trust": True},
         ],
         "dynamic_layers": [
-            {"name": "HQ-Quarantine", "layer_name": "quarantine_layer",
+            {"name": "SBT-Quarantine", "layer_name": "quarantine_layer",
              "description": "Updatable layer for the quarantine lab", "content": {
-                 "operation": "replace", "comments": "HQ training quarantine layer", "tags": ["hq", "lab"],
+                 "operation": "replace", "comments": "SBT lab quarantine layer", "tags": ["sbt", "lab"],
                  "gateway_ref": 0, "objects": {}, "referenced_objects": {},
                  "rulebase": [{"name": "Quarantine untrusted hosts", "action": "Drop"}]}},
         ],

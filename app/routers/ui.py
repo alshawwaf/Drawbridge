@@ -403,12 +403,12 @@ def portal_seed(request: Request, preset: str = Form("demo"), db: Session = Depe
     user = get_user_or_none(request, db)
     if user is None:
         return RedirectResponse("/login", status_code=303)
-    if preset == "hq_lab":
-        c = bundle.import_bundle(db, user, bundle.hq_training_lab_bundle())["counts"]
-        _flash(request, f"Seeded the HQ Training Lab: {c['datacenters']} datacenters (mock vCenter + NSX-T "
-                        f"mirroring your HQ VMs at their real IPs), {c['feeds']} feeds, "
+    if preset == "sbt_lab":
+        c = bundle.import_bundle(db, user, bundle.sbt_lab_bundle())["counts"]
+        _flash(request, f"Seeded the SBT Lab Environment: {c['datacenters']} datacenters (mock vCenter + "
+                        f"NSX-T mirroring the lab VMs at their real IPs), {c['feeds']} feeds, "
                         f"{c['management_servers']} management server + {c['gateways']} gateway profile. "
-                        "Connect CloudGuard to HQ-vCenter, then run the HQ labs from the Scenarios page.")
+                        "Connect CloudGuard to SBT-vCenter to import the VMs.")
         return RedirectResponse("/", status_code=303)
     result = bundle.import_bundle(db, user, bundle.seed_bundle())
     c = result["counts"]

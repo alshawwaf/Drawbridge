@@ -115,16 +115,16 @@ def test_seed_bundle_imports_cleanly_and_links_layer():
     assert layer.content["gateway_id"] == gw.id                  # seeded layer linked to the seeded gateway
 
 
-def test_hq_training_lab_bundle_seeds_mock_inventory_at_real_ips():
+def test_sbt_lab_bundle_seeds_mock_inventory_at_real_ips():
     db = _session()
     u = _user(db, "a")
-    res = bundle.import_bundle(db, u, bundle.hq_training_lab_bundle())
+    res = bundle.import_bundle(db, u, bundle.sbt_lab_bundle())
     assert res["counts"] == {"feeds": 3, "datacenters": 2, "gateways": 1,
                              "management_servers": 1, "dynamic_layers": 1}
     # the mock vCenter must advertise the real lab host IPs so an import → rule → ping validates
-    vc = db.query(Datacenter).filter_by(owner_id=u.id, name="HQ-vCenter").one()
+    vc = db.query(Datacenter).filter_by(owner_id=u.id, name="SBT-vCenter").one()
     vms = {v["name"]: v["ip"] for v in vc.content["vms"]}
     assert vms["AI-Ubuntu"] == "10.1.3.33" and vms["Kali-Linux"] == "203.0.113.5"
     # SMS connection profile seeded credential-less (re-enter on connect)
-    sms = db.query(ManagementServer).filter_by(owner_id=u.id, name="HQ-Smart-1").one()
+    sms = db.query(ManagementServer).filter_by(owner_id=u.id, name="SBT-Smart-1").one()
     assert sms.host == "10.1.1.100" and sms.username == "admin"
