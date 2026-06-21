@@ -221,6 +221,11 @@ class ParsedRule:
     src_unknown: bool = False
     dst_unknown: bool = False
     svc_unknown: bool = False
+    # Match-gating columns the engine does NOT model (VPN community, time window, content/data type,
+    # install-on gateway subset, service-resource). When set, the rule only matches UNDER that extra
+    # condition -> it is not an always-on Accept/Drop and must never be reused/widened/NO_OP'd.
+    conditional: bool = False
+    conditions: tuple = ()
 
     @property
     def is_accept(self) -> bool:
@@ -377,6 +382,38 @@ def _parse_svc(cell, objdict: dict) -> ServiceSet:
     return s
 
 
+def _cell_is_any(cell, objdict: dict, *defaults: str) -> bool:
+    """A match column (vpn/time/content/install-on) imposes NO restriction when it is empty or holds
+    ONLY its default object(s) (e.g. 'Any', 'Policy Targets'). Any other named object -- or an unnamed
+    structured entry such as a directional-VPN {from,to} pair -- is a real restriction."""
+    items = cell or []
+    if not items:
+        return True
+    for ref in items:
+        name = (_deref(ref, objdict).get("name") or "").strip().lower()
+        if name not in defaults:
+            return False
+    return True
+
+
+def _rule_conditions(e: dict, objdict: dict) -> tuple:
+    """The match-gating columns the engine does not model. A rule using any of them only matches under
+    that extra condition (a VPN community/direction, a time window, a data/content type, a subset of
+    gateways, or a service resource) -> it is not an always-on Accept/Drop."""
+    conds = []
+    if not _cell_is_any(e.get("vpn"), objdict, "any"):
+        conds.append("VPN")
+    if not _cell_is_any(e.get("time"), objdict, "any"):
+        conds.append("time")
+    if e.get("content-negate") or not _cell_is_any(e.get("content"), objdict, "any"):
+        conds.append("data")
+    if not _cell_is_any(e.get("install-on"), objdict, "any", "policy targets"):
+        conds.append("install-on")
+    if e.get("service-resource"):
+        conds.append("service-resource")
+    return tuple(conds)
+
+
 def _parse_rule(e, objdict: dict) -> ParsedRule:
     src, src_cx, src_groups = _parse_net(e.get("source", []), objdict)
     dst, dst_cx, dst_groups = _parse_net(e.get("destination", []), objdict)
@@ -390,6 +427,7 @@ def _parse_rule(e, objdict: dict) -> ParsedRule:
     src_unknown = bool(src_cx or e.get("source-negate"))
     dst_unknown = bool(dst_cx or e.get("destination-negate"))
     svc_unknown = bool(svc.complex or e.get("service-negate"))
+    conditions = _rule_conditions(e, objdict)
     return ParsedRule(
         uid=e.get("uid", ""),
         number=e.get("rule-number", e.get("number", 0)),
@@ -400,6 +438,7 @@ def _parse_rule(e, objdict: dict) -> ParsedRule:
         source_group_uids=src_groups, dest_group_uids=dst_groups,
         complex=bool(src_unknown or dst_unknown or svc_unknown),
         src_unknown=src_unknown, dst_unknown=dst_unknown, svc_unknown=svc_unknown,
+        conditional=bool(conditions), conditions=conditions,
     )
 
 
@@ -470,11 +509,36 @@ def decide(req: AccessRequest, rules: list[ParsedRule]) -> Decision:
 
     Walks the rulebase top-down, honouring Check Point first-match semantics.
     """
+    # Guard 1 -- IPv6 is not yet modeled. ANY_IP and every parsed cell live in the IPv4 integer space
+    # (0 .. 2^32-1); a v6 endpoint's intervals sit far above it, so relation() reads every v4/Any cell as
+    # DISJOINT, the engine concludes "nothing is in the path", and silently CREATEs an allow above the
+    # admin's Any->Any cleanup. Until v6 is carried end-to-end, hand any v6 request to a human.
+    for _c in (req.src_cidrs + req.dst_cidrs):
+        if not _is_any(_c) and ipaddress.ip_network(_c, strict=False).version == 6:
+            return Decision(
+                Outcome.REVIEW,
+                "the request involves an IPv6 address, which the engine does not yet model (its address "
+                "algebra is IPv4-only, so it cannot reason about coverage) -- needs human review",
+            )
+
     req_src, req_dst, req_svc = req.src_iv(), req.dst_iv(), req.svc()
+
+    # Guard 2 -- a request that resolves to no concrete service (empty/garbage port, no application) has
+    # an empty interval set, which would read as "covered by anything" -> a false NO_OP. Fail loud so the
+    # pure surface is self-defending (build_request guards this too, as defense in depth).
+    if not req_svc.any and not req_svc.apps and not (
+            req_svc.by_proto and any(iv for iv in req_svc.by_proto.values())):
+        return Decision(
+            Outcome.REVIEW,
+            "the request specifies no concrete service, port, or application -- cannot reason about "
+            "coverage; needs human review",
+        )
+
     covering_drop: Optional[ParsedRule] = None   # the catch-all cleanup that floors placement
     widen_target: Optional[ParsedRule] = None    # reachable accept EQUAL in 2 dims, differing in the 3rd
     widen_field: Optional[str] = None            # the dimension to extend: source | destination | service
     lower_anchor: Optional[ParsedRule] = None     # last rule strictly more specific than req
+    conditional_skip: Optional[ParsedRule] = None  # a conditional ACCEPT we skipped (for the CREATE note)
     last_enabled = max((i for i, r in enumerate(rules) if r.enabled), default=-1)
 
     for i, r in enumerate(rules):
@@ -503,6 +567,25 @@ def decide(req: AccessRequest, rules: list[ParsedRule]) -> Decision:
                 f"such as an inline layer) -- needs human review",
                 target_rule=r,
             )
+
+        # A rule whose match ALSO depends on a column the engine doesn't model -- a VPN community/
+        # direction, a time window, a content/data type, an install-on gateway subset, or a service-
+        # resource -- is not an always-on Accept/Drop. We can't verify the extra condition, so a
+        # conditional DENY/divert in the path -> REVIEW (don't assume the block is irrelevant), and a
+        # conditional ACCEPT is excluded from NO_OP / reuse / widen (its grant only holds under that
+        # condition) and skipped -- a clean rule decides, or we CREATE a precise rule for the requested
+        # (unconditional) traffic, noting why the matching-but-conditional rule doesn't grant it.
+        if r.conditional and interferes:
+            if not r.is_accept:
+                return Decision(
+                    Outcome.REVIEW,
+                    f"rule {r.number} ({r.name}) lies in the path but its match is restricted by "
+                    f"{', '.join(r.conditions)} (a dimension the engine doesn't model) and it denies or "
+                    f"diverts the traffic -- can't auto-evaluate; needs human review",
+                    target_rule=r,
+                )
+            conditional_skip = r
+            continue
 
         # Past here, any rule we reuse / widen / anchor on is fully resolved (complex+interfering rules
         # already returned REVIEW above; complex+provably-disjoint rules are excluded explicitly below).
@@ -550,7 +633,7 @@ def decide(req: AccessRequest, rules: list[ParsedRule]) -> Decision:
         # widening its destination would also grant win_client -> over-grant. Requiring equality (and
         # adding to the cell, never to a shared group) means we grant precisely src x dst x svc.
         if (widen_target is None and r.is_accept and not r.complex and not svc_indeterminate
-                and covering_drop is None):
+                and not r.conditional and covering_drop is None):
             eq = {"source": rel_src == Relation.EQUAL, "destination": rel_dst == Relation.EQUAL,
                   "service": rel_svc == Relation.EQUAL}
             cov = {"source": _dim_covered(rel_src), "destination": _dim_covered(rel_dst),
@@ -575,9 +658,14 @@ def decide(req: AccessRequest, rules: list[ParsedRule]) -> Decision:
             target_rule=widen_target, widen_field=widen_field,
         )
 
+    reason = "no rule covers the request; create a least-privilege rule"
+    if conditional_skip is not None:
+        reason += (f" (rule {conditional_skip.number} ({conditional_skip.name}) overlaps this request "
+                   f"but only applies under {', '.join(conditional_skip.conditions)}, so it does not "
+                   f"grant this traffic)")
     return Decision(
         Outcome.CREATE,
-        "no rule covers the request; create a least-privilege rule",
+        reason,
         target_rule=covering_drop or lower_anchor,
         position=_placement(covering_drop, lower_anchor),
     )

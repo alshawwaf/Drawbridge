@@ -40,10 +40,12 @@ def _app(names=None, opaque=False):
     return ServiceSet(apps=set(names or []), opaque=opaque)
 
 
-def _rule(uid, num, action, src, dst, svc, *, groups=None, dest_groups=None, enabled=True, complex=False):
+def _rule(uid, num, action, src, dst, svc, *, groups=None, dest_groups=None, enabled=True, complex=False,
+          conditions=()):
     return ParsedRule(uid=uid, number=num, name=uid, enabled=enabled, action=action,
                       src=src, dst=dst, svc=svc, source_group_uids=groups or [],
-                      dest_group_uids=dest_groups or [], complex=complex)
+                      dest_group_uids=dest_groups or [], complex=complex,
+                      conditional=bool(conditions), conditions=tuple(conditions))
 
 
 WEB = _rule("r8", 8, "Accept", _net("10.1.0.0/24"), _host("172.16.5.10"), _tcp(443),
@@ -340,6 +342,76 @@ def test_execute_any_destination_references_predefined_any(monkeypatch):
     rule = next(p for c, p in calls if c == "add-access-rule")
     assert rule["destination"] == "Any"
     assert not any(c == "add-network" for c, _ in calls)   # Any is predefined, never created
+
+
+# --- audit: IPv6 blindness + empty service ----------------------------------------------------
+def test_decide_ipv6_request_is_review_not_create():
+    # ANY_IP is the v4 integer range; a v6 endpoint is DISJOINT from every Any/v4 cell, so without a
+    # guard the catch-all DROP is invisible and the engine CREATEs an allow above the admin's deny.
+    d = aa.decide(AccessRequest(["2001:db8::1/128"], ["2001:db8::2/128"], "tcp", "443"), [CLEANUP])
+    assert d.outcome is Outcome.REVIEW and "IPv6" in d.reason
+
+
+def test_decide_ipv6_with_any_destination_is_review():
+    d = aa.decide(AccessRequest(["2001:db8::1/128"], ["Any"], "tcp", "443"), [CLEANUP])
+    assert d.outcome is Outcome.REVIEW and "IPv6" in d.reason
+
+
+def test_build_request_rejects_ipv6():
+    with pytest.raises(ValueError, match="IPv6"):
+        tk.build_request("2001:db8::1", "172.16.5.10", "tcp", "443")
+    with pytest.raises(ValueError, match="IPv6"):
+        tk.build_request("10.1.2.250", "2001:db8::/64", "tcp", "443")
+
+
+def test_decide_empty_service_is_review_not_noop():
+    # no concrete service -> empty interval set -> must NOT read as "covered by anything"
+    d = aa.decide(AccessRequest(["10.1.1.1/32"], ["8.8.8.8/32"], "tcp", ""), [WEB_CELL, CLEANUP])
+    assert d.outcome is Outcome.REVIEW and "no concrete service" in d.reason
+
+
+# --- conditional-scope columns (vpn / time / content / install-on / service-resource) ---------
+def test_decide_conditional_accept_is_create_not_noop():
+    # a VPN-only ACCEPT matching the tuple does NOT permit clear traffic -> CREATE, not NO_OP
+    vpn = _rule("rV", 5, "Accept", _host("10.1.1.1"), _host("8.8.8.8"), _tcp(443), conditions=("VPN",))
+    d = aa.decide(AccessRequest(["10.1.1.1/32"], ["8.8.8.8/32"], "tcp", "443"), [vpn, CLEANUP])
+    assert d.outcome is Outcome.CREATE and "VPN" in d.reason and "rV" in d.reason
+
+
+def test_decide_conditional_drop_overlapping_is_review():
+    time_drop = _rule("rT", 5, "Drop", _host("10.1.1.1"), _host("8.8.8.8"), _tcp(443), conditions=("time",))
+    d = aa.decide(AccessRequest(["10.1.1.1/32"], ["8.8.8.8/32"], "tcp", "443"), [time_drop, CLEANUP])
+    assert d.outcome is Outcome.REVIEW and d.target_rule.uid == "rT" and "time" in d.reason
+
+
+def test_decide_conditional_accept_is_not_a_widen_target():
+    # same dst+svc, source differs by one host: normally a source-widen, but the rule is data-restricted
+    cond = _rule("rW", 7, "Accept", _host("10.1.0.9"), _host("172.16.5.10"), _tcp(443), conditions=("data",))
+    d = aa.decide(AccessRequest(["10.1.0.10/32"], ["172.16.5.10/32"], "tcp", "443"), [cond, CLEANUP])
+    assert d.outcome is Outcome.CREATE   # never widen a rule whose match we can't verify
+
+
+def test_parse_rule_flags_conditional_columns():
+    objd = {
+        "u-comm": {"uid": "u-comm", "name": "RemoteAccess", "type": "vpn-community-meshed"},
+        "u-time": {"uid": "u-time", "name": "WorkHours", "type": "time"},
+    }
+    base = {"uid": "r1", "rule-number": 1, "action": "Accept",
+            "source": [], "destination": [], "service": []}
+    assert aa._parse_rule({**base, "vpn": ["u-comm"]}, objd).conditions == ("VPN",)
+    assert aa._parse_rule({**base, "time": ["u-time"]}, objd).conditions == ("time",)
+    assert aa._parse_rule({**base, "content": ["u-x"], "content-negate": True}, {}).conditional is True
+    assert aa._parse_rule({**base, "install-on": [{"uid": "gw1", "name": "gw1"}]}, {}).conditional is True
+    assert aa._parse_rule({**base, "service-resource": "uri-res"}, {}).conditional is True
+
+
+def test_parse_rule_default_any_cells_are_not_conditional():
+    objd = {"u-any": {"uid": "u-any", "name": "Any"},
+            "u-pt": {"uid": "u-pt", "name": "Policy Targets"}}
+    rule = aa._parse_rule(
+        {"uid": "r1", "rule-number": 1, "action": "Accept", "source": [], "destination": [], "service": [],
+         "vpn": ["u-any"], "time": ["u-any"], "content": ["u-any"], "install-on": ["u-pt"]}, objd)
+    assert rule.conditional is False and rule.conditions == ()
 
 
 # --- BLOCKER regression: a rule whose extent is UNKNOWN must never be treated as out-of-path -----
