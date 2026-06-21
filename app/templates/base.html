@@ -111,16 +111,41 @@
       padding:24px; margin:18px 0; box-shadow:var(--shadow-sm); }
     a.card { display:block; color:inherit; text-decoration:none; transition:border-color .14s, box-shadow .14s, transform .14s; }
     a.card.choose:hover { border-color:var(--accent); box-shadow:var(--shadow); transform:translateY(-2px); }
+    a.card.lift, .card.lift { transition:transform .14s ease, border-color .14s ease, box-shadow .14s ease; }
+    a.card.lift:hover, .card.lift:hover { border-color:var(--accent); box-shadow:var(--shadow-lg); transform:translateY(-3px); }
+
+    /* ===================== Page header + shared accents (portal-wide) ===================== */
+    .page-head { display:flex; align-items:flex-start; gap:16px; margin:0 0 18px; flex-wrap:wrap; }
+    .page-head .ph-main { flex:1; min-width:240px; }
+    .page-head h1 { display:flex; align-items:center; gap:11px; margin:0; }
+    .page-head .ph-sub { color:var(--muted); font-size:13.5px; margin:7px 0 0; max-width:720px; line-height:1.5; }
+    .page-head .ph-actions { display:flex; gap:9px; align-items:center; flex-wrap:wrap; }
+    .icon-chip { display:inline-flex; align-items:center; justify-content:center; width:40px; height:40px;
+      border-radius:12px; flex:none; background:var(--accent-soft); color:var(--accent); }
+    .icon-chip svg { width:21px; height:21px; }
+    .icon-chip.lg { width:48px; height:48px; border-radius:14px; }
+    .icon-chip.lg svg { width:25px; height:25px; }
+    .section-label { font-size:11px; font-weight:800; letter-spacing:.6px; text-transform:uppercase;
+      color:var(--faint); margin:24px 2px 13px; }
+    /* Gradient stat tiles for list/overview headers */
+    .statrow { display:flex; gap:28px; flex-wrap:wrap; }
+    .stat .n { font-size:22px; font-weight:800; line-height:1;
+      background:linear-gradient(135deg,var(--accent),#7c3aed); -webkit-background-clip:text; background-clip:text;
+      -webkit-text-fill-color:transparent; }
+    .stat .l { display:block; margin-top:5px; font-size:10.5px; font-weight:700; letter-spacing:.4px;
+      text-transform:uppercase; color:var(--faint); }
 
     /* ============================ Table ============================ */
     .tablewrap { overflow-x:auto; }
     table { width:100%; border-collapse:collapse; }
-    thead th { text-align:left; padding:2px 16px 11px; color:var(--faint); font-weight:650; font-size:10.5px;
-      text-transform:uppercase; letter-spacing:.7px; border-bottom:1px solid var(--line); white-space:nowrap; }
-    tbody td { padding:14px 16px; border-bottom:1px solid var(--line-soft); vertical-align:middle; font-size:13.5px; }
+    thead th { text-align:left; padding:11px 16px; color:var(--faint); font-weight:700; font-size:10.5px;
+      text-transform:uppercase; letter-spacing:.7px; background:var(--surface-3);
+      border-bottom:1px solid var(--line); white-space:nowrap; }
+    tbody td { padding:13px 16px; border-bottom:1px solid var(--line-soft); vertical-align:middle; font-size:13.5px; }
     tbody tr:last-child td { border-bottom:none; }
     tbody tr { transition:background .12s; }
     tbody tr:hover { background:var(--hover); }
+    tbody tr:hover td:first-child { box-shadow:inset 3px 0 0 var(--accent); }   /* accent indicator on row hover */
     td.nowrap, th.nowrap { white-space:nowrap; }
     .feedname { color:var(--accent); font-weight:650; text-decoration:none; white-space:nowrap; }
     .feedname:hover { text-decoration:underline; }

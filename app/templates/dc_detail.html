@@ -4,10 +4,13 @@
 {% block content %}
 <div id="inline-edit-meta" data-quick-edit-url="/datacenters/{{ dc.id }}/quick-edit" hidden></div>
 {% if dc.provider == 'vcenter' %}
-<div class="row">
-  <div class="grow"><h1><span class="dc-name">{{ dc.name }}</span> <span class="pill">{{ dc.provider }}</span> <button type="button" class="copybtn cf-edit-name" title="Rename this datacenter" style="vertical-align:middle; font-size:12px;">Rename</button></h1>
-    <p class="muted">{{ dc.description or "Mock VMware vCenter (vSphere SOAP API)" }}</p></div>
-  <div style="display:flex; gap:8px; align-items:flex-start;">
+<div class="page-head">
+  <span class="icon-chip lg"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg></span>
+  <div class="ph-main">
+    <h1><span class="dc-name">{{ dc.name }}</span> <span class="pill">{{ dc.provider }}</span> <button type="button" class="copybtn cf-edit-name" title="Rename this datacenter" style="vertical-align:middle; font-size:12px;">Rename</button></h1>
+    <p class="ph-sub">{{ dc.description or "Mock VMware vCenter (vSphere SOAP API)" }}</p>
+  </div>
+  <div class="ph-actions">
     <a class="btn secondary" href="/datacenters/{{ dc.id }}/edit">Edit</a>
     <form method="post" action="/datacenters/{{ dc.id }}/delete">
       <button class="danger" type="submit" data-confirm="Delete “{{ dc.name }}”? This removes the mock datacenter.">Delete</button>
@@ -47,10 +50,13 @@
 </div>
 {% elif dc.provider in ('nsxt', 'globalnsxt') %}
 {% set is_global = dc.provider == 'globalnsxt' %}
-<div class="row">
-  <div class="grow"><h1><span class="dc-name">{{ dc.name }}</span> <span class="pill">{{ dc.provider }}</span> <button type="button" class="copybtn cf-edit-name" title="Rename this datacenter" style="vertical-align:middle; font-size:12px;">Rename</button></h1>
-    <p class="muted">Mock VMware {{ "Global NSX-T (Global Manager / Federation)" if is_global else "NSX-T Manager" }} — Policy Mode REST API</p></div>
-  <div style="display:flex; gap:8px; align-items:flex-start;">
+<div class="page-head">
+  <span class="icon-chip lg"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg></span>
+  <div class="ph-main">
+    <h1><span class="dc-name">{{ dc.name }}</span> <span class="pill">{{ dc.provider }}</span> <button type="button" class="copybtn cf-edit-name" title="Rename this datacenter" style="vertical-align:middle; font-size:12px;">Rename</button></h1>
+    <p class="ph-sub">Mock VMware {{ "Global NSX-T (Global Manager / Federation)" if is_global else "NSX-T Manager" }} — Policy Mode REST API</p>
+  </div>
+  <div class="ph-actions">
     <a class="btn secondary" href="/datacenters/{{ dc.id }}/edit">Edit</a>
     <form method="post" action="/datacenters/{{ dc.id }}/delete">
       <button class="danger" type="submit" data-confirm="Delete “{{ dc.name }}”? This removes the mock datacenter.">Delete</button>
@@ -90,10 +96,13 @@
   {% for v in vms %}<div class="itemrow"><span class="pill">VM</span> <b>{{ v.name }}</b> <code>{{ v.ip }}</code> {% for t in v.tags %}<span class="pill ok">{{ t }}</span>{% endfor %}</div>{% else %}<p class="muted">none</p>{% endfor %}
 </div>
 {% elif dc.provider == 'proxmox' %}
-<div class="row">
-  <div class="grow"><h1><span class="dc-name">{{ dc.name }}</span> <span class="pill">{{ dc.provider }}</span> <button type="button" class="copybtn cf-edit-name" title="Rename this datacenter" style="vertical-align:middle; font-size:12px;">Rename</button></h1>
-    <p class="muted">{{ dc.description or "Mock Proxmox VE (/api2/json REST)" }}</p></div>
-  <div style="display:flex; gap:8px; align-items:flex-start;">
+<div class="page-head">
+  <span class="icon-chip lg"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg></span>
+  <div class="ph-main">
+    <h1><span class="dc-name">{{ dc.name }}</span> <span class="pill">{{ dc.provider }}</span> <button type="button" class="copybtn cf-edit-name" title="Rename this datacenter" style="vertical-align:middle; font-size:12px;">Rename</button></h1>
+    <p class="ph-sub">{{ dc.description or "Mock Proxmox VE (/api2/json REST)" }}</p>
+  </div>
+  <div class="ph-actions">
     <a class="btn secondary" href="/datacenters/{{ dc.id }}/edit">Edit</a>
     <form method="post" action="/datacenters/{{ dc.id }}/delete">
       <button class="danger" type="submit" data-confirm="Delete “{{ dc.name }}”? This removes the mock datacenter.">Delete</button>
@@ -129,10 +138,13 @@
   <p class="muted" style="margin-top:8px; font-size:12px;">IPs are returned via the <code>qemu-guest-agent</code> interface call — a VM that's off or agent-less imports without an IP (matches real Proxmox).</p>
 </div>
 {% elif dc.provider == 'aci' %}
-<div class="row">
-  <div class="grow"><h1><span class="dc-name">{{ dc.name }}</span> <span class="pill">{{ dc.provider }}</span> <button type="button" class="copybtn cf-edit-name" title="Rename this datacenter" style="vertical-align:middle; font-size:12px;">Rename</button></h1>
-    <p class="muted">{{ dc.description or "Mock Cisco ACI (APIC REST API)" }}</p></div>
-  <div style="display:flex; gap:8px; align-items:flex-start;">
+<div class="page-head">
+  <span class="icon-chip lg"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg></span>
+  <div class="ph-main">
+    <h1><span class="dc-name">{{ dc.name }}</span> <span class="pill">{{ dc.provider }}</span> <button type="button" class="copybtn cf-edit-name" title="Rename this datacenter" style="vertical-align:middle; font-size:12px;">Rename</button></h1>
+    <p class="ph-sub">{{ dc.description or "Mock Cisco ACI (APIC REST API)" }}</p>
+  </div>
+  <div class="ph-actions">
     <a class="btn secondary" href="/datacenters/{{ dc.id }}/edit">Edit</a>
     <form method="post" action="/datacenters/{{ dc.id }}/delete">
       <button class="danger" type="submit" data-confirm="Delete “{{ dc.name }}”? This removes the mock datacenter.">Delete</button>
@@ -171,10 +183,13 @@
   <p class="muted" style="margin-top:8px; font-size:12px;">EPGs resolve to their endpoint IPs via <code>fvCEp</code>; ESGs via IP selectors (<code>fvEPSelector</code>). L2 Out / L2 External EPG are returned empty until the first trace.</p>
 </div>
 {% elif dc.provider == 'kubernetes' %}
-<div class="row">
-  <div class="grow"><h1><span class="dc-name">{{ dc.name }}</span> <span class="pill">{{ dc.provider }}</span> <button type="button" class="copybtn cf-edit-name" title="Rename this datacenter" style="vertical-align:middle; font-size:12px;">Rename</button></h1>
-    <p class="muted">{{ dc.description or "Mock Kubernetes API server (kube-apiserver REST)" }}</p></div>
-  <div style="display:flex; gap:8px; align-items:flex-start;">
+<div class="page-head">
+  <span class="icon-chip lg"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg></span>
+  <div class="ph-main">
+    <h1><span class="dc-name">{{ dc.name }}</span> <span class="pill">{{ dc.provider }}</span> <button type="button" class="copybtn cf-edit-name" title="Rename this datacenter" style="vertical-align:middle; font-size:12px;">Rename</button></h1>
+    <p class="ph-sub">{{ dc.description or "Mock Kubernetes API server (kube-apiserver REST)" }}</p>
+  </div>
+  <div class="ph-actions">
     <a class="btn secondary" href="/datacenters/{{ dc.id }}/edit">Edit</a>
     <form method="post" action="/datacenters/{{ dc.id }}/delete">
       <button class="danger" type="submit" data-confirm="Delete “{{ dc.name }}”? This removes the mock datacenter.">Delete</button>
@@ -215,10 +230,13 @@
   <p class="muted" style="margin-top:8px; font-size:12px;">Namespaces &amp; the Label view are derived from the pods; each Service's <code>/endpoints</code> resolves to the pod IPs in its namespace.</p>
 </div>
 {% elif dc.provider == 'nutanix' %}
-<div class="row">
-  <div class="grow"><h1><span class="dc-name">{{ dc.name }}</span> <span class="pill">{{ dc.provider }}</span> <button type="button" class="copybtn cf-edit-name" title="Rename this datacenter" style="vertical-align:middle; font-size:12px;">Rename</button></h1>
-    <p class="muted">{{ dc.description or "Mock Nutanix Prism (REST — v3 + v4)" }}</p></div>
-  <div style="display:flex; gap:8px; align-items:flex-start;">
+<div class="page-head">
+  <span class="icon-chip lg"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg></span>
+  <div class="ph-main">
+    <h1><span class="dc-name">{{ dc.name }}</span> <span class="pill">{{ dc.provider }}</span> <button type="button" class="copybtn cf-edit-name" title="Rename this datacenter" style="vertical-align:middle; font-size:12px;">Rename</button></h1>
+    <p class="ph-sub">{{ dc.description or "Mock Nutanix Prism (REST — v3 + v4)" }}</p>
+  </div>
+  <div class="ph-actions">
     <a class="btn secondary" href="/datacenters/{{ dc.id }}/edit">Edit</a>
     <form method="post" action="/datacenters/{{ dc.id }}/delete">
       <button class="danger" type="submit" data-confirm="Delete “{{ dc.name }}”? This removes the mock datacenter.">Delete</button>
@@ -256,10 +274,13 @@
   <p class="muted" style="margin-top:8px; font-size:12px;">VM IPs come from the NIC (v3 <code>nic_list[].ip_endpoint_list[].ip</code> / v4 <code>nics[].networkInfo.ipv4Info.learnedIpAddresses[]</code>). Categories nest as Key → Value → VMs.</p>
 </div>
 {% else %}
-<div class="row">
-  <div class="grow"><h1><span class="dc-name">{{ dc.name }}</span> <span class="pill">{{ dc.provider }}</span> <button type="button" class="copybtn cf-edit-name" title="Rename this datacenter" style="vertical-align:middle; font-size:12px;">Rename</button></h1>
-    <p class="muted">{{ dc.description or "Mock OpenStack datacenter (Keystone + Nova + Neutron)" }}</p></div>
-  <div style="display:flex; gap:8px; align-items:flex-start;">
+<div class="page-head">
+  <span class="icon-chip lg"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg></span>
+  <div class="ph-main">
+    <h1><span class="dc-name">{{ dc.name }}</span> <span class="pill">{{ dc.provider }}</span> <button type="button" class="copybtn cf-edit-name" title="Rename this datacenter" style="vertical-align:middle; font-size:12px;">Rename</button></h1>
+    <p class="ph-sub">{{ dc.description or "Mock OpenStack datacenter (Keystone + Nova + Neutron)" }}</p>
+  </div>
+  <div class="ph-actions">
     <a class="btn secondary" href="/datacenters/{{ dc.id }}/edit">Edit</a>
     <form method="post" action="/datacenters/{{ dc.id }}/delete">
       <button class="danger" type="submit" data-confirm="Delete “{{ dc.name }}”? This removes the mock datacenter.">Delete</button>

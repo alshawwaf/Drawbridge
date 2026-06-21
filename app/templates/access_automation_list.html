@@ -1,17 +1,23 @@
 {% extends "base.html" %}
 {% block title %}Access automation{% endblock %}
 {% block content %}
-<div class="row">
-  <div class="grow">
+<div class="page-head">
+  <span class="icon-chip lg"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></span>
+  <div class="ph-main">
     <h1>Access automation</h1>
-    <p class="muted">Turn a ticket request — <code>source → destination : service</code> — into the minimal correct change on a layer: reuse a rule that already permits it, widen one that almost does, or create a least-privilege rule at the right position. Pick a management server to start. Approvals stay in your ticketing system; this is the technical apply.</p>
+    <p class="ph-sub">Turn a ticket request — <code>source → destination : service</code> — into the minimal correct change on a layer: reuse a rule that already permits it, widen one that almost does, or create a least-privilege rule at the right position. Pick a management server to start. Approvals stay in your ticketing system; this is the technical apply.</p>
   </div>
-  <a class="btn secondary" href="/management">Manage servers →</a>
+  <div class="ph-actions">
+    <a class="btn secondary" href="/management">Manage servers →</a>
+  </div>
 </div>
 
 {% if not rows %}
 <div class="card"><p class="muted">No management servers yet. <a href="/management/new">Add one</a> (with a stored credential), then return here to run access automation against its layers.</p></div>
 {% else %}
+<div class="statrow" style="margin:2px 0 20px;">
+  <div class="stat"><span class="n">{{ rows|length }}</span><span class="l">Management Servers</span></div>
+</div>
 <div class="card" style="padding:6px 6px 2px;">
 <div class="tablewrap">
 <table data-paginate="10">

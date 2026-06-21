@@ -2,6 +2,13 @@
 {% block title %}Activity log{% endblock %}
 {% block main_class %}wide{% endblock %}
 {% block content %}
+<div class="page-head">
+  <span class="icon-chip lg"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></span>
+  <div class="ph-main">
+    <h1>Activity log</h1>
+    <p class="ph-sub">Every API call the portal served — methods, status, timing and source. Filter by status, type or data center, then expand a row for the full request/response record.</p>
+  </div>
+</div>
 <form method="post" action="/activity/delete" id="act-form">
   <input type="hidden" name="page_size" id="ps-hidden" value="{{ page_size }}">
   <input type="hidden" name="q" id="q-hidden" value="{{ q }}">

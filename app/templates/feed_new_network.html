@@ -1,8 +1,13 @@
 {% extends "base.html" %}
 {% block title %}{{ 'Edit' if editing|default(false) else 'New' }} Network Feed{% endblock %}
 {% block content %}
-<h1>{{ 'Edit' if editing|default(false) else 'New' }} Network Feed</h1>
-<p class="muted">Pre-filled with a sample — edit or replace it, then Create. Serve a simple flat list, or author your own JSON that the gateway parses with a JQ query.</p>
+<div class="page-head">
+  <span class="icon-chip lg"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11a9 9 0 0 1 9 9"/><path d="M4 4a16 16 0 0 1 16 16"/><circle cx="5" cy="19" r="1"/></svg></span>
+  <div class="ph-main">
+    <h1>{{ 'Edit' if editing|default(false) else 'New' }} Network Feed</h1>
+    <p class="ph-sub">Pre-filled with a sample — edit or replace it, then Create. Serve a simple flat list, or author your own JSON that the gateway parses with a JQ query.</p>
+  </div>
+</div>
 {% if error %}<div class="err" style="margin:12px 0;">{{ error }}</div>{% endif %}
 
 <form method="post" action="{{ action|default('/feeds/new/network-feed') }}" class="card">

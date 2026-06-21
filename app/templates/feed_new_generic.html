@@ -1,8 +1,13 @@
 {% extends "base.html" %}
 {% block title %}{{ 'Edit' if editing|default(false) else 'New' }} Generic DC feed{% endblock %}
 {% block content %}
-<h1>{{ 'Edit' if editing|default(false) else 'New' }} Generic Data Center feed</h1>
-<p class="muted">Pre-filled with the Generic Data Center example from sk167210 — edit or replace it, then Create. The portal serves it as the exact JSON the gateway fetches.</p>
+<div class="page-head">
+  <span class="icon-chip lg"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11a9 9 0 0 1 9 9"/><path d="M4 4a16 16 0 0 1 16 16"/><circle cx="5" cy="19" r="1"/></svg></span>
+  <div class="ph-main">
+    <h1>{{ 'Edit' if editing|default(false) else 'New' }} Generic Data Center feed</h1>
+    <p class="ph-sub">Pre-filled with the Generic Data Center example from sk167210 — edit or replace it, then Create. The portal serves it as the exact JSON the gateway fetches.</p>
+  </div>
+</div>
 {% if error %}<div class="err" style="margin:12px 0;">{{ error }}</div>{% endif %}
 
 <form method="post" action="{{ action|default('/feeds/new/generic-dc') }}" class="card">

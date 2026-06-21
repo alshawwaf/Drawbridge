@@ -30,8 +30,13 @@
   .extabs button { font-size:12px; padding:4px 10px; }
 </style>
 
-<h1>Automation coverage <span class="pill">API · Terraform · Ansible</span></h1>
-<p class="muted">Every object/command from the Check Point API, compared with the Terraform provider and the Ansible collection — generated from the API spec and bundled per version. Expand a row for its full <b>web_api JSON</b>, <b>mgmt_cli</b>, <b>Terraform</b> and <b>Ansible</b> example, with each field colour-coded by where it's supported.</p>
+<div class="page-head">
+  <span class="icon-chip lg"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg></span>
+  <div class="ph-main">
+    <h1>Automation coverage <span class="pill">API · Terraform · Ansible</span></h1>
+    <p class="ph-sub">Every object/command from the Check Point API, compared with the Terraform provider and the Ansible collection — generated from the API spec and bundled per version. Expand a row for its full <b>web_api JSON</b>, <b>mgmt_cli</b>, <b>Terraform</b> and <b>Ansible</b> example, with each field colour-coded by where it's supported.</p>
+  </div>
+</div>
 
 <div class="cov-tabs">
   <a href="/coverage?api=management" class="{{ 'active' if api_type=='management' else '' }}">Management API</a>

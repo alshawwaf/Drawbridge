@@ -1,8 +1,13 @@
 {% extends "base.html" %}
 {% block title %}{{ 'Edit' if editing|default(false) else 'New' }} Nutanix datacenter{% endblock %}
 {% block content %}
-<h1>{{ 'Edit' if editing|default(false) else 'New' }} Nutanix datacenter</h1>
-<p class="muted">Define the inventory the mock <b>Nutanix Prism</b> (REST) will serve. Point a SmartConsole <i>Nutanix</i> Data Center object at the portal to import <b>VMs</b> (with their IPs) and the <b>Categories</b> (Prism key/value tags) applied to them. Serves both Prism <b>v3</b> and <b>v4</b> (CloudGuard probes v4, falls back to v3).</p>
+<div class="page-head">
+  <span class="icon-chip lg"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg></span>
+  <div class="ph-main">
+    <h1>{{ 'Edit' if editing|default(false) else 'New' }} Nutanix datacenter</h1>
+    <p class="ph-sub">Define the inventory the mock <b>Nutanix Prism</b> (REST) will serve. Point a SmartConsole <i>Nutanix</i> Data Center object at the portal to import <b>VMs</b> (with their IPs) and the <b>Categories</b> (Prism key/value tags) applied to them. Serves both Prism <b>v3</b> and <b>v4</b> (CloudGuard probes v4, falls back to v3).</p>
+  </div>
+</div>
 {% if error %}<div class="err" style="margin:12px 0;">{{ error }}</div>{% endif %}
 
 <form method="post" action="{{ action|default('/datacenters/new/nutanix') }}" class="card">

@@ -3,12 +3,13 @@
 {% import "_macros.html" as cp %}
 {% block content %}
 <div id="inline-edit-meta" data-quick-edit-url="/feeds/{{ feed.id }}/quick-edit" hidden></div>
-<div class="row">
-  <div class="grow">
+<div class="page-head">
+  <span class="icon-chip lg"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11a9 9 0 0 1 9 9"/><path d="M4 4a16 16 0 0 1 16 16"/><circle cx="5" cy="19" r="1"/></svg></span>
+  <div class="ph-main">
     <h1><span class="dc-name">{{ feed.name }}</span> <span class="pill">{{ feed.type.value }}</span> <button type="button" class="copybtn cf-edit-name" title="Rename this feed" style="vertical-align:middle; font-size:12px;">Rename</button></h1>
-    <p class="muted">{{ feed.description or "No description" }}</p>
+    <p class="ph-sub">{{ feed.description or "No description" }}</p>
   </div>
-  <div style="display:flex; gap:8px; align-items:flex-start;">
+  <div class="ph-actions">
     <a class="btn secondary" href="/feeds/{{ feed.id }}/edit">Edit</a>
     <form method="post" action="/feeds/{{ feed.id }}/delete">
       <button class="danger" type="submit" data-confirm="Delete “{{ feed.name }}”? This removes the feed and its poll history.">Delete</button>

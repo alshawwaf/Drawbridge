@@ -2,12 +2,13 @@
 {% block title %}{{ ms.name }} — policy{% endblock %}
 {% block main_class %}wide{% endblock %}
 {% block content %}
-<div class="row" style="align-items:flex-start;">
-  <div class="grow">
+<div class="page-head">
+  <span class="icon-chip lg"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 5v14c0 1.66-4 3-9 3s-9-1.34-9-3V5"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/></svg></span>
+  <div class="ph-main">
     <h1>{{ ms.name }} <span class="pill">Management</span></h1>
-    <p class="muted"><code>{{ ms.host }}:{{ ms.port }}</code>{% if ms.domain %} · domain <b>{{ ms.domain }}</b>{% endif %} · pulled live over the <code>web_api</code>.</p>
+    <p class="ph-sub"><code>{{ ms.host }}:{{ ms.port }}</code>{% if ms.domain %} · domain <b>{{ ms.domain }}</b>{% endif %} · pulled live over the <code>web_api</code>.</p>
   </div>
-  <div class="row" style="gap:8px;">
+  <div class="ph-actions">
     <a class="btn secondary" href="/management/{{ ms.id }}/gaia-export">Gaia config →</a>
     <a class="btn secondary" href="/management/{{ ms.id }}/edit">Edit connection</a>
   </div>
