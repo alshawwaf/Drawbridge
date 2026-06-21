@@ -14,7 +14,7 @@ from .middleware import ActivityLogMiddleware
 from .routers import (
     access_automation, aci_mock, activity, datacenters, dynamic_layers, feeds, gateways, gaia_mock,
     kubernetes_mock, mgmt, nsxt_mock, nutanix_mock, openstack_mock, proxmox_mock, scenarios, serve,
-    siem, ui, vcenter_mock,
+    settings as settings_router, siem, ui, vcenter_mock,
 )
 from .security import hash_password
 
@@ -106,6 +106,7 @@ def create_app() -> FastAPI:
     app.include_router(siem.router)
     app.include_router(mgmt.router)
     app.include_router(access_automation.router)
+    app.include_router(settings_router.router)
 
     @app.get("/healthz", include_in_schema=False)
     def healthz() -> dict:
