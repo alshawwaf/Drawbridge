@@ -197,7 +197,8 @@ def evaluate_dynamic_content(payload: dict) -> dict:
         for n in (names or []):
             referenced.add(n)
 
-    def resolves(name: str) -> bool:
+    def resolves(name) -> bool:
+        name = "" if name is None else str(name)   # rule cells may hold a non-string (e.g. a port int)
         return (not name) or name.lower() in BUILTIN_REFS or name in defined or name in referenced
 
     errors: list[dict] = []

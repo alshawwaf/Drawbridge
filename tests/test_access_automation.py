@@ -295,6 +295,42 @@ def test_preview_is_read_only_and_reports_reuse(monkeypatch):
     assert "add-host" not in cmds and "set-group" not in cmds and "publish" not in cmds
 
 
+def test_execute_cidr_request_materializes_network_not_host(monkeypatch):
+    # a /24 source must become a NETWORK object covering the full /24, never a single /32 host
+    calls = []
+    monkeypatch.setattr(aa, "MgmtSession", _fake_session_factory(calls))
+    monkeypatch.setattr(aa, "load_layer", lambda s, layer, package=None: [WEB, CLEANUP])
+    res = aa.execute(object(), "secret",
+                     AccessRequest(["10.50.0.0/24"], ["172.16.5.10/32"], "tcp", "443"),
+                     "Network", publish=True)
+    assert res["outcome"] == "widen" and res["source_object"] == "n-10-50-0-0-24"
+    addnet = [p for c, p in calls if c == "add-network"]
+    assert addnet and addnet[0]["subnet4"] == "10.50.0.0" and addnet[0]["mask-length4"] == 24
+    assert not any(c == "add-host" for c, _ in calls)
+
+
+def test_execute_cidr_create_uses_network_for_src_and_dst(monkeypatch):
+    calls = []
+    monkeypatch.setattr(aa, "MgmtSession", _fake_session_factory(calls))
+    monkeypatch.setattr(aa, "load_layer", lambda s, layer, package=None: [WEB, CLEANUP])
+    res = aa.execute(object(), "secret",
+                     AccessRequest(["10.50.0.0/24"], ["172.16.9.0/24"], "tcp", "22"),
+                     "Network", publish=True)
+    assert res["outcome"] == "create"
+    assert res["source_object"] == "n-10-50-0-0-24" and res["destination_object"] == "n-172-16-9-0-24"
+    assert {p["subnet4"] for c, p in calls if c == "add-network"} == {"10.50.0.0", "172.16.9.0"}
+
+
+def test_preview_cidr_reports_network_and_stays_read_only(monkeypatch):
+    calls = []
+    monkeypatch.setattr(aa, "MgmtSession", _fake_session_factory(calls))
+    monkeypatch.setattr(aa, "load_layer", lambda s, layer, package=None: [WEB, CLEANUP])
+    res = aa.preview(object(), "secret",
+                     AccessRequest(["10.50.0.0/24"], ["172.16.5.10/32"], "tcp", "443"), "Network")
+    assert res["source"]["name"] == "n-10-50-0-0-24" and res["source"]["ip"] == "10.50.0.0/24"
+    assert not any(c in ("add-network", "add-host") for c, _ in calls)   # preview never writes
+
+
 # --- generic ticketing payload handling -------------------------------------------------------
 def test_build_request_normalises_bare_ip_to_cidr():
     req = tk.build_request("192.168.9.9", "172.16.5.10", "TCP", "443")

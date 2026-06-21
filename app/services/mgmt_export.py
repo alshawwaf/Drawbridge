@@ -439,9 +439,22 @@ def slugify(name: str, used: set[str]) -> str:
 
 
 def _q(s) -> str:
-    """Double-quoted, escaped, single-line string (shared by HCL / YAML / shell-arg contexts)."""
+    """Double-quoted, escaped, single-line scalar for HCL / YAML. NOT shell-safe (use _sh for bash)."""
     text = re.sub(r"\s*\n\s*", " ", str(s)).replace("\\", "\\\\").replace('"', '\\"')
     return f'"{text}"'
+
+
+def _sh(s) -> str:
+    """Single-quoted bash literal for the generated mgmt_cli script. Single quotes disable ALL shell
+    expansion ($(...), backticks, $VAR), so object / rule / comment names pulled from a customer SMS
+    can never execute when the SE runs the script. The '\\'' idiom embeds a literal single quote;
+    newlines are collapsed so a value can't break out of its line."""
+    return "'" + re.sub(r"\s*\n\s*", " ", str(s)).replace("'", "'\\''") + "'"
+
+
+def _one_line(s) -> str:
+    """Collapse newlines so an interpolated value can't break out of a single-line shell comment."""
+    return re.sub(r"\s*\n\s*", " ", str(s))
 
 
 def _is_int(v) -> bool:
@@ -811,12 +824,12 @@ def _render_ansible(layer, emit, rules, skipped, host="", domain="") -> str:
           '# Restore into an EMPTY layer/domain to reproduce rule order.']
     if skipped:
         L.append(_skip_banner(skipped, "#"))
-    L += ["---", f'- name: Restore Check Point policy — layer "{layer}"',
+    L += ["---", f'- name: {_q(f"Restore Check Point policy - layer {layer}")}',
           "  hosts: checkpoint", "  connection: httpapi", "  gather_facts: false", "  tasks:"]
 
     for e in emit:
         spec, o = e["spec"], e["obj"]
-        L.append(f'    - name: Add {spec["cli"]} {o.get("name", "")}')
+        L.append(f'    - name: {_q("Add " + str(spec["cli"]) + " " + o.get("name", ""))}')
         L.append(f'      check_point.mgmt.{spec["ansible"]}:')
         L.append(f'        name: {_q(o.get("name", ""))}')
         L.extend(_ansible_fields(spec["fields"], o, 4))
@@ -827,14 +840,14 @@ def _render_ansible(layer, emit, rules, skipped, host="", domain="") -> str:
     for row in rules:
         kind = row.get("kind")
         if kind == "section":
-            L.append(f'    - name: Add section {row.get("name") or "Section"}')
+            L.append(f'    - name: {_q("Add section " + (row.get("name") or "Section"))}')
             L.append("      check_point.mgmt.cp_mgmt_access_section:")
             L.append(f"        layer: {_q(layer)}")
             L.append("        position: bottom")
             L.append(f'        name: {_q(row.get("name") or "Section")}')
             L.append("        state: present")
         elif kind == "rule":
-            L.append(f'    - name: Add rule {row.get("name") or row.get("number") or ""}')
+            L.append(f'    - name: {_q("Add rule " + str(row.get("name") or row.get("number") or ""))}')
             L.append("      check_point.mgmt.cp_mgmt_access_rule:")
             L.append(f"        layer: {_q(layer)}")
             L.append("        position: bottom")
@@ -874,10 +887,9 @@ def _render_ansible(layer, emit, rules, skipped, host="", domain="") -> str:
                     if cf.get(k):
                         L.append(f'          {k.replace("-", "_")}: {_q(cf[k])}')
             L.append(f'        enabled: {"true" if row.get("enabled", True) else "false"}')
-            for neg, key in (("source_negate", "source-negate"), ("destination_negate", "destination-negate"),
-                             ("service_negate", "service-negate"), ("content_negate", "content-negate")):
+            for neg in ("source_negate", "destination_negate", "service_negate", "content_negate"):
                 if row.get(neg):
-                    L.append(f"        {key}: true")
+                    L.append(f"        {neg}: true")
             if row.get("comments"):
                 L.append(f'        comments: {_q(row["comments"])}')
             L.append("        state: present")
@@ -904,24 +916,24 @@ def _cli_parts(fields, obj, prefix="") -> list[str]:
                 parts.extend(_cli_parts(f["sub"], item, f"{k}.{i}."))
         elif kind in ("names", "namelist", "weekdays"):
             for i, n in enumerate(_names(v), 1):
-                parts.append(f"{k}.{i} {_q(n)}")
+                parts.append(f"{k}.{i} {_sh(n)}")
         elif kind == "strlist":
             for i, x in enumerate(v, 1):
-                parts.append(f"{k}.{i} {_q(x)}")
+                parts.append(f"{k}.{i} {_sh(x)}")
         elif kind == "ref":
-            parts.append(f"{k} {_q(_name_of(v))}")
+            parts.append(f"{k} {_sh(_name_of(v))}")
         elif kind == "bool":
             parts.append(f'{k} {"true" if v else "false"}')
         elif kind == "int" and _is_int(v):
             parts.append(f"{k} {v}")
         else:
-            parts.append(f"{k} {_q(v)}")
+            parts.append(f"{k} {_sh(v)}")
     return parts
 
 
 def _render_mgmt_cli(layer, emit, rules, skipped) -> str:
     L = ["#!/bin/bash",
-         f'# mgmt_cli export of Check Point access layer "{layer}".',
+         f'# mgmt_cli export of Check Point access layer "{_one_line(layer)}".',
          "# 1) Log in (writes the session id to id.txt — fill in your host/credentials):",
          '#    mgmt_cli login user "admin" password "PASSWORD" management "MGMT_IP" > id.txt',
          '#    (add: domain "DOMAIN" for an MDS / CMA)',
@@ -936,7 +948,7 @@ def _render_mgmt_cli(layer, emit, rules, skipped) -> str:
 
     for e in emit:
         spec, o = e["spec"], e["obj"]
-        parts = [f'name {_q(o.get("name", ""))}'] + _cli_parts(spec["fields"], o)
+        parts = [f'name {_sh(o.get("name", ""))}'] + _cli_parts(spec["fields"], o)
         L.append(add(spec["cli"], parts))
         if spec.get("note"):
             L.append(f'# NOTE: {spec["note"]}')
@@ -945,30 +957,30 @@ def _render_mgmt_cli(layer, emit, rules, skipped) -> str:
         kind = row.get("kind")
         if kind == "section":
             L.append(add("access-section",
-                         [f'layer {_q(layer)}', "position bottom", f'name {_q(row.get("name") or "Section")}']))
+                         [f'layer {_sh(layer)}', "position bottom", f'name {_sh(row.get("name") or "Section")}']))
         elif kind == "rule":
-            parts = [f"layer {_q(layer)}", "position bottom", f'name {_q(row.get("name") or "")}',
+            parts = [f"layer {_sh(layer)}", "position bottom", f'name {_sh(row.get("name") or "")}',
                      _cli_idx("source", _cell(row.get("source", []))),
                      _cli_idx("destination", _cell(row.get("destination", []))),
                      _cli_idx("service", _cell(row.get("service", []))),
-                     f'action {_q(row.get("action") or "Drop")}']
+                     f'action {_sh(row.get("action") or "Drop")}']
             if row.get("content"):
                 parts.append(_cli_idx("content", row["content"]))
                 if row.get("content_direction"):
-                    parts.append(f'content-direction {_q(row["content_direction"])}')
+                    parts.append(f'content-direction {_sh(row["content_direction"])}')
             if row.get("vpn"):
                 parts.append(_cli_idx("vpn", row["vpn"]))
             if row.get("inline_layer"):
-                parts.append(f'inline-layer {_q(row["inline_layer"])}')
+                parts.append(f'inline-layer {_sh(row["inline_layer"])}')
             tk = row.get("track_full") or {}
             if tk.get("type"):
-                parts.append(f'track-settings.type {_q(tk["type"])}')
+                parts.append(f'track-settings.type {_sh(tk["type"])}')
                 for b, key in (("accounting", "accounting"), ("per_connection", "per-connection"),
                                ("per_session", "per-session"), ("enable_firewall_session", "enable-firewall-session")):
                     if tk.get(b):
                         parts.append(f"track-settings.{key} true")
             elif row.get("track"):
-                parts.append(f'track-settings.type {_q(row["track"])}')
+                parts.append(f'track-settings.type {_sh(row["track"])}')
             if row.get("time"):
                 parts.append(_cli_idx("time", row["time"]))
             if row.get("install_on"):
@@ -976,24 +988,24 @@ def _render_mgmt_cli(layer, emit, rules, skipped) -> str:
             cf = row.get("custom_fields") or {}
             for k in ("field-1", "field-2", "field-3"):
                 if cf.get(k):
-                    parts.append(f'custom-fields.{k} {_q(cf[k])}')
+                    parts.append(f'custom-fields.{k} {_sh(cf[k])}')
             parts.append(f'enabled {"true" if row.get("enabled", True) else "false"}')
             for neg, key in (("source_negate", "source-negate"), ("destination_negate", "destination-negate"),
                              ("service_negate", "service-negate"), ("content_negate", "content-negate")):
                 if row.get(neg):
                     parts.append(f"{key} true")
             if row.get("comments"):
-                parts.append(f'comments {_q(row["comments"])}')
+                parts.append(f'comments {_sh(row["comments"])}')
             L.append(add("access-rule", parts))
         else:
-            L.append(f'# unsupported rulebase item: {row.get("type", "unknown")} {row.get("name", "")}')
+            L.append(f'# unsupported rulebase item: {_one_line(row.get("type", "unknown"))} {_one_line(row.get("name", ""))}')
 
     L += ["", "mgmt_cli publish -s id.txt", "mgmt_cli logout -s id.txt"]
     return "\n".join(L).rstrip() + "\n"
 
 
 def _cli_idx(prefix: str, values) -> str:
-    return " ".join(f"{prefix}.{i} {_q(v)}" for i, v in enumerate(values, start=1))
+    return " ".join(f"{prefix}.{i} {_sh(v)}" for i, v in enumerate(values, start=1))
 
 
 def _skip_banner(skipped: dict[str, int], comment: str) -> str:

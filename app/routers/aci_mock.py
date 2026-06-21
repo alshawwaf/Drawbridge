@@ -44,10 +44,25 @@ def _dc(db: Session, token: str) -> Datacenter:
 
 
 def _creds(raw: bytes):
-    """Pull (name, pwd) out of the aaaLogin body: {"aaaUser":{"attributes":{"name","pwd"}}}."""
+    """Pull (name, pwd) from the aaaLogin body — JSON {"aaaUser":{"attributes":{...}}} OR the XML
+    <aaaUser name=... pwd=.../> that the real Cisco APIC client actually sends."""
+    raw = raw or b""
     try:
         attrs = ((json.loads(raw or b"{}").get("aaaUser") or {}).get("attributes")) or {}
-        return attrs.get("name", ""), attrs.get("pwd", "")
+        if attrs.get("name") or attrs.get("pwd"):
+            return attrs.get("name", ""), attrs.get("pwd", "")
+    except Exception:
+        pass
+    try:
+        import xml.etree.ElementTree as ET
+        root = ET.fromstring(raw)
+        node = root if root.tag.endswith("aaaUser") else (root.find(".//aaaUser") or root)
+        a = dict(node.attrib)
+        if not (a.get("name") or a.get("pwd")):       # MO-style: name/pwd on a nested <attributes>
+            child = node.find("attributes")
+            if child is not None:
+                a = dict(child.attrib)
+        return a.get("name", ""), a.get("pwd", "")
     except Exception:
         return "", ""
 

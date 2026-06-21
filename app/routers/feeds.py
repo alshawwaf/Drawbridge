@@ -198,8 +198,10 @@ def update_feed(
         fmt = body.ioc_format or feed.content.get("format", "cp_csv")
         feed.content = _build_content(
             feed.type, indicators=body.indicators or [], ioc_format=fmt,
-            snort_rules=body.snort_rules or "", ioc_delimiter=body.ioc_delimiter or ",",
-            ioc_comment=body.ioc_comment or "#", description=feed.description)
+            snort_rules=body.snort_rules or "",
+            ioc_delimiter=body.ioc_delimiter if body.ioc_delimiter is not None else feed.content.get("delimiter", ","),
+            ioc_comment=body.ioc_comment if body.ioc_comment is not None else feed.content.get("comment", "#"),
+            description=feed.description)
     if feed.type == FeedType.network_feed and (body.entries is not None or body.json_body is not None):
         feed.content = _build_content(
             feed.type,

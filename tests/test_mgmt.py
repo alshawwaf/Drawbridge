@@ -133,9 +133,9 @@ def test_export_rule_carries_all_columns():
     assert 'time: ["WorkHours"]' in ans and "accounting: true" in ans
     assert "custom_fields:" in ans and 'field_1: "ticket-123"' in ans
     # mgmt_cli
-    assert 'content.1 "Credit Card Numbers"' in cli and 'vpn.1 "MyMesh"' in cli
-    assert 'time.1 "WorkHours"' in cli and 'install-on.1 "gw1"' in cli
-    assert 'custom-fields.field-1 "ticket-123"' in cli and "track-settings.accounting true" in cli
+    assert "content.1 'Credit Card Numbers'" in cli and "vpn.1 'MyMesh'" in cli
+    assert "time.1 'WorkHours'" in cli and "install-on.1 'gw1'" in cli
+    assert "custom-fields.field-1 'ticket-123'" in cli and "track-settings.accounting true" in cli
 
 
 def test_export_new_object_types():
@@ -188,9 +188,9 @@ def test_export_ansible_and_mgmt_cli_shape():
     assert "check_point.mgmt.cp_mgmt_publish:" in ans
     # nested NAT renders as a YAML sub-block in Ansible and dotted params in mgmt_cli
     assert "nat_settings:" in ans and "auto_rule: true" in ans
-    assert 'mgmt_cli add host name "web-srv" ipv4-address "10.0.0.5"' in cli
-    assert 'nat-settings.method "static"' in cli and 'tags.1 "prod"' in cli
-    assert 'mgmt_cli add access-rule layer "Network" position bottom' in cli
+    assert "mgmt_cli add host name 'web-srv' ipv4-address '10.0.0.5'" in cli
+    assert "nat-settings.method 'static'" in cli and "tags.1 'prod'" in cli
+    assert "mgmt_cli add access-rule layer 'Network' position bottom" in cli
     assert "mgmt_cli publish -s id.txt" in cli
 
 
@@ -297,3 +297,26 @@ def test_apply_changes_discards_on_error_never_publishes(monkeypatch):
     assert res["ok"] is False and "server said no" in res["error"]
     cmds = [c for c, _ in rec["calls"]]
     assert "publish" not in cmds and "discard" in cmds
+
+
+def test_export_mgmt_cli_is_shell_safe():
+    """Object / comment names pulled from a customer SMS must never execute when the .sh is run."""
+    bundle = {"layer": "Net", "objects_by_type": {
+        "host": [{"uid": "u", "name": "host_$(id)", "type": "host", "ipv4-address": "10.0.0.5"}]},
+        "rules": [{"kind": "rule", "number": 1, "name": "r", "enabled": True, "source": [],
+                   "destination": [], "service": [], "action": "Accept", "track": "Log",
+                   "comments": "owner `whoami`"}]}
+    cli = mgmt_export.generate(bundle)["mgmt_cli"]
+    assert "name 'host_$(id)'" in cli              # single-quoted literal — bash cannot expand it
+    assert 'name "host_$(id)"' not in cli          # the old, injectable double-quoted form is gone
+    assert "comments 'owner `whoami`'" in cli
+
+
+def test_export_ansible_negate_underscored_and_names_quoted():
+    bundle = {"layer": "Net: prod", "objects_by_type": {}, "rules": [
+        {"kind": "rule", "number": 1, "name": "allow: web", "enabled": True, "source": [],
+         "destination": [], "service": [], "action": "Accept", "track": "Log", "source_negate": True}]}
+    ans = mgmt_export.generate(bundle)["ansible"]
+    assert "source_negate: true" in ans and "source-negate: true" not in ans   # module-correct key
+    assert '- name: "Add rule allow: web"' in ans                              # quoted -> valid YAML
+    assert '- name: "Restore Check Point policy - layer Net: prod"' in ans

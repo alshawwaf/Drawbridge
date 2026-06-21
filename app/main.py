@@ -80,7 +80,8 @@ def create_app() -> FastAPI:
             "(sessions drop on restart). Set it in production.",
             file=sys.stderr,
         )
-    app.add_middleware(SessionMiddleware, secret_key=session_secret, same_site="lax")
+    app.add_middleware(SessionMiddleware, secret_key=session_secret, same_site="lax",
+                       https_only=settings.base_url.startswith("https"), max_age=14 * 24 * 3600)
     app.add_middleware(ActivityLogMiddleware)
 
     app.include_router(ui.router)

@@ -455,15 +455,27 @@
       var okBtn = document.getElementById('modal-ok');
       var cancelBtn = document.getElementById('modal-cancel');
       var pendingForm = null;
-      function open(message, form) { msg.textContent = message; pendingForm = form; overlay.hidden = false; }
-      function close() { overlay.hidden = true; pendingForm = null; }
+      var pendingSubmitter = null;
+      function open(message, form, submitter) { msg.textContent = message; pendingForm = form; pendingSubmitter = submitter || null; overlay.hidden = false; }
+      function close() { overlay.hidden = true; pendingForm = null; pendingSubmitter = null; }
       document.addEventListener('click', function (e) {
         var el = e.target.closest('[data-confirm]');
         if (!el) return;
         e.preventDefault();
-        open(el.getAttribute('data-confirm'), el.closest('form'));
+        var sub = (el.tagName === 'BUTTON' || el.type === 'submit') ? el : null;
+        open(el.getAttribute('data-confirm'), el.closest('form'), sub);
       });
-      okBtn.addEventListener('click', function () { if (pendingForm) pendingForm.submit(); });
+      okBtn.addEventListener('click', function () {
+        if (!pendingForm) return;
+        // requestSubmit(submitter) preserves the clicked button's formaction (e.g. Activity "Clear all");
+        // .submit() drops it. Fall back to .submit() only where requestSubmit is unavailable.
+        if (pendingForm.requestSubmit) {
+          pendingForm.requestSubmit(pendingSubmitter && pendingSubmitter.form === pendingForm ? pendingSubmitter : undefined);
+        } else {
+          pendingForm.submit();
+        }
+        close();
+      });
       cancelBtn.addEventListener('click', close);
       overlay.addEventListener('click', function (e) { if (e.target === overlay) close(); });
       document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && !overlay.hidden) close(); });

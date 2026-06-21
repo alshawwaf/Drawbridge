@@ -54,6 +54,7 @@
     var body = document.getElementById('test-body');
     var title = document.getElementById('test-title');
     if (!modal) return;
+    function esc(s) { var d = document.createElement('div'); d.textContent = (s == null ? '' : s); return d.innerHTML; }
     function close() { modal.hidden = true; }
     document.getElementById('test-close').addEventListener('click', close);
     modal.addEventListener('click', function (e) { if (e.target === modal) close(); });
@@ -68,16 +69,16 @@
           .then(function (r) { return r.json(); })
           .then(function (j) {
             if (j.ok) {
-              var domains = (j.domains && j.domains.length) ? j.domains.join(', ') : '—';
+              var domains = (j.domains && j.domains.length) ? j.domains.map(esc).join(', ') : '—';
               body.innerHTML =
                 '<div class="ok" style="margin-bottom:10px;">✓ Connected.</div>' +
                 '<table class="acttable"><tbody>' +
-                '<tr><td><b>API version</b></td><td><code>' + (j.version || '—') + '</code></td></tr>' +
+                '<tr><td><b>API version</b></td><td><code>' + esc(j.version || '—') + '</code></td></tr>' +
                 '<tr><td><b>Access layers</b></td><td>' + (j.layers || 0) + '</td></tr>' +
                 '<tr><td><b>Domains</b></td><td>' + domains + '</td></tr>' +
                 '</tbody></table>';
             } else {
-              body.innerHTML = '<div class="err">' + (j.message || j.error || 'Connection failed.') + '</div>';
+              body.innerHTML = '<div class="err">' + esc(j.message || j.error || 'Connection failed.') + '</div>';
             }
           })
           .catch(function () { body.innerHTML = '<div class="err">Request failed.</div>'; });
