@@ -236,6 +236,14 @@
     @keyframes pop { from { opacity:0; transform:translateY(-5px); } to { opacity:1; transform:none; } }
     .menu-items a { display:block; padding:10px 12px; color:var(--text) !important; text-decoration:none; font-size:13.5px; border-radius:8px; }
     .menu-items a:hover, .menu-items a:focus { background:var(--accent-soft); color:var(--accent) !important; }
+    /* forms/buttons inside a menu, styled to match the <a> items */
+    .menu-items form { margin:0; }
+    .menu-items button { display:block; width:100%; text-align:left; padding:10px 12px; color:var(--text);
+      background:none; border:0; font:inherit; font-size:13.5px; border-radius:8px; cursor:pointer; }
+    .menu-items button:hover, .menu-items button:focus { background:var(--accent-soft); color:var(--accent); }
+    .menu-items .menu-label { display:block; padding:7px 12px 3px; font-size:10px; font-weight:700;
+      letter-spacing:.5px; color:var(--faint); text-transform:uppercase; }
+    .menu-items .menu-sep { height:1px; background:var(--line); margin:5px 8px; }
 
     /* ============================ Confirm modal ============================ */
     .modal-overlay { position:fixed; inset:0; background:var(--overlay); -webkit-backdrop-filter:blur(3px); backdrop-filter:blur(3px);
