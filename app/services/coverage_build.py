@@ -28,8 +28,9 @@ REQUEST_ONLY = {"ignore-warnings", "ignore-errors", "set-if-exists", "details-le
 # These are SUPPORTED in TF — just renamed — so they must NOT be flagged as gaps. Every other field
 # defaults to the API name with hyphens→underscores (e.g. ipv4-address → ipv4_address).
 _MGMT_TF_RENAME = {"ip-address": "ipv4_address", "ip-address-first": "ipv4_address_first",
-                   "ip-address-last": "ipv4_address_last", "subnet": "subnet4", "mask-length": "mask_length4",
-                   "vpn": "vpn_communities"}
+                   "ip-address-last": "ipv4_address_last", "subnet": "subnet4", "mask-length": "mask_length4"}
+# `vpn` is renamed to vpn_communities ONLY when it's the access-rule community LIST (array); on
+# simple-gateway / simple-cluster `vpn` is a boolean blade that keeps its name. See _tf_field_name.
 _MGMT_TF_NO_FIELD = {"groups", "details-level", "subnet-mask", "service-resource"}   # no TF arg at all
 _MGMT_ANSIBLE_MISSING = {"service-gtp", "opsec-application", "server-certificate",
                          "vmware-data-center-server", "aws-data-center-server", "azure-data-center-server"}
@@ -87,26 +88,84 @@ def _properties(schema, spec):
     return out
 
 
+# The CP-Docs-To-Swagger converter flattens documented nested objects to a bare ``type: string``, so a
+# naive example would print the literal "example" for nat-settings / interfaces / etc. These are the
+# well-known nested blocks (keyed by field name, stable across objects/versions) with a faithful example,
+# sourced from the documented add-* structures. Anything flattened-but-not-here is OMITTED from the
+# example (it still appears in the field table) rather than shown as a misleading scalar.
+_NESTED_EXAMPLES = {
+    "nat-settings": {"auto-rule": True, "method": "hide", "hide-behind": "gateway", "install-on": "All"},
+    "aggressive-aging": {"enable": True, "timeout": 3600, "use-default-timeout": False},
+    "interfaces": [{"name": "eth0", "subnet4": "192.0.2.0", "mask-length4": 24}],
+    "host-servers": {"web-server": True,
+                     "web-server-config": {"additional-ports": ["8080"], "listen-standard-port": True}},
+    "start": {"date": "01-Jan-2024", "time": "08:00"},
+    "end": {"date": "31-Dec-2024", "time": "17:00"},
+    "recurrence": {"pattern": "Daily", "weekdays": ["Sun", "Mon"]},
+    "hours-ranges": [{"enabled": True, "from": "08:00", "to": "17:00", "index": 1}],
+    "track": {"type": "Log", "accounting": False, "per-connection": True},
+}
+_OMIT = object()   # sentinel: _build_object leaves this field out of the example snippet
+# Documented nested objects the converter flattened to a bare string whose description gives no "settings"/
+# "configuration" hint — omit from the example rather than print a misleading scalar. (Field table keeps them.)
+_FLATTENED_NESTED = {"https-inspection", "encrypted-traffic", "dhcp", "dhcp6", "user-check", "match-ufp",
+                     "match-wildcards", "cvp", "soap", "accounting", "client-customization",
+                     "data-leak-prevention", "harmony-mobile", "password-history", "password-strength"}
+
+
 def _example_value(name, schema, spec):
     schema = _resolve(schema, spec)
+    n = name.lower()
+    if name in _NESTED_EXAMPLES:               # a real nested block the OpenAPI flattened to a string
+        return _NESTED_EXAMPLES[name]
     if schema.get("enum"):
         return schema["enum"][0]
-    t, n = schema.get("type"), name.lower()
+    t = schema.get("type")
+    desc = (schema.get("description") or "").lower()
+    # A flattened nested object we don't model → OMIT (don't print a misleading scalar like "example").
+    if t in (None, "string", "object") and (
+            name in _FLATTENED_NESTED or "settings" in desc or "configuration" in desc
+            or "settings" in n.split("-") or n.endswith(("-config", "-settings", "-configuration"))):
+        return _OMIT
+    if "mask" in n and "length" in n:          # mask-length / ipv4-mask-length → an integer, not an IP
+        return 64 if "ipv6" in n else 24
     if t == "boolean":
         return True
     if t == "integer":
-        return 443 if "port" in n else (24 if "mask" in n else (128 if "icmp" in n else 1))
+        if "port" in n:
+            return 443
+        if "mask" in n:
+            return 64 if "ipv6" in n else 24
+        return 1500 if "mtu" in n else (128 if "icmp" in n else 1)
     if t == "array":
         item = _resolve(schema.get("items", {}), spec)
-        return [_example_value(name, item, spec)] if item else ["example"]
+        iv = _example_value(name, item, spec) if item else "example"
+        return _OMIT if iv is _OMIT else [iv]
     if t == "object":
         props = _properties(schema, spec)
-        return {k: _example_value(k, v, spec) for k, v in list(props.items())[:6]}
+        out = {k: _example_value(k, v, spec) for k, v in list(props.items())[:6]}
+        return {k: v for k, v in out.items() if v is not _OMIT}
+    if n == "action":                          # untyped strings the converter leaves typeless
+        return "Accept"
+    if n == "position":
+        return "top"
+    if n == "version":
+        return "R81.20"
+    if n in ("os-name", "os"):
+        return "Gaia"
+    if n == "hardware":
+        return "Open server"
+    if n == "speed":
+        return "1000M"
+    if n == "duplex":
+        return "full"
+    if "mac" in n:
+        return "00:1c:7f:11:22:33"
     if "ipv6" in n:
         return "2001:db8::10"
-    if "mask" in n and "length" not in n:
+    if "mask" in n:                            # subnet-mask / netmask (mask-length handled above)
         return "255.255.255.0"
-    if any(x in n for x in ("ip-address", "ipv4", "address", "gateway", "subnet", "server")):
+    if any(x in n for x in ("ip-address", "ipv4", "address", "gateway", "subnet")):
         return "192.0.2.10"
     if n == "name":
         return "MyObject"
@@ -131,13 +190,17 @@ def _ans_obj_name(api_type, obj):
     return "cp_gaia_" + _GAIA_ANSIBLE_MODULE.get(obj, obj.replace("-", "_"))
 
 
-def _tf_field_name(api_type, fname, tf_obj):
+def _tf_field_name(api_type, fname, tf_obj, ftype=None):
     """The Terraform argument name for an API field, or None if TF has no equivalent. For management,
     generic fields TF splits (ip-address → ipv4_address) resolve to the real TF arg; Gaia fields are 1:1."""
     if tf_obj is None:
         return None
     if api_type == "management":
-        return None if fname in _MGMT_TF_NO_FIELD else _MGMT_TF_RENAME.get(fname, fname.replace("-", "_"))
+        if fname in _MGMT_TF_NO_FIELD:
+            return None
+        if fname == "vpn":                     # community LIST → vpn_communities; boolean blade → vpn
+            return "vpn_communities" if ftype == "array" else "vpn"
+        return _MGMT_TF_RENAME.get(fname, fname.replace("-", "_"))
     return fname.replace("-", "_")
 
 
@@ -145,8 +208,8 @@ def _ans_field_name(fname, ans_obj):
     return None if ans_obj is None else fname.replace("-", "_")   # collections mirror the API field set
 
 
-def _field_support(api_type, fname, tf_obj, ans_obj):
-    tfn, ann = _tf_field_name(api_type, fname, tf_obj), _ans_field_name(fname, ans_obj)
+def _field_support(api_type, fname, tf_obj, ans_obj, ftype=None):
+    tfn, ann = _tf_field_name(api_type, fname, tf_obj, ftype), _ans_field_name(fname, ans_obj)
     return {"api": True, "request_only": fname in REQUEST_ONLY,
             "tf": tfn is not None, "ansible": ann is not None,
             "tf_name": tfn, "ansible_name": ann}
@@ -160,11 +223,13 @@ def _build_object(spec, api_type, path):
     required = (_resolve(schema, spec).get("required")) or []
     fields, example = [], {}
     for fname, fschema in _properties(schema, spec).items():
-        sup = _field_support(api_type, fname, tf_obj, ans_obj)
+        sup = _field_support(api_type, fname, tf_obj, ans_obj, fschema.get("type"))
         fields.append({"name": fname, "type": fschema.get("type", "string"), "enum": fschema.get("enum"),
                        "required": fname in required, **sup})
         if not sup["request_only"]:
-            example[fname] = _example_value(fname, fschema, spec)
+            v = _example_value(fname, fschema, spec)
+            if v is not _OMIT:                 # leave flattened-nested fields we can't model out of the example
+                example[fname] = v
     return {"name": obj, "command": cmd, "terraform": tf_obj, "ansible": ans_obj,
             "fields": fields, "example": example}
 
