@@ -7,9 +7,15 @@
     if (!meta) return;
     var url = meta.dataset.quickEditUrl;
     function save(field, value) {
+      // Never reject: a non-JSON response (session expiry -> login HTML, a 500, or a network drop)
+      // must surface a clean error and re-enable Save, not leave it stuck disabled.
       return fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ field: field, value: value }) })
-        .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); });
+        .then(function (r) {
+          return r.json().then(
+            function (j) { return { ok: r.ok, j: j }; },
+            function () { return { ok: false, j: { error: 'Unexpected response (HTTP ' + r.status + '). Your session may have expired — reload the page.' } }; });
+        }, function () { return { ok: false, j: { error: 'Network error — check your connection and retry.' } }; });
     }
     function mkbtn(t) { var b = document.createElement('button'); b.type = 'button'; b.className = 'copybtn'; b.textContent = t; return b; }
     function showErr(c, m) {
