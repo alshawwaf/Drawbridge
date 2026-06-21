@@ -236,12 +236,12 @@ def _norm_version(spec: dict, fallback: str) -> str:
 
 
 def check_for_update(api_type: str, version: str = "") -> dict:
-    """Fetch the (latest, or named) spec from the service and bundle it if not already present.
+    """Build the (latest, or named) spec from the Check Point docs and bundle it if not already present.
     Returns {ok, api_type, version, object_count, added} or {ok:False, error}."""
     try:
         spec = fetch_spec(api_type, version)
     except Exception as exc:  # noqa: BLE001
-        return {"ok": False, "error": f"Could not fetch the spec from {SPEC_BASE_URL} — {exc}"}
+        return {"ok": False, "error": f"Could not build the {api_type} spec from the Check Point docs — {exc}"}
     ver = version or _norm_version(spec, "vlatest")
     existing = os.path.join(OUT_DIR, f"{api_type}-{ver}.json")
     if os.path.exists(existing):

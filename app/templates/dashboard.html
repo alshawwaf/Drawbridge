@@ -19,7 +19,12 @@
 <div class="row" style="gap:8px; margin:2px 0 14px; flex-wrap:wrap; align-items:center;">
   <span class="muted" style="font-size:11px; font-weight:700; letter-spacing:.5px;">POV BUNDLE</span>
   <form method="post" action="/portal/seed" style="margin:0;">
+    <input type="hidden" name="preset" value="demo">
     <button class="copybtn" type="submit" title="Populate a ready-to-demo set of feeds, datacenters, a gateway, a dynamic layer + a live scenario">✨ Seed demo environment</button>
+  </form>
+  <form method="post" action="/portal/seed" style="margin:0;">
+    <input type="hidden" name="preset" value="hq_lab">
+    <button class="copybtn" type="submit" title="Seed a training lab that mirrors the HQ topology: mock vCenter + NSX-T advertising the real lab VMs/IPs, threat feeds, plus SMS + gateway connection profiles">🏛 Seed HQ Training Lab</button>
   </form>
   <a class="copybtn" href="/portal/export" download title="Download this whole environment as a shareable bundle (no credentials)">⤓ Export</a>
   <form method="post" action="/portal/import" enctype="multipart/form-data" id="import-form" style="margin:0;">
