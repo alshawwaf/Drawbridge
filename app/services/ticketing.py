@@ -80,20 +80,24 @@ def _validate_port(port) -> str:
     return port
 
 
-def build_request(source, destination, protocol, port) -> AccessRequest:
-    """Validate + normalise a raw tuple into an AccessRequest. Shared by the UI and the webhook.
+def build_request(source, destination, protocol, port, application=None) -> AccessRequest:
+    """Validate + normalise a raw tuple into an AccessRequest. Shared by the UI and the webhook. When
+    `application` is given (e.g. "Facebook") it's an app request and protocol/port are ignored.
     Raises ValueError (clean message) on anything malformed."""
     if source in (None, "") or destination in (None, ""):
         raise ValueError("source and destination are required.")
+    try:
+        src_cidr, dst_cidr = _norm_cidr(source), _norm_cidr(destination)
+    except ValueError as exc:
+        raise ValueError(f"Invalid source/destination: {exc}")
+    application = str(application).strip() if application else ""
+    if application:
+        return AccessRequest(src_cidrs=[src_cidr], dst_cidrs=[dst_cidr], application=application)
     protocol = str(protocol or "tcp").lower()
     if protocol not in ("tcp", "udp"):
         raise ValueError("protocol must be 'tcp' or 'udp'.")
-    port = _validate_port(port)
-    try:
-        return AccessRequest(src_cidrs=[_norm_cidr(source)], dst_cidrs=[_norm_cidr(destination)],
-                             protocol=protocol, ports=port)
-    except ValueError as exc:
-        raise ValueError(f"Invalid source/destination/port: {exc}")
+    return AccessRequest(src_cidrs=[src_cidr], dst_cidrs=[dst_cidr],
+                         protocol=protocol, ports=_validate_port(port))
 
 
 def parse_payload(data: dict) -> TicketRequest:
@@ -122,6 +126,7 @@ def parse_payload(data: dict) -> TicketRequest:
         _first(data, "destination", "dst", "dest", "destination_ip", "u_destination"),
         _first(data, "protocol", "proto", "u_protocol", default="tcp"),
         _first(data, "port", "ports", "service_port", "u_port", default=""),
+        _first(data, "application", "app", "u_application"),
     )
     apply_flag = str(_first(data, "apply", "commit", "u_apply", default="")).strip().lower() in _TRUE
     return TicketRequest(

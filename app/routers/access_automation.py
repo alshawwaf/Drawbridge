@@ -34,7 +34,8 @@ class AccessReqBody(BaseModel):
     source: str
     destination: str
     protocol: str = "tcp"
-    port: str
+    port: str = ""
+    application: str | None = None      # an application-site name (e.g. "Facebook") instead of a port
     ticket_id: str = ""
     publish: bool = False
     package: str | None = None
@@ -92,7 +93,8 @@ def _run(db: Session, sid: int, user: User, body: AccessReqBody, *, do_apply: bo
     if err:
         return err
     try:
-        req = ticketing.build_request(body.source, body.destination, body.protocol, body.port)
+        req = ticketing.build_request(body.source, body.destination, body.protocol, body.port,
+                                      body.application)
     except ValueError as exc:
         return JSONResponse({"error": str(exc)}, status_code=400)
     if not body.layer:
