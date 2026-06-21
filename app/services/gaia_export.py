@@ -484,7 +484,7 @@ def _web_api(cfg: dict) -> str:
             continue
         body = {"name": i.get("name", "")}
         for k in ("ipv4-address", "ipv4-mask-length", "ipv6-address", "ipv6-mask-length", "mtu",
-                  "comments", "speed", "duplex", "mac-addr"):
+                  "comments", "speed", "duplex", "mac-addr", "rx-ringsize", "tx-ringsize"):
             if _present(i.get(k)):
                 body[k] = i[k]
         for k in ("enabled", "ipv6-autoconfig", "auto-negotiation", "monitor-mode"):
