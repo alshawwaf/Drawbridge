@@ -95,6 +95,28 @@ _TIME_POINT = [   # shared by time.start / time.end
     F("posix", "posix", "posix", "posix", "int"),
     F("time", "time", "time", "time", "str"),
 ]
+# Log-server reference lists shared by gateways / clusters / Check Point hosts (resolved to refs).
+_LOG_TARGETS = [
+    F("save-logs-locally", "save_logs_locally", "save_logs_locally", "save-logs-locally", "bool"),
+    F("send-logs-to-server", "send_logs_to_server", "send_logs_to_server", "send-logs-to-server", "names"),
+    F("send-logs-to-backup-server", "send_logs_to_backup_server", "send_logs_to_backup_server",
+      "send-logs-to-backup-server", "names"),
+    F("send-alerts-to-server", "send_alerts_to_server", "send_alerts_to_server", "send-alerts-to-server", "names"),
+]
+# Standard software-blade toggles on a gateway / cluster (1:1 hyphen→underscore in TF + Ansible). Only
+# the blades actually returned by show-* are emitted (the _empty guard), so this superset is safe to share.
+_GW_BLADES = [F(_b, _b.replace("-", "_"), _b.replace("-", "_"), _b, "bool") for _b in (
+    "firewall", "vpn", "application-control", "url-filtering", "content-awareness", "ips",
+    "anti-bot", "anti-virus", "threat-emulation", "threat-extraction", "identity-awareness",
+    "mobile-access", "data-loss-prevention", "anti-spam-and-email-security", "monitoring",
+    "zero-phishing", "icap-server", "hit-count", "nat-hide-internal-interfaces", "enable-https-inspection",
+    "qos", "rtm-counters-report", "rtm-traffic-report", "rtm-traffic-report-per-connection",
+    "show-portals-certificate",
+)]
+# Gateways/clusters/CP-hosts are managed devices: SIC trust, topology and the one-time-password are set
+# up on the device, never exported. The object + its blades restore as code; finish setup on the gateway.
+_SIC_NOTE = ("managed device — SIC trust, interface topology and one-time-password are established during "
+             "gateway setup and are NOT exported; on restore, set up the gateway/SIC then install policy.")
 
 
 # Per-type: Terraform resource, Ansible module, mgmt_cli object, and the type-specific fields.
@@ -160,6 +182,11 @@ OBJ_SPECS: dict[str, dict] = {
         F("match-by-protocol-signature", "match_by_protocol_signature", "match_by_protocol_signature",
           "match-by-protocol-signature", "bool"),
         F("match-for-any", "match_for_any", "match_for_any", "match-for-any", "bool"),
+        F("override-default-settings", "override_default_settings", "override_default_settings",
+          "override-default-settings", "bool"),
+        F("enable-tcp-resource", "enable_tcp_resource", "enable_tcp_resource", "enable-tcp-resource", "bool"),
+        F("use-delayed-sync", "use_delayed_sync", "use_delayed_sync", "use-delayed-sync", "bool"),
+        F("delayed-sync-value", "delayed_sync_value", "delayed_sync_value", "delayed-sync-value", "int"),
         F("keep-connections-open-after-policy-installation", "keep_connections_open_after_policy_installation",
           "keep_connections_open_after_policy_installation", "keep-connections-open-after-policy-installation", "bool"),
         F("session-timeout", "session_timeout", "session_timeout", "session-timeout", "int"),
@@ -178,6 +205,8 @@ OBJ_SPECS: dict[str, dict] = {
         F("match-by-protocol-signature", "match_by_protocol_signature", "match_by_protocol_signature",
           "match-by-protocol-signature", "bool"),
         F("match-for-any", "match_for_any", "match_for_any", "match-for-any", "bool"),
+        F("override-default-settings", "override_default_settings", "override_default_settings",
+          "override-default-settings", "bool"),
         F("keep-connections-open-after-policy-installation", "keep_connections_open_after_policy_installation",
           "keep_connections_open_after_policy_installation", "keep-connections-open-after-policy-installation", "bool"),
         F("session-timeout", "session_timeout", "session_timeout", "session-timeout", "int"),
@@ -197,10 +226,13 @@ OBJ_SPECS: dict[str, dict] = {
     "service-other": {"tf": "checkpoint_management_service_other", "ansible": "cp_mgmt_service_other",
                       "cli": "service-other", "fields": [
         F("ip-protocol", "ip_protocol", "ip_protocol", "ip-protocol", "int"),
+        F("protocol", "protocol", "protocol", "protocol", "str"),
         F("match", "match", "match", "match", "str"),
         F("action", "action", "action", "action", "str"),
         F("accept-replies", "accept_replies", "accept_replies", "accept-replies", "bool"),
         F("match-for-any", "match_for_any", "match_for_any", "match-for-any", "bool"),
+        F("override-default-settings", "override_default_settings", "override_default_settings",
+          "override-default-settings", "bool"),
         F("source-port", "source_port", "source_port", "source-port", "str"),
         F("keep-connections-open-after-policy-installation", "keep_connections_open_after_policy_installation",
           "keep_connections_open_after_policy_installation", "keep-connections-open-after-policy-installation", "bool"),
@@ -296,6 +328,77 @@ OBJ_SPECS: dict[str, dict] = {
     "application-site-category": {"tf": "checkpoint_management_application_site_category",
                                   "ansible": "cp_mgmt_application_site_category", "cli": "application-site-category",
                                   "fields": [F("description", "description", "description", "description", "str")]},
+    # --- gateways / hosts / VPN peers ----------------------------------------------------------
+    "simple-gateway": {"tf": "checkpoint_management_simple_gateway", "ansible": "cp_mgmt_simple_gateway",
+                       "cli": "simple-gateway", "fields": [
+        F("ipv4-address", "ipv4_address", "ipv4_address", "ipv4-address", "str"),
+        F("ipv6-address", "ipv6_address", "ipv6_address", "ipv6-address", "str"),
+        F("version", "version", "version", "version", "str"),
+        F("os-name", "os_name", "os_name", "os-name", "str"),
+        F("hardware", "hardware", "hardware", "hardware", "str"),
+        F("hardware-subtype", "hardware_subtype", "hardware_subtype", "hardware-subtype", "str"),
+        F("auto-generate-ip", "auto_generate_ip", "auto_generate_ip", "auto-generate-ip", "bool"),
+        F("threat-prevention-mode", "threat_prevention_mode", "threat_prevention_mode",
+          "threat-prevention-mode", "str"),
+        F("ips-update-policy", "ips_update_policy", "ips_update_policy", "ips-update-policy", "str"),
+        _NAT, *_GW_BLADES, *_LOG_TARGETS,
+    ], "note": _SIC_NOTE},
+    "simple-cluster": {"tf": "checkpoint_management_simple_cluster", "ansible": "cp_mgmt_simple_cluster",
+                       "cli": "simple-cluster", "fields": [
+        F("ipv4-address", "ipv4_address", "ipv4_address", "ipv4-address", "str"),
+        F("ipv6-address", "ipv6_address", "ipv6_address", "ipv6-address", "str"),
+        F("version", "version", "version", "version", "str"),
+        F("os-name", "os_name", "os_name", "os-name", "str"),
+        F("hardware", "hardware", "hardware", "hardware", "str"),
+        F("cluster-mode", "cluster_mode", "cluster_mode", "cluster-mode", "str"),
+        F("geo-mode", "geo_mode", "geo_mode", "geo-mode", "bool"),
+        F("threat-prevention-mode", "threat_prevention_mode", "threat_prevention_mode",
+          "threat-prevention-mode", "str"),
+        F("ips-update-policy", "ips_update_policy", "ips_update_policy", "ips-update-policy", "str"),
+        _NAT, *_GW_BLADES, *_LOG_TARGETS,
+    ], "note": _SIC_NOTE + " Cluster members and their interfaces are configured on the cluster object."},
+    "checkpoint-host": {"tf": "checkpoint_management_checkpoint_host", "ansible": "cp_mgmt_checkpoint_host",
+                        "cli": "checkpoint-host", "fields": [
+        F("ipv4-address", "ipv4_address", "ipv4_address", "ipv4-address", "str"),
+        F("ipv6-address", "ipv6_address", "ipv6_address", "ipv6-address", "str"),
+        F("version", "version", "version", "version", "str"),
+        F("hardware", "hardware", "hardware", "hardware", "str"),
+        F("os", "os", "os", "os", "str"),
+        _HOST_IFACES, _NAT, *_LOG_TARGETS,
+    ], "note": _SIC_NOTE},
+    "interoperable-device": {"tf": "checkpoint_management_interoperable_device",
+                             "ansible": "cp_mgmt_interoperable_device", "cli": "interoperable-device", "fields": [
+        F("ipv4-address", "ipv4_address", "ipv4_address", "ipv4-address", "str"),
+        F("ipv6-address", "ipv6_address", "ipv6_address", "ipv6-address", "str"),
+        F("autonomous-system-number", "autonomous_system_number", "autonomous_system_number",
+          "autonomous-system-number", "str"),
+        F("domains-to-process", "domains_to_process", "domains_to_process", "domains-to-process", "names"),
+        _HOST_IFACES, _NAT,
+    ]},
+    "logical-server": {"tf": "checkpoint_management_logical_server", "ansible": "cp_mgmt_logical_server",
+                       "cli": "logical-server", "fields": [
+        F("ipv4-address", "ipv4_address", "ipv4_address", "ipv4-address", "str"),
+        F("ipv6-address", "ipv6_address", "ipv6_address", "ipv6-address", "str"),
+        F("server-type", "server_type", "server_type", "server-type", "str"),
+        F("balance-method", "balance_method", "balance_method", "balance-method", "str"),
+        F("persistency-type", "persistency_type", "persistency_type", "persistency-type", "str"),
+        F("persistence-mode", "persistence_mode", "persistence_mode", "persistence-mode", "bool"),
+        F("server-group", "server_group", "server_group", "server-group", "ref"),
+    ]},
+    # --- dynamic / identity / GTP objects ------------------------------------------------------
+    "dynamic-object": {"tf": "checkpoint_management_dynamic_object", "ansible": "cp_mgmt_dynamic_object",
+                       "cli": "dynamic-object", "fields": []},
+    "gsn-handover-group": {"tf": "checkpoint_management_gsn_handover_group",
+                           "ansible": "cp_mgmt_gsn_handover_group", "cli": "gsn-handover-group", "fields": [
+        F("members", "members", "members", "members", "names"),
+        F("enforce-gtp", "enforce_gtp", "enforce_gtp", "enforce-gtp", "bool"),
+        F("gtp-rate", "gtp_rate", "gtp_rate", "gtp-rate", "int"),
+    ]},
+    "user-group": {"tf": "checkpoint_management_user_group", "ansible": "cp_mgmt_user_group",
+                   "cli": "user-group", "fields": [
+        F("members", "members", "members", "members", "names"),
+        F("email", "email", "email", "email", "str"),
+    ]},
     # access-role: networks export cleanly; users/machines are a show↔add format mismatch — flag, don't guess.
     "access-role": {"tf": "checkpoint_management_access_role", "ansible": "cp_mgmt_access_role",
                     "cli": "access-role", "fields": [
