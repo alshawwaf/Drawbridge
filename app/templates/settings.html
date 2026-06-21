@@ -8,7 +8,7 @@
   </div>
 </div>
 
-<form method="post" action="/settings">
+<form method="post" action="/settings" id="settings-form">
 {% for group, items in groups.items() %}
   <div class="card">
     <h2 style="margin-top:0;">{{ group }}</h2>
@@ -33,14 +33,13 @@
   </div>
 {% endfor %}
 
-  <div class="row" style="gap:8px;align-items:center;">
-    <button class="btn" type="submit">Save settings</button>
-    <span class="grow"></span>
-  </div>
 </form>
 
-<form method="post" action="/settings/reset" style="margin-top:4px;"
-      onsubmit="return confirm('Restore all settings to their defaults?');">
-  <button class="btn secondary" type="submit">Restore defaults</button>
-</form>
+<div class="row" style="gap:10px;align-items:center;margin-top:14px;">
+  <button class="btn" type="submit" form="settings-form">Save settings</button>
+  <form method="post" action="/settings/reset" style="margin:0;"
+        onsubmit="return confirm('Restore all settings to their defaults?');">
+    <button class="btn secondary" type="submit">Restore defaults</button>
+  </form>
+</div>
 {% endblock %}

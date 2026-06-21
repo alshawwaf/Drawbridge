@@ -244,6 +244,20 @@ class AppState(Base):
     value: Mapped[str] = mapped_column(String(255), default="")
 
 
+class Notification(Base):
+    """A persisted, per-user notification for the header bell. Every flash message is also recorded
+    here so the admin can review and delete past notifications (transient toast + durable history)."""
+
+    __tablename__ = "notifications"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    kind: Mapped[str] = mapped_column(String(16), default="success")   # success | error | info
+    text: Mapped[str] = mapped_column(Text, default="")
+    read: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+
+
 class ManagementServer(Base):
     """A saved Check Point Management Server (or MDS domain/CMA) connection the portal drives over the
     `web_api`: pull layers/objects, view/edit them, export to IaC. Login password / API key is stored
