@@ -49,14 +49,23 @@ class MgmtSession:
         self.server = server
         self._secret = secret
         self.base = f"https://{server.host}:{server.port}/web_api"
-        self._client = httpx.Client(verify=_verify_for(server), timeout=timeout)
+        try:
+            verify = _verify_for(server)
+        except ssl.SSLError as exc:
+            raise MgmtError(f"The saved certificate for {server.host} is not valid PEM — re-paste it "
+                            f"on the Edit page ({exc}).") from exc
+        self._client = httpx.Client(verify=verify, timeout=timeout)
         self.sid: str | None = None
         self.login_info: dict = {}
         self.trace: list[dict] = []
 
     # --- lifecycle ---------------------------------------------------------------------------
     def __enter__(self) -> "MgmtSession":
-        self.login()
+        try:
+            self.login()
+        except Exception:
+            self._client.close()   # __exit__ won't run if __enter__ raises — don't leak the client
+            raise
         return self
 
     def __exit__(self, *exc) -> None:
@@ -384,7 +393,7 @@ def build_set_rule_op(layer: str, uid: str, changes: dict) -> dict:
     if changes.get("track"):
         payload["track"] = {"type": changes["track"]}   # Track Settings object, matching show output
         parts.append(f"track → {changes['track']}")
-    if changes.get("name") is not None and "name" in changes:
+    if changes.get("name"):        # only rename to a non-empty value; never blank an existing rule's name
         payload["new-name"] = changes["name"]
         parts.append(f"rename → {changes['name']!r}")
     if "comments" in changes:

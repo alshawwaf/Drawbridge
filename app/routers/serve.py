@@ -6,6 +6,7 @@ SE configured. Every fetch is recorded as a FeedPoll to prove the sync is live.
 """
 import base64
 import hmac
+import ipaddress
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlalchemy import select
@@ -19,22 +20,32 @@ router = APIRouter(tags=["feed-serving"])
 
 
 def _client_ip(request: Request) -> str:
-    xff = request.headers.get("x-forwarded-for")
-    if xff:
-        return xff.split(",")[0].strip()
-    return request.client.host if request.client else ""
+    # Behind a trusted reverse proxy (Caddy/Dokploy) X-Forwarded-For carries the real gateway IP, but a
+    # direct client can spoof it — record it only when it's a well-formed address, else use the TCP peer,
+    # so a garbage/spoofed header can't pollute the (informational) poll log.
+    xff = request.headers.get("x-forwarded-for", "")
+    peer = request.client.host if request.client else ""
+    cand = xff.split(",")[0].strip() if xff else peer
+    try:
+        ipaddress.ip_address(cand)
+        return cand
+    except ValueError:
+        return peer
 
 
 def _record_poll(db: Session, feed: Feed, request: Request, status_code: int) -> None:
-    db.add(
-        FeedPoll(
-            feed_id=feed.id,
-            source_ip=_client_ip(request),
-            user_agent=(request.headers.get("user-agent") or "")[:255],
-            status=status_code,
+    try:
+        db.add(
+            FeedPoll(
+                feed_id=feed.id,
+                source_ip=_client_ip(request),
+                user_agent=(request.headers.get("user-agent") or "")[:255],
+                status=status_code,
+            )
         )
-    )
-    db.commit()
+        db.commit()
+    except Exception:        # the poll log is best-effort — never fail the feed the gateway depends on
+        db.rollback()
 
 
 def _auth_ok(feed: Feed, request: Request) -> bool:
