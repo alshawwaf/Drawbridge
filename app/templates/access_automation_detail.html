@@ -194,8 +194,10 @@ Content-Type: application/json
     function traceBlock(trace) {
       if (!trace || !trace.length) return '';
       var rows = trace.map(function (t) {
-        return '<tr><td class="nowrap"><code>' + esc(t.command) + '</code></td><td class="act-num">' +
+        var row = '<tr><td class="nowrap"><code>' + esc(t.command) + '</code></td><td class="act-num">' +
                esc(t.status) + '</td><td class="act-num">' + esc(t.ms) + ' ms</td></tr>';
+        if (t.error) row += '<tr><td colspan="3" class="err-inline" style="white-space:pre-wrap;">' + esc(t.error) + '</td></tr>';
+        return row;
       }).join('');
       return '<details style="margin-top:12px;"><summary>web_api calls (' + trace.length + ')</summary>' +
              '<table class="acttable"><tbody>' + rows + '</tbody></table></details>';
