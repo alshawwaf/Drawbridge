@@ -95,6 +95,37 @@
     html[data-theme="light"] .ic-moon { display:inline; }
     html:not([data-theme="light"]) .ic-sun { display:inline; }
     .navsep { width:1px; height:22px; background:var(--header-line); margin:0 6px; }
+    header .brand-link { display:flex; align-items:center; gap:10px; text-decoration:none; flex:none; }
+    header .nav-main { margin-left:auto; display:flex; align-items:center; gap:2px; }
+    .nav-side { display:flex; align-items:center; gap:2px; flex:none; }
+    .signout-btn { background:none; border:none; box-shadow:none; color:var(--header-muted); font:inherit;
+      font-size:13.5px; font-weight:500; line-height:1; padding:8px 13px; border-radius:8px; cursor:pointer;
+      display:inline-flex; align-items:center; gap:7px; transition:color .12s, background .12s; }
+    .signout-btn:hover { color:var(--header-fg); background:var(--header-hover); filter:none; transform:none; box-shadow:none; }
+    .signout-btn svg { display:none; }
+    .nav-toggle { display:none; }
+    /* Responsive: collapse the nav into a hamburger panel; keep the icon cluster compact */
+    @media (max-width: 900px) {
+      header { gap:8px; padding:0 16px; }
+      .nav-toggle { display:inline-flex; order:3; }
+      .nav-side { order:2; margin-left:auto; }
+      .navsep { display:none; }
+      header .nav-main { position:absolute; top:60px; left:0; right:0; margin:0; flex-direction:column;
+        align-items:stretch; gap:0; padding:8px; display:none; max-height:calc(100vh - 60px); overflow-y:auto;
+        background:var(--surface-2); border-bottom:1px solid var(--header-line); box-shadow:var(--shadow-lg); }
+      header.nav-open .nav-main { display:flex; animation:pop .14s ease; }
+      .nav-main > a, .nav-main > .menu > .menu-trigger { padding:13px 14px; border-radius:10px; font-size:14px; }
+      .nav-main > a.active::after { display:none; } .nav-main > a.active { background:var(--header-hover); }
+      .nav-main .menu { display:block; }
+      .nav-main .menu > .menu-trigger { pointer-events:none; color:var(--faint); font-size:10.5px; font-weight:700;
+        text-transform:uppercase; letter-spacing:.5px; padding:14px 14px 5px; }
+      .nav-main .menu > .menu-trigger.active::after { display:none; }
+      .nav-main .menu-items { position:static; display:block; min-width:0; padding:0; margin:0 0 4px;
+        background:none; border:none; box-shadow:none; animation:none; }
+      .nav-main .menu-items a { padding:11px 14px 11px 24px; border-radius:10px; font-size:14px; }
+      .signout-btn svg { display:inline; } .so-text { display:none; }
+    }
+    @media (max-width: 470px) { header .brand { display:none; } #notif-panel { min-width:0; width:84vw; } }
 
     /* ============================ Layout & type ============================ */
     main { max-width:1060px; margin:36px auto 64px; padding:0 26px; }
@@ -416,9 +447,12 @@
 </head>
 <body>
   <header>
-    <span class="brand-mark"></span>
-    <span class="brand">DC Integration Simulator</span>
-    {% block nav %}<nav>
+    <a class="brand-link" href="/">
+      <span class="brand-mark"></span>
+      <span class="brand">DC Integration Simulator</span>
+    </a>
+    {% block nav %}
+    <nav class="nav-main" id="nav-main">
       <a href="/">Home</a>
       <a href="/feeds">Feeds</a>
       <div class="menu">
@@ -442,6 +476,8 @@
       <a href="/siem">SIEM</a>
       <a href="/settings">Settings</a>
       <a href="/activity">Activity</a>
+    </nav>
+    <div class="nav-side">
       <span class="navsep"></span>
       <div class="menu" id="notif-menu">
         <button type="button" class="menu-trigger icon-btn" id="notif-bell" title="Notifications" aria-label="Notifications">
@@ -460,8 +496,17 @@
         <svg class="ic-sun" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
         <svg class="ic-moon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
       </button>
-      <form method="post" action="/logout" style="display:inline;margin:0;"><button type="submit" style="background:none;border:none;box-shadow:none;color:var(--header-muted);font-size:13.5px;font-weight:500;font-family:inherit;line-height:1;padding:8px 13px;border-radius:8px;cursor:pointer;">Sign out</button></form>
-    </nav>{% endblock %}
+      <form method="post" action="/logout" style="display:inline;margin:0;">
+        <button type="submit" class="signout-btn" title="Sign out">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+          <span class="so-text">Sign out</span>
+        </button>
+      </form>
+      <button type="button" class="nav-toggle icon-btn" id="nav-toggle" aria-label="Menu" aria-expanded="false">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+      </button>
+    </div>
+    {% endblock %}
   </header>
   <main class="{% block main_class %}{% endblock %}">{% block content %}{% endblock %}</main>
 
@@ -556,6 +601,24 @@
           return;
         }
         document.querySelectorAll('.menu.open').forEach(function (m) { m.classList.remove('open'); });
+      });
+    })();
+    // Responsive nav: hamburger toggles the mobile menu panel.
+    (function () {
+      var t = document.getElementById('nav-toggle');
+      var hdr = document.querySelector('header');
+      if (!t || !hdr) return;
+      t.addEventListener('click', function (e) {
+        e.stopPropagation();
+        var open = hdr.classList.toggle('nav-open');
+        t.setAttribute('aria-expanded', open ? 'true' : 'false');
+      });
+      document.addEventListener('click', function (e) {
+        if (!hdr.classList.contains('nav-open')) return;
+        if (e.target.closest('#nav-toggle')) return;
+        var link = e.target.closest('.nav-main a[href]');
+        if (link && link.getAttribute('href') !== '#') { hdr.classList.remove('nav-open'); return; }
+        if (!e.target.closest('.nav-main')) hdr.classList.remove('nav-open');
       });
     })();
     // Notifications bell: lazy-load list, badge unread count, delete one / clear all.
