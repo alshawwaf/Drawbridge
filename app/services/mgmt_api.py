@@ -134,7 +134,34 @@ class MgmtSession:
                 return out
 
     def publish(self) -> dict:
-        return self.call("publish")
+        """Publish is ASYNCHRONOUS: it returns a task-id and the commit runs in the background. We must
+        wait for that task to actually succeed before reporting done — otherwise a still-pending or
+        failed publish is mis-reported as committed and the session is left Open holding its locks."""
+        res = self.call("publish")
+        task_id = res.get("task-id")
+        if task_id:
+            res["task"] = self.wait_for_task(task_id, what="publish")
+        return res
+
+    def wait_for_task(self, task_id: str, *, what: str = "task",
+                      timeout: float = 120.0, interval: float = 1.0) -> dict:
+        """Poll show-task until the async task leaves 'in progress'. Returns the task on success;
+        raises MgmtError on failure/timeout so the caller can discard and release locks."""
+        elapsed = 0.0
+        while True:
+            tasks = self.call("show-task", {"task-id": task_id}).get("tasks") or []
+            task = tasks[0] if tasks else {}
+            status = (task.get("status") or "").lower()
+            if status == "succeeded":
+                return task
+            if status in ("failed", "partially succeeded"):
+                raise MgmtError(f"{what} failed (task {task_id}: {task.get('status') or 'failed'}) — "
+                                "the change was NOT committed.")
+            if elapsed >= timeout:
+                raise MgmtError(f"{what} did not finish within {int(timeout)}s "
+                                f"(task {task_id} still '{task.get('status') or 'pending'}').")
+            time.sleep(interval)
+            elapsed += interval
 
     def discard(self) -> dict:
         return self.call("discard")
