@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Management Servers{% endblock %}
 {% block content %}
+{% from "_macros.html" import row_actions %}
 <div class="page-head">
   <span class="icon-chip lg"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 5v14c0 1.66-4 3-9 3s-9-1.34-9-3V5"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/></svg></span>
   <div class="ph-main">
@@ -26,18 +27,16 @@
   {% for r in rows %}
     <tr>
       <td><a class="feedname cellclip" href="/management/{{ r.ms.id }}" title="{{ r.ms.name }}">{{ r.ms.name }}</a></td>
-      <td><code class="cellclip" title="{{ r.ms.host }}:{{ r.ms.port }}">{{ r.ms.host }}:{{ r.ms.port }}</code></td>
+      <td><code class="cellclip mono" title="{{ r.ms.host }}:{{ r.ms.port }}">{{ r.ms.host }}:{{ r.ms.port }}</code></td>
       <td class="nowrap">{{ r.ms.domain or '—' }}</td>
       <td class="nowrap">{{ r.ms.username or '—' }}</td>
-      <td class="nowrap">{% if r.ms.cert_pem %}<span class="pill ok">pinned cert</span>{% elif r.ms.auto_trust %}<span class="pill">auto-trust</span>{% else %}<span class="pill faint">system trust</span>{% endif %}</td>
+      <td class="nowrap">{% if r.ms.cert_pem %}<span class="pill ok">pinned cert</span>{% elif r.ms.auto_trust %}<span class="pill faint">auto-trust</span>{% else %}<span class="pill faint">system trust</span>{% endif %}</td>
       <td class="nowrap">{% if r.has_secret %}<span class="pill ok">saved</span>{% else %}<span class="pill faint">none</span>{% endif %}</td>
-      <td class="nowrap" style="text-align:right;">
-        <button class="copybtn" type="button" data-test="/management/{{ r.ms.id }}/test" data-name="{{ r.ms.name }}">Test</button>
-        <a class="copybtn" href="/management/{{ r.ms.id }}/edit" style="margin-left:6px;">Edit</a>
-        <form method="post" action="/management/{{ r.ms.id }}/delete" style="display:inline;">
-          <button class="copybtn cb-danger" type="submit" style="margin-left:6px;" data-confirm="Delete “{{ r.ms.name }}”? This removes the saved connection + secret.">Delete</button>
-        </form>
-      </td>
+      {{ row_actions(
+           links=[{'label':'Edit','url':'/management/' ~ r.ms.id ~ '/edit'}],
+           menu=[{'label':'Test connection','attrs':'data-test="/management/'|safe ~ r.ms.id ~ '/test" data-name="'|safe ~ (r.ms.name | e) ~ '"'|safe}],
+           delete={'url':'/management/' ~ r.ms.id ~ '/delete', 'name': r.ms.name}
+         ) }}
     </tr>
   {% endfor %}
   </tbody>

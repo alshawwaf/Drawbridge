@@ -15,19 +15,19 @@
 <table class="acttable">
   <thead><tr>
     <th style="width:22px;"><input type="checkbox" class="sel-all" title="Select all on this page" aria-label="Select all"></th><th>Time</th><th>Method</th><th>Status</th><th>Kind</th>
-    <th>Path</th><th>Source</th><th class="act-num">Latency</th>
+    <th>Path</th><th>Source</th><th class="act-num num">Latency</th>
   </tr></thead>
   <tbody>
   {% for r in rows %}
   <tr class="act-row" data-id="{{ r.id }}">
     <td><input type="checkbox" name="ids" value="{{ r.id }}" class="row-cb" title="Select this record"></td>
-    <td><span class="act-time" data-ts="{{ r.at.isoformat() }}" title="{{ r.at.strftime('%Y-%m-%d %H:%M:%S') }} UTC">{{ r.at.strftime('%H:%M:%S') }}</span></td>
+    <td><span class="act-time mono" data-ts="{{ r.at.isoformat() }}" title="{{ r.at.strftime('%Y-%m-%d %H:%M:%S') }} UTC">{{ r.at.strftime('%H:%M:%S') }}</span></td>
     <td><span class="method m-{{ (r.method or '')|lower }}">{{ r.method or '—' }}</span></td>
     <td>{% if r.status %}<span class="pill {{ 'ok' if 200 <= r.status < 300 else ('bad' if r.status >= 400 else 'faint') }}">{{ r.status }}</span>{% else %}<span class="muted">—</span>{% endif %}</td>
     <td><span class="pill faint">{{ kind_labels.get(r.kind, r.kind) }}</span></td>
-    <td class="tcell-path"><span class="act-pathtext" title="{{ r.path }}">{{ r.path or '—' }}</span></td>
-    <td><span class="muted" style="font-size:12px; white-space:nowrap;">{{ r.source_ip or '—' }}</span></td>
-    <td class="act-num">{{ r.duration_ms }} ms</td>
+    <td class="tcell-path"><span class="act-pathtext mono" title="{{ r.path }}">{{ r.path or '—' }}</span></td>
+    <td><span class="muted mono" style="font-size:12px; white-space:nowrap;">{{ r.source_ip or '—' }}</span></td>
+    <td class="act-num num">{{ r.duration_ms }} ms</td>
   </tr>
   {% endfor %}
   </tbody>

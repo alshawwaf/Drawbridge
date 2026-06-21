@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Access automation{% endblock %}
 {% block content %}
+{% from "_macros.html" import row_actions %}
 <div class="page-head">
   <span class="icon-chip lg"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></span>
   <div class="ph-main">
@@ -26,12 +27,10 @@
   {% for r in rows %}
     <tr>
       <td><a class="feedname cellclip" href="/access-automation/{{ r.ms.id }}" title="{{ r.ms.name }}">{{ r.ms.name }}</a></td>
-      <td><code class="cellclip" title="{{ r.ms.host }}:{{ r.ms.port }}">{{ r.ms.host }}:{{ r.ms.port }}</code></td>
+      <td><code class="cellclip mono" title="{{ r.ms.host }}:{{ r.ms.port }}">{{ r.ms.host }}:{{ r.ms.port }}</code></td>
       <td class="nowrap">{{ r.ms.domain or '—' }}</td>
       <td class="nowrap">{% if r.has_secret %}<span class="pill ok">saved</span>{% else %}<span class="pill faint">none</span>{% endif %}</td>
-      <td class="nowrap" style="text-align:right;">
-        <a class="btn" href="/access-automation/{{ r.ms.id }}">Request access →</a>
-      </td>
+      {{ row_actions(links=[{'label':'Request access','url':'/access-automation/' ~ r.ms.id}]) }}
     </tr>
   {% endfor %}
   </tbody>

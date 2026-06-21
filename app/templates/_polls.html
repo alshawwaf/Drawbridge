@@ -6,13 +6,13 @@
   last {{ last.at.strftime('%Y-%m-%d %H:%M:%S') }} UTC from <code>{{ last.source_ip }}</code>{% endif %}
 </p>
 <table>
-  <thead><tr><th>Time (UTC)</th><th>Source IP</th><th>Status</th></tr></thead>
+  <thead><tr><th>Time</th><th>Source IP</th><th>Status</th></tr></thead>
   <tbody>
   {% for p in polls %}
     <tr>
-      <td class="nowrap">{{ p.at.strftime('%H:%M:%S') }}</td>
-      <td class="nowrap">{{ p.source_ip }}</td>
-      <td>{% if p.status == 200 %}<span class="pill ok">{{ p.status }}</span>{% else %}<span class="pill bad">{{ p.status }}</span>{% endif %}</td>
+      <td class="nowrap"><span class="ts mono" data-ts="{{ p.at.isoformat() }}" title="{{ p.at.strftime('%Y-%m-%d %H:%M:%S') }} UTC">{{ p.at.strftime('%H:%M:%S') }}</span></td>
+      <td class="nowrap"><span class="mono">{{ p.source_ip }}</span></td>
+      <td>{% if 200 <= p.status < 300 %}<span class="pill ok">{{ p.status }}</span>{% elif p.status >= 400 %}<span class="pill bad">{{ p.status }}</span>{% else %}<span class="pill faint">{{ p.status }}</span>{% endif %}</td>
     </tr>
   {% endfor %}
   </tbody>
