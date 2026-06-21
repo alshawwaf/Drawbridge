@@ -429,6 +429,15 @@ def test_app_settings_validation_and_clamp():
     assert app_settings._to_text(timeout, 99999) == "3600"
 
 
+def test_settings_spec_is_wellformed():
+    keys = [s.key for s in app_settings.SETTINGS]
+    assert len(keys) == len(set(keys))                       # unique keys
+    for s in app_settings.SETTINGS:
+        assert s.kind in ("bool", "int") and s.label and s.help
+        if s.kind == "int":
+            assert s.min <= s.default <= s.max               # default is in range
+
+
 # --- revision-based policy cache -------------------------------------------------------------
 def test_cached_raw_serves_within_revalidate_window(monkeypatch):
     mgmt_api.invalidate_cache()

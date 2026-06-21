@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}Settings{% endblock %}
+{% block content %}
+<div class="row">
+  <div class="grow">
+    <h1>Settings</h1>
+    <p class="muted">Control how the portal talks to your Check Point management servers. Real integrations don't log in and re-pull the whole policy on every request — Check Point throttles remote logins (3 per admin per minute) and caps concurrent sessions, so these defaults keep the tool well inside those limits. Changes take effect immediately, across the whole portal.</p>
+  </div>
+</div>
+
+<form method="post" action="/settings">
+{% for group, items in groups.items() %}
+  <div class="card">
+    <h2 style="margin-top:0;">{{ group }}</h2>
+    {% for s in items %}
+      <div class="setrow" style="padding:12px 0;border-top:1px solid var(--line);">
+        {% if s.kind == 'bool' %}
+          <label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-weight:600;">
+            <input type="checkbox" name="{{ s.key }}" {% if vals[s.key] %}checked{% endif %}>
+            {{ s.label }}
+          </label>
+        {% else %}
+          <label style="display:flex;align-items:center;gap:10px;font-weight:600;flex-wrap:wrap;">
+            <span style="min-width:260px;">{{ s.label }}</span>
+            <input type="number" name="{{ s.key }}" value="{{ vals[s.key] }}"
+                   min="{{ s.min }}" max="{{ s.max }}" step="1" style="width:120px;">
+            <span class="muted small">({{ s.min }}–{{ s.max }})</span>
+          </label>
+        {% endif %}
+        <div class="muted small" style="margin-top:5px;max-width:760px;">{{ s.help }}</div>
+      </div>
+    {% endfor %}
+  </div>
+{% endfor %}
+
+  <div class="row" style="gap:8px;align-items:center;">
+    <button class="btn" type="submit">Save settings</button>
+    <span class="grow"></span>
+  </div>
+</form>
+
+<form method="post" action="/settings/reset" style="margin-top:4px;"
+      onsubmit="return confirm('Restore all settings to their defaults?');">
+  <button class="btn secondary" type="submit">Restore defaults</button>
+</form>
+{% endblock %}
