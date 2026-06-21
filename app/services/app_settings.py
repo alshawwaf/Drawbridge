@@ -1,0 +1,136 @@
+"""User-tunable runtime behaviour for how the portal talks to a Check Point SMS.
+
+Real production integrations do NOT log in and re-pull the whole policy on every request — Check Point
+throttles remote API logins (3 per admin, per domain, per 60s in R81+) and caps concurrent sessions
+(100). So the portal (a) reuses a shared read-only session for reads and (b) caches the pulled policy,
+refreshing only when a new revision is published. Every knob here is editable from the **Settings**
+page so an admin controls the behaviour from the portal — no code or env edits.
+
+Stored in the ``AppState`` key/value table so a change from any worker/replica is shared; a small
+in-process cache keeps these off the hot path (mirrors the SIEM pause toggle)."""
+from __future__ import annotations
+
+import time
+from dataclasses import dataclass
+from typing import Union
+
+from ..db import SessionLocal
+from ..models import AppState
+
+_PREFIX = "set:"            # AppState key namespace, so settings never collide with other state
+_CACHE_TTL = 2.0
+_cache: dict = {"at": -1e9, "vals": {}}
+
+
+@dataclass(frozen=True)
+class Setting:
+    key: str
+    kind: str                       # "bool" | "int"
+    default: Union[bool, int]
+    label: str
+    help: str
+    group: str = "Management API"
+    min: int = 0
+    max: int = 0
+
+
+SETTINGS: list[Setting] = [
+    Setting("mgmt_session_reuse", "bool", True,
+            "Reuse a shared session for reads",
+            "Log in once and reuse a read-only session for all reads (layers, rulebase, export, "
+            "preview) instead of logging in on every request. Check Point throttles remote logins to 3 "
+            "per minute, so this is what prevents the 'too many login requests' failures. Strongly "
+            "recommended — turn off only to debug."),
+    Setting("mgmt_session_timeout", "int", 3600,
+            "Read session timeout (seconds)",
+            "Idle timeout for the shared read session. Check Point allows 60–3600s; the portal "
+            "keepalives it so it survives a whole demo.", min=60, max=3600),
+    Setting("mgmt_keepalive", "bool", True,
+            "Keep the read session alive",
+            "Send a lightweight keepalive before reusing an idle session so it never expires mid-demo "
+            "(keepalive does not count against the login throttle)."),
+    Setting("mgmt_policy_cache", "bool", True,
+            "Cache the pulled policy",
+            "Reuse the parsed rulebase while the policy is unchanged instead of pulling the whole "
+            "rulebase + objects every time. Change is detected by the latest published revision, so the "
+            "portal re-pulls only after someone publishes."),
+    Setting("mgmt_cache_revalidate", "int", 30,
+            "Revalidate interval (seconds)",
+            "Minimum time between change-checks. Within this window the cached policy is served without "
+            "even asking the SMS whether it changed (0 = check every request).", min=0, max=3600),
+    Setting("mgmt_cache_max_age", "int", 900,
+            "Force full refresh after (seconds)",
+            "Re-pull the whole policy at least this often regardless of revision — a safety net for "
+            "changes made outside the published-session signal.", min=30, max=86400),
+    Setting("mgmt_write_fresh", "bool", True,
+            "Always pull fresh before applying",
+            "Before committing a change (apply / publish), re-pull the live policy so the decision is "
+            "never based on a cached rulebase. Recommended."),
+]
+
+_BY_KEY = {s.key: s for s in SETTINGS}
+
+
+def defaults() -> dict:
+    return {s.key: s.default for s in SETTINGS}
+
+
+def _coerce(s: Setting, raw: str):
+    if s.kind == "bool":
+        return str(raw) == "1"
+    try:
+        v = int(raw)
+    except (TypeError, ValueError):
+        return s.default
+    return max(s.min, min(s.max, v))
+
+
+def _to_text(s: Setting, value) -> str:
+    if s.kind == "bool":
+        truthy = value is True or str(value).strip().lower() in ("1", "true", "on", "yes")
+        return "1" if truthy else "0"
+    return str(_coerce(s, str(value)))
+
+
+def all_values(fresh: bool = False) -> dict:
+    """The full, validated settings map (defaults overlaid with any stored values). Cached ~2s."""
+    now = time.monotonic()
+    if not fresh and (now - _cache["at"]) <= _CACHE_TTL and _cache["vals"]:
+        return dict(_cache["vals"])
+    vals = defaults()
+    db = SessionLocal()
+    try:
+        for s in SETTINGS:
+            row = db.get(AppState, _PREFIX + s.key)
+            if row is not None:
+                vals[s.key] = _coerce(s, row.value)
+    finally:
+        db.close()
+    _cache.update(at=now, vals=vals)
+    return dict(vals)
+
+
+def get(key: str):
+    """One validated value (falls back to the default). Cheap — reads the ~2s cache."""
+    return all_values().get(key, _BY_KEY[key].default if key in _BY_KEY else None)
+
+
+def save(values: dict) -> dict:
+    """Persist the provided keys (unknown keys ignored; values validated + clamped). Returns the new
+    full value map and busts the cache so the change takes effect immediately across the process."""
+    db = SessionLocal()
+    try:
+        for s in SETTINGS:
+            if s.key not in values:
+                continue
+            text = _to_text(s, values[s.key])
+            row = db.get(AppState, _PREFIX + s.key)
+            if row is None:
+                db.add(AppState(key=_PREFIX + s.key, value=text))
+            else:
+                row.value = text
+        db.commit()
+    finally:
+        db.close()
+    _cache["at"] = -1e9
+    return all_values(fresh=True)

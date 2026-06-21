@@ -66,6 +66,8 @@ async def lifespan(app: FastAPI):
     finally:
         if receiver is not None:
             await receiver.stop()
+        from .services.mgmt_api import close_pool   # log out pooled read sessions on shutdown
+        close_pool()
 
 
 def create_app() -> FastAPI:

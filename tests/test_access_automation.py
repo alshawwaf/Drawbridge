@@ -2,6 +2,7 @@
 (preview/execute) against a fake session, ServiceNow payload handling, the webhook auth gate, and
 template rendering. No live SMS needed."""
 import asyncio
+import contextlib
 import ipaddress
 import types
 
@@ -556,7 +557,7 @@ def _fake_session_factory(calls, hosts=None, services=None, fail_on=None):
     services = services or {}
 
     class FS:
-        def __init__(self, server, secret, timeout=30.0):
+        def __init__(self, server, secret, timeout=30.0, **kwargs):
             self.trace = []
 
         def __enter__(self):
@@ -565,7 +566,7 @@ def _fake_session_factory(calls, hosts=None, services=None, fail_on=None):
         def __exit__(self, *a):
             return False
 
-        def call(self, command, payload=None):
+        def call(self, command, payload=None, **kwargs):
             calls.append((command, payload or {}))
             if fail_on and command == fail_on:
                 raise aa.MgmtError("server said no")
@@ -586,6 +587,18 @@ def _fake_session_factory(calls, hosts=None, services=None, fail_on=None):
             calls.append(("discard", {}))
 
     return FS
+
+
+def _fake_read_session(calls, hosts=None, services=None, fail_on=None):
+    """A stand-in for mgmt_api.read_session: yields a fake read-only session (the pool/login is mocked
+    away). Used by preview tests, which now acquire their session via read_session."""
+    factory = _fake_session_factory(calls, hosts=hosts, services=services, fail_on=fail_on)
+
+    @contextlib.contextmanager
+    def _rs(server, secret):
+        yield factory(server, secret)
+
+    return _rs
 
 
 def test_execute_widen_adds_to_source_cell(monkeypatch):
@@ -654,8 +667,8 @@ def test_execute_discards_on_error(monkeypatch):
 
 def test_preview_is_read_only_and_reports_reuse(monkeypatch):
     calls = []
-    monkeypatch.setattr(aa, "MgmtSession",
-                        _fake_session_factory(calls, hosts={"192.168.9.9": "existing-host"}))
+    monkeypatch.setattr(aa, "read_session",
+                        _fake_read_session(calls, hosts={"192.168.9.9": "existing-host"}))
     monkeypatch.setattr(aa, "load_layer", lambda s, layer, package=None: [WEB, CLEANUP])
     res = aa.preview(object(), "secret",
                      AccessRequest(["192.168.9.9/32"], ["172.16.5.10/32"], "tcp", "443"), "Network")
@@ -694,7 +707,7 @@ def test_execute_cidr_create_uses_network_for_src_and_dst(monkeypatch):
 
 def test_preview_cidr_reports_network_and_stays_read_only(monkeypatch):
     calls = []
-    monkeypatch.setattr(aa, "MgmtSession", _fake_session_factory(calls))
+    monkeypatch.setattr(aa, "read_session", _fake_read_session(calls))
     monkeypatch.setattr(aa, "load_layer", lambda s, layer, package=None: [WEB, CLEANUP])
     res = aa.preview(object(), "secret",
                      AccessRequest(["10.50.0.0/24"], ["172.16.5.10/32"], "tcp", "443"), "Network")
