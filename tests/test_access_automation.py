@@ -414,6 +414,55 @@ def test_parse_rule_default_any_cells_are_not_conditional():
     assert rule.conditional is False and rule.conditions == ()
 
 
+# --- object-type safety net (every cell type the source/dest/service fields can hold) ----------
+_OBJD = {
+    "any":   {"uid": "any", "name": "Any", "type": "CpmiAnyObject"},
+    "h8888": {"uid": "h8888", "name": "dns", "type": "host", "ipv4-address": "8.8.8.8"},
+    "hsrc":  {"uid": "hsrc", "name": "client", "type": "host", "ipv4-address": "10.1.1.1"},
+    "s443":  {"uid": "s443", "name": "https", "type": "service-tcp", "port": "443"},
+    "arfin": {"uid": "arfin", "name": "Finance", "type": "access-role"},
+    "zone":  {"uid": "zone", "name": "Zone", "type": "security-zone"},
+    "uoint": {"uid": "uoint", "name": "Internet", "type": "updatable-object"},
+    "hv6":   {"uid": "hv6", "name": "v6", "type": "host", "ipv6-address": "2001:db8::5"},
+    "sgre":  {"uid": "sgre", "name": "gre", "type": "service-other", "ip-protocol": 47},
+    "sgweb": {"uid": "sgweb", "name": "grp", "type": "service-group", "members": ["s443"]},
+}
+
+
+def _pr(uid, num, action, src, dst, svc):
+    return aa._parse_rule({"uid": uid, "rule-number": num, "name": uid, "action": action,
+                           "enabled": True, "source": src, "destination": dst, "service": svc}, _OBJD)
+
+
+_LIVE_CLEANUP = _pr("rC", 99, "Drop", ["any"], ["any"], ["any"])
+_OBJ_REQ = AccessRequest(["10.1.1.1/32"], ["8.8.8.8/32"], "tcp", "443")
+
+
+@pytest.mark.parametrize("src,dst,svc", [
+    (["arfin"], ["h8888"], ["s443"]),   # access-role (Identity Awareness) source
+    (["zone"],  ["h8888"], ["s443"]),   # security-zone source
+    (["uoint"], ["h8888"], ["s443"]),   # updatable-object (Internet / geo)
+    (["hv6"],   ["h8888"], ["s443"]),   # an IPv6 host object inside a v4 rule
+    (["hsrc"],  ["h8888"], ["sgre"]),   # service-other (GRE / raw IP protocol)
+])
+def test_unenumerable_cell_objects_route_to_review(src, dst, svc):
+    # any cell holding an object whose IP/port extent we can't enumerate is "extent-unknown" -> the rule
+    # stays in the path and routes to REVIEW; it is NEVER treated as provably disjoint (the v6/CIDR bug class)
+    d = aa.decide(_OBJ_REQ, [_pr("rX", 1, "Accept", src, dst, svc), _LIVE_CLEANUP])
+    assert d.outcome is Outcome.REVIEW and d.target_rule.uid == "rX"
+
+
+def test_live_any_object_cleanup_is_recognized_as_floor():
+    # the predefined Any object (CpmiAnyObject), as a real cleanup uses -> catch-all -> placement floor
+    d = aa.decide(_OBJ_REQ, [_LIVE_CLEANUP])
+    assert d.outcome is Outcome.CREATE and d.position == {"above": "rC"}
+
+
+def test_service_group_members_are_resolved():
+    d = aa.decide(_OBJ_REQ, [_pr("rSG", 1, "Accept", ["hsrc"], ["h8888"], ["sgweb"]), _LIVE_CLEANUP])
+    assert d.outcome is Outcome.NO_OP and d.target_rule.uid == "rSG"
+
+
 # --- BLOCKER regression: a rule whose extent is UNKNOWN must never be treated as out-of-path -----
 def _zone_rule(uid, num, action, dst, svc):
     """An accept/drop whose source is a security-zone / dynamic-object: parses to [] + src_unknown."""
