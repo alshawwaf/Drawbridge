@@ -31,7 +31,10 @@
       <select id="aa-proto"><option value="tcp">tcp</option><option value="udp">udp</option></select></label></div>
     <div style="width:130px;"><label>Port <span class="muted">(or range)</span>
       <input id="aa-port" placeholder="443"></label></div>
+    <div style="width:170px;"><label>Application <span class="muted">(optional)</span>
+      <input id="aa-app" placeholder="Facebook"></label></div>
   </div>
+  <p class="muted" style="margin:2px 0 0; font-size:12px;">Fill <b>Application</b> (e.g. Facebook, YouTube) to match on an app instead of a port — it overrides protocol/port.</p>
   <div class="row" style="margin-top:14px; gap:8px;">
     <button type="button" class="btn" id="aa-preview">Preview decision</button>
     <button type="button" class="btn secondary" id="aa-validate" disabled>Dry-run apply (validate)</button>
@@ -168,6 +171,7 @@ Content-Type: application/json
         destination: document.getElementById('aa-dest').value.trim(),
         protocol: document.getElementById('aa-proto').value,
         port: document.getElementById('aa-port').value.trim(),
+        application: document.getElementById('aa-app').value.trim(),
         ticket_id: document.getElementById('aa-ticket').value.trim()
       };
     }
@@ -243,7 +247,7 @@ Content-Type: application/json
     function call(path, mode, publish) {
       var b = body();
       if (!b.layer) { result.innerHTML = '<div class="err">Pick a layer first.</div>'; return; }
-      if (!b.source || !b.destination || !b.port) { result.innerHTML = '<div class="err">Source, destination and port are required.</div>'; return; }
+      if (!b.source || !b.destination || (!b.port && !b.application)) { result.innerHTML = '<div class="err">Source, destination, and a port or application are required.</div>'; return; }
       if (publish !== undefined) b.publish = publish;
       result.innerHTML = '<p class="muted">' + (mode === 'preview' ? 'Evaluating over web_api…' : (publish ? 'Publishing…' : 'Validating…')) + '</p>';
       fetch('/access-automation/' + id + '/' + path, {
@@ -258,7 +262,7 @@ Content-Type: application/json
     document.getElementById('aa-confirm-yes').addEventListener('click', function () { confirmBox.hidden = true; call('apply', 'publish', true); });
 
     // Re-preview (and lock apply) whenever an input changes, so apply always matches what's shown.
-    ['aa-layer', 'aa-source', 'aa-dest', 'aa-proto', 'aa-port', 'aa-ticket'].forEach(function (eid) {
+    ['aa-layer', 'aa-source', 'aa-dest', 'aa-proto', 'aa-port', 'aa-app', 'aa-ticket'].forEach(function (eid) {
       document.getElementById(eid).addEventListener('change', function () { setActionable(false); });
     });
 

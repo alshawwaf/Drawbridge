@@ -36,6 +36,10 @@ def _tcp(p):
     return ServiceSet(by_proto={"tcp": aa._ports_to_iv(str(p))})
 
 
+def _app(names=None, opaque=False):
+    return ServiceSet(apps=set(names or []), opaque=opaque)
+
+
 def _rule(uid, num, action, src, dst, svc, *, groups=None, dest_groups=None, enabled=True, complex=False):
     return ParsedRule(uid=uid, number=num, name=uid, enabled=enabled, action=action,
                       src=src, dst=dst, svc=svc, source_group_uids=groups or [],
@@ -108,6 +112,72 @@ def test_execute_widen_destination_adds_to_rule_dest_cell(monkeypatch):
     setr = next(p for c, p in calls if c == "set-access-rule")
     assert setr["uid"] == "r74" and setr["destination"] == {"add": "h-1-1-1-1"}
     assert not any(c == "add-access-rule" for c, _ in calls)   # widened, not created
+
+
+def test_decide_widen_service_when_only_service_differs():
+    # same source + destination, only the service differs -> widen the SERVICE cell
+    rule = _rule("rs", 5, "Accept", _host("10.1.0.9"), _host("172.16.5.10"), _tcp(443))
+    d = aa.decide(AccessRequest(["10.1.0.9/32"], ["172.16.5.10/32"], "tcp", "8443"), [rule, CLEANUP])
+    assert d.outcome is Outcome.WIDEN and d.widen_field == "service" and d.target_rule.uid == "rs"
+
+
+def test_execute_widen_service_adds_to_rule_service_cell(monkeypatch):
+    calls = []
+    monkeypatch.setattr(aa, "MgmtSession", _fake_session_factory(calls))
+    rule = _rule("rs", 5, "Accept", _host("10.1.0.9"), _host("172.16.5.10"), _tcp(443))
+    monkeypatch.setattr(aa, "load_layer", lambda s, layer, package=None: [rule, CLEANUP])
+    res = aa.execute(object(), "secret",
+                     AccessRequest(["10.1.0.9/32"], ["172.16.5.10/32"], "tcp", "8443"), "L", publish=True)
+    assert res["outcome"] == "widen" and res["widen_field"] == "service" and res["widen_object"] == "TCP-8443"
+    setr = next(p for c, p in calls if c == "set-access-rule")
+    assert setr["service"] == {"add": "TCP-8443"} and not any(c == "add-access-rule" for c, _ in calls)
+
+
+# --- application requests (Facebook / YouTube etc. live in the Services & Applications cell) ----
+def test_decide_app_no_op_when_app_already_allowed():
+    rule = _rule("ra", 5, "Accept", _host("10.1.2.250"), _host("1.1.1.1"), _app({"Facebook"}))
+    d = aa.decide(AccessRequest(["10.1.2.250/32"], ["1.1.1.1/32"], application="Facebook"), [rule, CLEANUP])
+    assert d.outcome is Outcome.NO_OP and d.target_rule.uid == "ra"
+
+
+def test_decide_app_widens_service_when_app_differs():
+    rule = _rule("ra", 5, "Accept", _host("10.1.2.250"), _host("1.1.1.1"), _app({"YouTube"}))
+    d = aa.decide(AccessRequest(["10.1.2.250/32"], ["1.1.1.1/32"], application="Facebook"), [rule, CLEANUP])
+    assert d.outcome is Outcome.WIDEN and d.widen_field == "service"
+
+
+def test_decide_app_review_on_opaque_category():
+    # rule allows an app CATEGORY we can't expand -> we can't tell if Facebook is inside -> REVIEW
+    rule = _rule("ra", 5, "Accept", _host("10.1.2.250"), _host("1.1.1.1"), _app(opaque=True))
+    d = aa.decide(AccessRequest(["10.1.2.250/32"], ["1.1.1.1/32"], application="Facebook"), [rule, CLEANUP])
+    assert d.outcome is Outcome.REVIEW
+
+
+def test_decide_app_create_when_two_dims_differ():
+    rule = _rule("ra", 5, "Accept", _host("10.9.9.9"), _host("2.2.2.2"), _app({"Facebook"}))
+    d = aa.decide(AccessRequest(["10.1.2.250/32"], ["1.1.1.1/32"], application="Facebook"), [rule, CLEANUP])
+    assert d.outcome is Outcome.CREATE
+
+
+def test_execute_app_create_references_app_name_without_creating_it(monkeypatch):
+    calls = []
+    monkeypatch.setattr(aa, "MgmtSession", _fake_session_factory(calls))
+    rule = _rule("ra", 5, "Accept", _host("10.9.9.9"), _host("2.2.2.2"), _app({"Facebook"}))
+    monkeypatch.setattr(aa, "load_layer", lambda s, layer, package=None: [rule, CLEANUP])
+    res = aa.execute(object(), "secret",
+                     AccessRequest(["10.1.2.250/32"], ["1.1.1.1/32"], application="YouTube"), "L", publish=True)
+    assert res["outcome"] == "create" and res["service_object"] == "YouTube"
+    rule_op = next(p for c, p in calls if c == "add-access-rule")
+    assert rule_op["service"] == "YouTube"
+    assert not any(c in ("add-service-tcp", "add-service-udp") for c, _ in calls)   # apps are predefined
+
+
+def test_build_request_and_parse_payload_application():
+    req = tk.build_request("10.1.2.250", "1.1.1.1", "tcp", "", application="Facebook")
+    assert req.application == "Facebook" and req.svc().apps == {"Facebook"}
+    t = tk.parse_payload({"server_id": 1, "layer": "L", "source": "10.1.2.250",
+                          "destination": "1.1.1.1", "application": "YouTube"})
+    assert t.request.application == "YouTube"
 
 
 def test_decide_create_above_cleanup_for_new_dst():

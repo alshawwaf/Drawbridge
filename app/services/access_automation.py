@@ -103,10 +103,15 @@ def relation(req, rule) -> Relation:
 
 @dataclass
 class ServiceSet:
-    """A service cell as proto -> port intervals (plus an 'Any' flag)."""
+    """The 'Services & Applications' cell: port services (proto -> port intervals), application-site
+    names, an 'Any' flag, an 'opaque' flag (an app category/group we can't enumerate), the truly
+    unparsable flag, and the service-group uids it references (for widening)."""
     any: bool = False
     by_proto: dict = field(default_factory=dict)
-    complex: bool = False  # held a service we could not parse (named, >, < ...)
+    apps: set = field(default_factory=set)        # exact application-site names (e.g. {"Facebook"})
+    opaque: bool = False                          # has an app category/group we can't expand
+    complex: bool = False                         # held a service we could not parse (named, >, < ...)
+    group_uids: list = field(default_factory=list)  # service-group uids referenced (widen target)
 
     def covers(self, other: "ServiceSet") -> bool:
         if self.any:
@@ -129,17 +134,44 @@ class ServiceSet:
         return False
 
 
+def _portset_covers(big: dict, small: dict) -> bool:
+    for proto, iv in small.items():
+        mine = big.get(proto)
+        if not mine or not _covers(mine, iv):
+            return False
+    return True
+
+
+def _portset_overlaps(a: dict, b: dict) -> bool:
+    return any(proto in b and _overlaps(b[proto], iv) for proto, iv in a.items())
+
+
 def svc_relation(req: ServiceSet, rule: ServiceSet) -> Relation:
-    if not req.overlaps(rule):
-        return Relation.DISJOINT
-    a, b = rule.covers(req), req.covers(rule)
-    if a and b:
+    """Relate a request's service to a rule's 'Services & Applications' cell. A request is either
+    port-based (by_proto) or application-based (apps); the two kinds are disjoint from each other.
+    An opaque app container in the rule yields OVERLAP for a non-matching app request (uncertain)."""
+    if rule.any and req.any:
         return Relation.EQUAL
-    if a:
-        return Relation.SUBSET
-    if b:
+    if rule.any:
+        return Relation.SUBSET            # a specific request is a subset of Any
+    if req.any:
         return Relation.SUPERSET
-    return Relation.OVERLAP
+    if req.apps:                          # APPLICATION request, e.g. {"Facebook"}
+        if req.apps & rule.apps:
+            exact = rule.apps == req.apps and not rule.by_proto and not rule.opaque
+            return Relation.EQUAL if exact else Relation.SUBSET
+        return Relation.OVERLAP if rule.opaque else Relation.DISJOINT
+    if not rule.by_proto:                 # PORT request vs an apps-only rule -> can't serve a port
+        return Relation.DISJOINT
+    a_in_b = _portset_covers(rule.by_proto, req.by_proto)
+    b_in_a = _portset_covers(req.by_proto, rule.by_proto)
+    if a_in_b and b_in_a:
+        return Relation.EQUAL
+    if a_in_b:
+        return Relation.SUBSET
+    if b_in_a:
+        return Relation.SUPERSET
+    return Relation.OVERLAP if _portset_overlaps(req.by_proto, rule.by_proto) else Relation.DISJOINT
 
 
 # --------------------------------------------------------------------------- #
@@ -149,8 +181,9 @@ def svc_relation(req: ServiceSet, rule: ServiceSet) -> Relation:
 class AccessRequest:
     src_cidrs: list[str]      # e.g. ["192.168.9.9/32"]
     dst_cidrs: list[str]
-    protocol: str             # "tcp" | "udp"
-    ports: str                # "443" or "8000-8100"
+    protocol: str = "tcp"     # "tcp" | "udp" (ignored when `application` is set)
+    ports: str = ""           # "443" or "8000-8100" (ignored when `application` is set)
+    application: Optional[str] = None   # an application-site name (e.g. "Facebook") instead of a port
     action: str = "Accept"
 
     def src_iv(self):
@@ -160,6 +193,8 @@ class AccessRequest:
         return _cidrs_to_iv(self.dst_cidrs)
 
     def svc(self) -> ServiceSet:
+        if self.application:
+            return ServiceSet(apps={self.application})
         return ServiceSet(by_proto={self.protocol.lower(): _ports_to_iv(self.ports)})
 
 
@@ -295,22 +330,29 @@ def _parse_svc(cell, objdict: dict) -> ServiceSet:
     for ref in cell or []:
         o = _deref(ref, objdict)
         t = o.get("type", "")
-        name = (o.get("name") or "").lower()
-        if t == "CpmiAnyObject" or name == "any":
+        name = o.get("name") or ""
+        if t == "CpmiAnyObject" or name.lower() == "any":
             return ServiceSet(any=True)
         if t in ("service-tcp", "service-udp"):
             proto = "tcp" if t.endswith("tcp") else "udp"
             iv = _parse_port(o.get("port", ""))
             if iv is None:
                 s.complex = True
-                continue
-            s.by_proto[proto] = _merge(s.by_proto.get(proto, []) + iv)
-        elif t in ("service-group",):
+            else:
+                s.by_proto[proto] = _merge(s.by_proto.get(proto, []) + iv)
+        elif t == "application-site":
+            s.apps.add(name)
+        elif t in ("application-site-category", "application-site-group"):
+            s.opaque = True                 # can't enumerate which apps it contains
+        elif t == "service-group":
+            s.group_uids.append(o.get("uid", ""))
             sub = _parse_svc(o.get("members", []), objdict)
             if sub.any:
                 return ServiceSet(any=True)
             for proto, iv in sub.by_proto.items():
                 s.by_proto[proto] = _merge(s.by_proto.get(proto, []) + iv)
+            s.apps |= sub.apps
+            s.opaque = s.opaque or sub.opaque
             s.complex = s.complex or sub.complex
         else:
             s.complex = True
@@ -364,6 +406,17 @@ def _dim_covered(rel: Relation) -> bool:
     return rel in (Relation.SUBSET, Relation.EQUAL)
 
 
+def _svc_uncertain(req_svc: ServiceSet, rule_svc: ServiceSet) -> bool:
+    """We can't tell whether a rule's opaque app container (category/group) covers an APPLICATION
+    request that isn't an exact match -> treat that rule as unresolved (route to REVIEW) for this
+    request. Port requests are unaffected (an app container doesn't grant ports)."""
+    if rule_svc.any:
+        return False
+    if req_svc.apps and not (req_svc.apps & rule_svc.apps):
+        return rule_svc.opaque
+    return False
+
+
 def _is_proper_superset(rel_src, rel_dst, rel_svc) -> bool:
     sup = (Relation.SUPERSET, Relation.EQUAL)
     all_equal = rel_src == rel_dst == rel_svc == Relation.EQUAL
@@ -404,15 +457,16 @@ def decide(req: AccessRequest, rules: list[ParsedRule]) -> Decision:
         # whose extent we could not resolve (zone, dynamic-object, negation, unknown service) is never
         # provably disjoint -- so a rule with such a cell stays in the path and routes to REVIEW below.
         # (This is the safety invariant: never reason past a rule whose real reach is unknown.)
+        svc_uncertain = _svc_uncertain(req_svc, r.svc)
         interferes = not (_provably_disjoint(rel_src, r.src_unknown)
                           or _provably_disjoint(rel_dst, r.dst_unknown)
-                          or _provably_disjoint(rel_svc, r.svc_unknown))
+                          or _provably_disjoint(rel_svc, r.svc_unknown or svc_uncertain))
 
-        if r.complex and interferes:
+        if (r.complex or svc_uncertain) and interferes:
             return Decision(
                 Outcome.REVIEW,
-                f"rule {r.number} ({r.name}) uses negation or an unresolved object "
-                f"in the traffic path -- needs human review",
+                f"rule {r.number} ({r.name}) uses negation, an unresolved object, or an application "
+                f"category we can't expand in the traffic path -- needs human review",
                 target_rule=r,
             )
 
@@ -441,19 +495,19 @@ def decide(req: AccessRequest, rules: list[ParsedRule]) -> Decision:
                     target_rule=r,
                 )
 
-        # (2) widen candidate: a reachable ACCEPT that already covers the SERVICE and exactly ONE of
-        # source/destination, differing only in the other -> widen that single dimension. This handles
-        # both "same dst+svc, add the source" and the rule-7.4 case "same src+svc, add the destination".
-        # Prefer a candidate whose widened cell references a GROUP (add the member to the group) over a
-        # bare-cell edit, even if the group-backed one appears later in the (still reachable) scan.
-        if r.is_accept and not r.complex and covering_drop is None and _dim_covered(rel_svc):
-            src_cov, dst_cov = _dim_covered(rel_src), _dim_covered(rel_dst)
-            field = cell_groups = None
-            if dst_cov and not src_cov:
-                field, cell_groups = "source", r.source_group_uids
-            elif src_cov and not dst_cov:
-                field, cell_groups = "destination", r.dest_group_uids
-            if field is not None:
+        # (2) widen candidate: a reachable ACCEPT that already covers exactly TWO of the three
+        # dimensions {source, destination, service} and differs only in the third -> widen that one.
+        # Handles "add the source" (dst+svc match), "add the destination" (src+svc match, rule 7.4) and
+        # "add the service/application" (src+dst match). Prefer a candidate whose widened cell references
+        # a GROUP (add the member to the group) over a bare-cell edit, even if it appears later.
+        if r.is_accept and not r.complex and not svc_uncertain and covering_drop is None:
+            cov = {"source": _dim_covered(rel_src), "destination": _dim_covered(rel_dst),
+                   "service": _dim_covered(rel_svc)}
+            missing = [dim for dim, ok in cov.items() if not ok]
+            if len(missing) == 1:
+                field = missing[0]
+                cell_groups = {"source": r.source_group_uids, "destination": r.dest_group_uids,
+                               "service": r.svc.group_uids}[field]
                 grp = cell_groups[0] if cell_groups else None
                 if widen_target is None or (widen_group is None and grp is not None):
                     widen_target, widen_field, widen_group = r, field, grp
@@ -463,12 +517,13 @@ def decide(req: AccessRequest, rules: list[ParsedRule]) -> Decision:
             lower_anchor = r
 
     if widen_target is not None:
-        covered = "destination + service" if widen_field == "source" else "source + service"
+        others = {"source": "destination + service", "destination": "source + service",
+                  "service": "source + destination"}[widen_field]
         how = (f"add the {widen_field} to the group it references" if widen_group
                else f"add the {widen_field} to the rule")
         return Decision(
             Outcome.WIDEN,
-            f"rule {widen_target.number} ({widen_target.name}) already allows {covered}; {how}",
+            f"rule {widen_target.number} ({widen_target.name}) already allows {others}; {how}",
             target_rule=widen_target, widen_group_uid=widen_group, widen_field=widen_field,
         )
 
@@ -606,6 +661,32 @@ def resolve_service(session, protocol: str, port: str, name_hint: Optional[str] 
     return name
 
 
+def lookup_application(session, name: str) -> bool:
+    """Whether a predefined/custom application-site by this exact name exists (best-effort)."""
+    try:
+        found = session.call("show-objects",
+                             {"filter": name, "type": "application-site", "limit": 5})  # VERIFY
+    except MgmtError:
+        return False
+    return any((o.get("name") or "") == name for o in found.get("objects", []))
+
+
+def _resolve_svc_object(session, req: AccessRequest) -> str:
+    """The object to put in the rule's 'Services & Applications' cell: an application-site referenced by
+    name (predefined; the publish validates it), or a reused/created port service."""
+    if req.application:
+        return req.application
+    return resolve_service(session, req.protocol, req.ports)
+
+
+def _svc_object_preview(session, req: AccessRequest) -> dict:
+    if req.application:
+        return {"name": req.application, "exists": lookup_application(session, req.application),
+                "kind": "application"}
+    ex = lookup_service(session, req.protocol, req.ports)
+    return {"name": ex or f"{req.protocol.upper()}-{req.ports}", "exists": bool(ex), "kind": "service"}
+
+
 def _brief(rule: Optional[ParsedRule]) -> Optional[dict]:
     if not rule:
         return None
@@ -647,15 +728,14 @@ def build_preview(session, decision: Decision, req: AccessRequest, rules: list[P
 
     if decision.outcome == Outcome.WIDEN:
         field = decision.widen_field or "source"
-        cidr = req.src_cidrs[0] if field == "source" else req.dst_cidrs[0]
-        out["widen"] = {"field": field, "group_uid": decision.widen_group_uid, "object": _obj(cidr),
+        obj = (_svc_object_preview(session, req) if field == "service"
+               else _obj(req.src_cidrs[0] if field == "source" else req.dst_cidrs[0]))
+        out["widen"] = {"field": field, "group_uid": decision.widen_group_uid, "object": obj,
                         "via": "group object" if decision.widen_group_uid else f"rule {field} cell"}
     elif decision.outcome == Outcome.CREATE:
         out["source"] = _obj(req.src_cidrs[0])
         out["destination"] = _obj(req.dst_cidrs[0])
-        s_exist = lookup_service(session, req.protocol, req.ports)
-        out["service"] = {"exists": bool(s_exist),
-                          "name": s_exist or f"{req.protocol.upper()}-{req.ports}"}
+        out["service"] = _svc_object_preview(session, req)
         out["position"] = _position_human(decision.position, rules)
         if (decision.position or {}).get("_anomaly"):
             out["anomaly"] = True
@@ -668,8 +748,9 @@ def _apply(session, decision: Decision, req: AccessRequest, layer: str,
 
     if decision.outcome == Outcome.WIDEN:
         field = decision.widen_field or "source"
-        cidr = req.src_cidrs[0] if field == "source" else req.dst_cidrs[0]
-        obj_name = resolve_endpoint(session, cidr)
+        obj_name = (_resolve_svc_object(session, req) if field == "service"
+                    else resolve_endpoint(session, req.src_cidrs[0] if field == "source"
+                                          else req.dst_cidrs[0]))
         out.update(widen_field=field, widen_object=obj_name)
         if decision.widen_group_uid:
             session.call("set-group",
@@ -685,7 +766,7 @@ def _apply(session, decision: Decision, req: AccessRequest, layer: str,
     # CREATE
     src_name = resolve_endpoint(session, req.src_cidrs[0])
     dst_name = resolve_endpoint(session, req.dst_cidrs[0])
-    svc_name = resolve_service(session, req.protocol, req.ports)
+    svc_name = _resolve_svc_object(session, req)
     payload = {
         "layer": layer,
         "position": _position_payload(decision.position or {}),
