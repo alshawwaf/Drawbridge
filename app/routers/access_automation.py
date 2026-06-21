@@ -1,0 +1,187 @@
+"""Ticket-driven access automation: turn an access request into the minimal correct change on a
+Check Point access layer (no-op / widen / create), over the ``web_api``.
+
+Three surfaces, all reusing the saved Management Server profiles + encrypted secret:
+  * the UI request form (preview, then dry-run validate or publish),
+  * JSON preview / apply endpoints the form calls,
+  * a token-authenticated ServiceNow webhook for end-to-end automation.
+
+The decision engine + API call sequence live in ``services.access_automation``; payload parsing and
+the optional write-back in ``services.ticketing``. Approvals are out of scope (your ITSM owns them).
+"""
+import hmac
+
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from pydantic import BaseModel
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from ..config import get_settings
+from ..db import get_db
+from ..models import ManagementServer, User
+from ..security import get_user_or_none
+from ..services import access_automation as aa
+from ..services import mgmt_creds, ticketing
+from ..services.gaia_client import ensure_pinned
+from .ui import _pop_flash, templates
+
+router = APIRouter(include_in_schema=False)
+
+
+class AccessReqBody(BaseModel):
+    layer: str
+    source: str
+    destination: str
+    protocol: str = "tcp"
+    port: str
+    ticket_id: str = ""
+    publish: bool = False
+    package: str | None = None
+
+
+def _owned(db: Session, sid: int, user: User) -> ManagementServer:
+    ms = db.get(ManagementServer, sid)
+    if ms is None or ms.owner_id != user.id:
+        raise HTTPException(status_code=404, detail="Management server not found")
+    return ms
+
+
+def _secret_or_error(db: Session, ms: ManagementServer):
+    """Resolve the stored secret for a live call, or a JSONResponse error if it can't run."""
+    if not ms.username:
+        return None, JSONResponse({"error": "This server has no username — set one on Edit."},
+                                  status_code=400)
+    secret = mgmt_creds.get_secret(db, ms)
+    if not secret:
+        return None, JSONResponse({"error": "No saved credential — store one on the Edit page to run "
+                                  "access automation."}, status_code=400)
+    ensure_pinned(db, ms)   # trust-on-first-use before the TLS handshake
+    return secret, None
+
+
+# --- UI -------------------------------------------------------------------------------------
+@router.get("/access-automation", response_class=HTMLResponse)
+def aa_list(request: Request, db: Session = Depends(get_db)):
+    user = get_user_or_none(request, db)
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+    servers = db.scalars(
+        select(ManagementServer).where(ManagementServer.owner_id == user.id)
+        .order_by(ManagementServer.created_at.desc())
+    ).all()
+    rows = [{"ms": m, "has_secret": mgmt_creds.has_secret(db, m)} for m in servers]
+    return templates.TemplateResponse(request, "access_automation_list.html",
+                                      {"rows": rows, "flash": _pop_flash(request)})
+
+
+@router.get("/access-automation/{sid}", response_class=HTMLResponse)
+def aa_detail(sid: int, request: Request, db: Session = Depends(get_db)):
+    user = get_user_or_none(request, db)
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+    ms = _owned(db, sid, user)
+    return templates.TemplateResponse(request, "access_automation_detail.html",
+                                      {"ms": ms, "has_secret": mgmt_creds.has_secret(db, ms),
+                                       "flash": _pop_flash(request)})
+
+
+def _run(db: Session, sid: int, user: User, body: AccessReqBody, *, do_apply: bool):
+    ms = _owned(db, sid, user)
+    secret, err = _secret_or_error(db, ms)
+    if err:
+        return err
+    try:
+        req = ticketing.build_request(body.source, body.destination, body.protocol, body.port)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    if not body.layer:
+        return JSONResponse({"error": "No layer specified."}, status_code=400)
+    if do_apply:
+        result = aa.execute(ms, secret, req, body.layer, package=body.package,
+                            ticket_id=body.ticket_id, publish=body.publish)
+    else:
+        result = aa.preview(ms, secret, req, body.layer, package=body.package)
+    code = 200 if result.get("ok") else 400
+    return JSONResponse(result, status_code=code)
+
+
+@router.post("/access-automation/{sid}/preview")
+def aa_preview(sid: int, body: AccessReqBody, request: Request, db: Session = Depends(get_db)):
+    """JSON: load → decide → describe what would happen. Read-only, commits nothing."""
+    user = get_user_or_none(request, db)
+    if user is None:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    return _run(db, sid, user, body, do_apply=False)
+
+
+@router.post("/access-automation/{sid}/apply")
+def aa_apply(sid: int, body: AccessReqBody, request: Request, db: Session = Depends(get_db)):
+    """JSON: apply the change. ``publish:false`` validates then discards (zero commit);
+    ``publish:true`` commits it."""
+    user = get_user_or_none(request, db)
+    if user is None:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    return _run(db, sid, user, body, do_apply=True)
+
+
+# --- Generic ticketing webhook (no portal session; authenticated by a shared token) ----------
+def _allowed_server_ids() -> set:
+    """Optional allowlist (DCSIM_WEBHOOK_SERVER_IDS, comma-separated). Empty = every saved server."""
+    raw = (get_settings().webhook_server_ids or "").replace(" ", "")
+    return {int(p) for p in raw.split(",") if p.isdigit()}
+
+
+@router.post("/access-automation/webhook")
+async def aa_webhook(request: Request, db: Session = Depends(get_db)):
+    """End-to-end automation for ANY ticketing system (ServiceNow, Jira, Remedy, a custom portal,
+    curl …): the caller POSTs an access request → we decide + (optionally) apply → return the result
+    JSON, and push it back via the caller's ``callback_url`` or the built-in ServiceNow adapter.
+
+    Auth: the shared secret DCSIM_WEBHOOK_TOKEN must arrive as the X-DCSim-Token header. If the token
+    is unset the webhook is DISABLED (503) — it never runs unauthenticated. The token grants policy
+    publish on every allowed management server, so treat it as a top-tier secret; optionally scope it
+    with DCSIM_WEBHOOK_SERVER_IDS."""
+    token = get_settings().webhook_token
+    if not token:
+        return JSONResponse({"error": "Webhook disabled — set DCSIM_WEBHOOK_TOKEN to enable it."},
+                            status_code=503)
+    if not hmac.compare_digest(request.headers.get("x-dcsim-token", ""), token):
+        return JSONResponse({"error": "Invalid or missing X-DCSim-Token."}, status_code=401)
+
+    try:
+        data = await request.json()
+    except Exception:  # noqa: BLE001
+        return JSONResponse({"error": "Body must be JSON."}, status_code=400)
+    try:
+        ticket = ticketing.parse_payload(data)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+
+    allow = _allowed_server_ids()
+    if allow and ticket.server_id not in allow:
+        return JSONResponse({"error": f"server_id {ticket.server_id} is not in the webhook allowlist."},
+                            status_code=403)
+
+    ms = db.get(ManagementServer, ticket.server_id)
+    if ms is None:
+        return JSONResponse({"error": f"Management server {ticket.server_id} not found."},
+                            status_code=404)
+    if not ms.username:
+        return JSONResponse({"error": "Target server has no username configured."}, status_code=400)
+    secret = mgmt_creds.get_secret(db, ms)
+    if not secret:
+        return JSONResponse({"error": "Target server has no stored credential."}, status_code=400)
+    ensure_pinned(db, ms)
+
+    if ticket.apply:
+        result = aa.execute(ms, secret, ticket.request, ticket.layer, package=ticket.package,
+                            ticket_id=ticket.ticket_id, publish=True)
+    else:
+        result = aa.preview(ms, secret, ticket.request, ticket.layer, package=ticket.package)
+
+    # Push the result back to the originating system (generic callback_url, or the ServiceNow adapter).
+    callback = ticketing.notify(ticket, result)
+    return JSONResponse({"ticket_id": ticket.ticket_id, "applied": ticket.apply,
+                         "result": result, "callback": callback},
+                        status_code=200 if result.get("ok") else 400)

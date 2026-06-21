@@ -1,0 +1,270 @@
+{% extends "base.html" %}
+{% block title %}{{ ms.name }} — access automation{% endblock %}
+{% block main_class %}wide{% endblock %}
+{% block content %}
+<div class="row" style="align-items:flex-start;">
+  <div class="grow">
+    <h1>{{ ms.name }} <span class="pill">Access automation</span></h1>
+    <p class="muted"><code>{{ ms.host }}:{{ ms.port }}</code>{% if ms.domain %} · domain <b>{{ ms.domain }}</b>{% endif %} · decided + applied live over the <code>web_api</code>.</p>
+  </div>
+  <a class="btn secondary" href="/access-automation">← All servers</a>
+</div>
+
+{% if not has_secret %}
+<div class="card"><p class="muted">No saved credential on this server, so access automation can't run. <a href="/management/{{ ms.id }}/edit">Add a password on Edit</a> (stored encrypted), then return here.</p></div>
+{% else %}
+<div class="card" id="aa" data-id="{{ ms.id }}">
+  <div class="row endalign">
+    <div style="min-width:240px;">
+      <label>Access layer
+        <select id="aa-layer"><option>Loading layers…</option></select></label>
+    </div>
+    <div class="grow"><label>Ticket id <span class="muted">(optional)</span>
+      <input id="aa-ticket" placeholder="INC0012345"></label></div>
+  </div>
+  <div class="row endalign">
+    <div class="grow"><label>Source <span class="muted">(ip or cidr)</span>
+      <input id="aa-source" placeholder="192.168.9.9"></label></div>
+    <div class="grow"><label>Destination <span class="muted">(ip or cidr)</span>
+      <input id="aa-dest" placeholder="172.16.5.10"></label></div>
+    <div style="width:110px;"><label>Protocol
+      <select id="aa-proto"><option value="tcp">tcp</option><option value="udp">udp</option></select></label></div>
+    <div style="width:130px;"><label>Port <span class="muted">(or range)</span>
+      <input id="aa-port" placeholder="443"></label></div>
+  </div>
+  <div class="row" style="margin-top:14px; gap:8px;">
+    <button type="button" class="btn" id="aa-preview">Preview decision</button>
+    <button type="button" class="btn secondary" id="aa-validate" disabled>Dry-run apply (validate)</button>
+    <button type="button" class="btn" id="aa-publish" disabled>Apply &amp; publish</button>
+  </div>
+  <div id="aa-confirm" hidden class="err" style="margin-top:12px; padding:10px 12px;">
+    This writes to <b>live policy</b> on <code>{{ ms.host }}</code> and publishes — it can't be undone here.
+    <div style="margin-top:8px;"><button type="button" class="btn" id="aa-confirm-yes">Confirm publish</button>
+      <button type="button" class="copybtn" id="aa-confirm-no" style="margin-left:6px;">Cancel</button></div>
+  </div>
+  <div id="aa-result" style="margin-top:16px;"></div>
+</div>
+
+<div class="card">
+  <details>
+    <summary>Ticketing webhook (any ITSM — end-to-end automation)</summary>
+    <p class="muted" style="margin-top:10px;">Point any system that can POST JSON at the endpoint below — ServiceNow, Jira, Remedy, Freshservice, or a custom portal. Set <code>DCSIM_WEBHOOK_TOKEN</code> and send it as <code>X-DCSim-Token</code>; the webhook is disabled until that token is set. Field names are flexible (common <code>u_*</code> / <code>number</code> / Jira <code>key</code> aliases are accepted). With <code>"apply": true</code> it applies + publishes. The result is returned synchronously; to push it back, add an optional <code>"callback_url"</code> (we POST the result there) or configure the built-in ServiceNow write-back (<code>DCSIM_SERVICENOW_*</code>).</p>
+    <pre id="aa-curl">POST {{ request.base_url }}access-automation/webhook
+X-DCSim-Token: &lt;your token&gt;
+Content-Type: application/json
+
+{
+  "ticket_id": "INC0012345",
+  "server_id": {{ ms.id }},
+  "layer": "&lt;layer name&gt;",
+  "source": "192.168.9.9",
+  "destination": "172.16.5.10",
+  "protocol": "tcp",
+  "port": "443",
+  "apply": false,
+  "callback_url": "https://itsm.example/api/result"
+}</pre>
+    <button type="button" class="copybtn" data-copy-from="#aa-curl">Copy</button>
+  </details>
+</div>
+{% endif %}
+
+<div class="card">
+  <h2 style="margin-top:0;">How it decides — behind the scenes</h2>
+  <p class="muted" style="margin-top:4px;">Every request runs the same first-match decision tree the market leaders use. It reuses a rule that already permits the traffic, widens one that almost does, creates a least-privilege rule only when nothing covers it — and refuses to touch policy it can’t safely reason about.</p>
+  <svg id="aa-flow" viewBox="0 0 660 416" width="100%" role="img" aria-label="Access automation decision flow" style="max-width:660px;display:block;margin:10px auto 0;">
+    <style>
+      #aa-flow text{font-family:Inter,system-ui,sans-serif;dominant-baseline:middle;}
+      #aa-flow .t{font-size:13px;font-weight:600;fill:var(--text);}
+      #aa-flow .s{font-size:11px;fill:var(--muted);}
+      #aa-flow .lbl{font-size:10px;font-weight:700;fill:var(--faint);letter-spacing:.3px;}
+      #aa-flow .box{stroke-width:1;fill:var(--surface-2);stroke:var(--line);}
+      #aa-flow .dec{fill:var(--surface-3);stroke:var(--line-strong);}
+      #aa-flow .arr{stroke:var(--line-strong);stroke-width:1.5;fill:none;}
+      #aa-flow .o-ok{fill:var(--ok-bg);stroke:var(--ok-line);} #aa-flow .c-ok{fill:var(--ok);}
+      #aa-flow .o-info{fill:var(--info-bg);stroke:var(--info);} #aa-flow .c-info{fill:var(--info);}
+      #aa-flow .o-warn{fill:var(--warn-bg);stroke:var(--warn);} #aa-flow .c-warn{fill:var(--warn);}
+      #aa-flow .o-bad{fill:var(--danger-bg);stroke:var(--danger-line);} #aa-flow .c-bad{fill:var(--danger);}
+    </style>
+    <defs><marker id="aa-ar" markerWidth="9" markerHeight="9" refX="6" refY="4" orient="auto"><path d="M1,1 L6.5,4 L1,7" fill="none" stroke="var(--line-strong)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+
+    <line class="arr" x1="149" y1="68"  x2="149" y2="86"  marker-end="url(#aa-ar)"/>
+    <line class="arr" x1="149" y1="132" x2="149" y2="150" marker-end="url(#aa-ar)"/>
+    <line class="arr" x1="149" y1="196" x2="149" y2="214" marker-end="url(#aa-ar)"/>
+    <line class="arr" x1="149" y1="260" x2="149" y2="278" marker-end="url(#aa-ar)"/>
+    <line class="arr" x1="149" y1="324" x2="149" y2="352" marker-end="url(#aa-ar)"/>
+    <line class="arr" x1="274" y1="173" x2="388" y2="173" marker-end="url(#aa-ar)"/>
+    <line class="arr" x1="274" y1="237" x2="388" y2="237" marker-end="url(#aa-ar)"/>
+    <line class="arr" x1="274" y1="301" x2="388" y2="301" marker-end="url(#aa-ar)"/>
+    <text class="lbl" x="322" y="165" text-anchor="middle">YES</text>
+    <text class="lbl" x="322" y="229" text-anchor="middle">YES</text>
+    <text class="lbl" x="322" y="293" text-anchor="middle">YES</text>
+    <text class="lbl" x="156" y="205" text-anchor="start">no</text>
+    <text class="lbl" x="156" y="269" text-anchor="start">no</text>
+    <text class="lbl" x="156" y="338" text-anchor="start">no</text>
+
+    <rect class="box" x="24" y="22" width="250" height="46" rx="8"/>
+    <text class="t" x="149" y="39" text-anchor="middle">Access request</text>
+    <text class="s" x="149" y="55" text-anchor="middle">source · destination · service</text>
+
+    <rect class="box" x="24" y="86" width="250" height="46" rx="8"/>
+    <text class="t" x="149" y="103" text-anchor="middle">Resolve objects + service</text>
+    <text class="s" x="149" y="119" text-anchor="middle">reuse by IP / port, else create</text>
+
+    <rect class="box dec" x="24" y="150" width="250" height="46" rx="8"/>
+    <text class="t" x="149" y="167" text-anchor="middle">Already permitted?</text>
+    <text class="s" x="149" y="183" text-anchor="middle">first-match, top-down</text>
+
+    <rect class="box dec" x="24" y="214" width="250" height="46" rx="8"/>
+    <text class="t" x="149" y="231" text-anchor="middle">Denied or unresolved in path?</text>
+    <text class="s" x="149" y="247" text-anchor="middle">explicit drop / zone / negation</text>
+
+    <rect class="box dec" x="24" y="278" width="250" height="46" rx="8"/>
+    <text class="t" x="149" y="295" text-anchor="middle">Covers dst + svc, src differs?</text>
+    <text class="s" x="149" y="311" text-anchor="middle">widen candidate</text>
+
+    <rect class="box o-warn" x="24" y="352" width="250" height="46" rx="8"/>
+    <text class="t c-warn" x="149" y="369" text-anchor="middle">Create least-privilege rule</text>
+    <text class="s" x="149" y="385" text-anchor="middle">above cleanup / blocking drop</text>
+
+    <rect class="box o-ok" x="388" y="150" width="248" height="46" rx="8"/>
+    <text class="t c-ok" x="512" y="167" text-anchor="middle">No-op</text>
+    <text class="s" x="512" y="183" text-anchor="middle">already allowed — attach rule</text>
+
+    <rect class="box o-bad" x="388" y="214" width="248" height="46" rx="8"/>
+    <text class="t c-bad" x="512" y="231" text-anchor="middle">Review</text>
+    <text class="s" x="512" y="247" text-anchor="middle">flagged for a human</text>
+
+    <rect class="box o-info" x="388" y="278" width="248" height="46" rx="8"/>
+    <text class="t c-info" x="512" y="295" text-anchor="middle">Widen the rule</text>
+    <text class="s" x="512" y="311" text-anchor="middle">add to group / source cell</text>
+  </svg>
+  <div class="row" style="gap:8px;margin-top:14px;flex-wrap:wrap;justify-content:center;">
+    <span class="pill ok">No-op · already allowed</span>
+    <span class="pill" style="background:var(--info-bg);color:var(--info);">Widen · extend a rule</span>
+    <span class="pill" style="background:var(--warn-bg);color:var(--warn);">Create · new rule</span>
+    <span class="pill bad">Review · a human decides</span>
+  </div>
+</div>
+
+<script>
+  (function () {
+    var root = document.getElementById('aa');
+    if (!root) return;
+    var id = root.getAttribute('data-id');
+    var layerSel = document.getElementById('aa-layer');
+    var result = document.getElementById('aa-result');
+    var btnPreview = document.getElementById('aa-preview');
+    var btnValidate = document.getElementById('aa-validate');
+    var btnPublish = document.getElementById('aa-publish');
+    var confirmBox = document.getElementById('aa-confirm');
+    var lastActionable = false;
+
+    function esc(s) { var d = document.createElement('div'); d.textContent = (s == null ? '' : s); return d.innerHTML; }
+    function body() {
+      return {
+        layer: layerSel.value || '',
+        source: document.getElementById('aa-source').value.trim(),
+        destination: document.getElementById('aa-dest').value.trim(),
+        protocol: document.getElementById('aa-proto').value,
+        port: document.getElementById('aa-port').value.trim(),
+        ticket_id: document.getElementById('aa-ticket').value.trim()
+      };
+    }
+    function outcomeBadge(o) {
+      var map = {
+        no_op:  ['no-op',  'var(--ok-bg)',     'var(--ok)'],
+        widen:  ['widen',  'var(--info-bg)',   'var(--info)'],
+        create: ['create', 'var(--warn-bg)',   'var(--warn)'],
+        review: ['review', 'var(--danger-bg)', 'var(--danger)']
+      };
+      var m = map[o] || ['?', 'var(--chip-bg)', 'var(--chip-fg)'];
+      return '<span class="pill" style="background:' + m[1] + ';color:' + m[2] + ';font-size:12px;">' + m[0] + '</span>';
+    }
+    function objLine(label, obj) {
+      if (!obj) return '';
+      var verb = obj.exists ? '<span class="pill ok">reuse</span>' : '<span class="pill" style="background:var(--warn-bg);color:var(--warn);">create</span>';
+      return '<tr><td class="nowrap"><b>' + label + '</b></td><td>' + verb +
+             ' <code>' + esc(obj.name) + '</code>' + (obj.ip ? ' <span class="muted">(' + esc(obj.ip) + ')</span>' : '') + '</td></tr>';
+    }
+    function traceBlock(trace) {
+      if (!trace || !trace.length) return '';
+      var rows = trace.map(function (t) {
+        return '<tr><td class="nowrap"><code>' + esc(t.command) + '</code></td><td class="act-num">' +
+               esc(t.status) + '</td><td class="act-num">' + esc(t.ms) + ' ms</td></tr>';
+      }).join('');
+      return '<details style="margin-top:12px;"><summary>web_api calls (' + trace.length + ')</summary>' +
+             '<table class="acttable"><tbody>' + rows + '</tbody></table></details>';
+    }
+    function render(j, mode) {
+      if (!j.ok) { result.innerHTML = '<div class="err">' + esc(j.error || 'Failed.') + '</div>'; setActionable(false); return; }
+      var h = '<div class="runbox">';
+      h += '<div class="row" style="align-items:center; gap:10px;">' + outcomeBadge(j.outcome) +
+           '<span>' + esc(j.reason) + '</span></div>';
+      if (j.anomaly) h += '<div class="err-inline">Heads-up: an existing ordering anomaly was detected near the insert point — review placement.</div>';
+
+      var rows = '';
+      // preview shape (source/destination/service objects) and apply shape (source_object/…)
+      rows += objLine('Source', j.source);
+      rows += objLine('Destination', j.destination);
+      if (j.service) rows += objLine('Service', j.service);
+      if (j.source_object) rows += '<tr><td class="nowrap"><b>Source</b></td><td><code>' + esc(j.source_object) + '</code></td></tr>';
+      if (j.destination_object) rows += '<tr><td class="nowrap"><b>Destination</b></td><td><code>' + esc(j.destination_object) + '</code></td></tr>';
+      if (j.service_object) rows += '<tr><td class="nowrap"><b>Service</b></td><td><code>' + esc(j.service_object) + '</code></td></tr>';
+      if (j.widen) rows += '<tr><td class="nowrap"><b>Widen via</b></td><td>' + esc(j.widen.via) + '</td></tr>';
+      if (j.position) rows += '<tr><td class="nowrap"><b>Position</b></td><td>' + esc(j.position) + '</td></tr>';
+      if (j.target_rule) rows += '<tr><td class="nowrap"><b>Anchor rule</b></td><td>#' + esc(j.target_rule.number) + ' ' + esc(j.target_rule.name) + '</td></tr>';
+      if (rows) h += '<table class="acttable" style="margin-top:10px;"><tbody>' + rows + '</tbody></table>';
+
+      if (mode !== 'preview') {
+        if (j.published) h += '<div class="ok" style="margin-top:12px;">✓ Published to the SMS.</div>';
+        else if (j.applied) h += '<div class="ok" style="margin-top:12px;">✓ Dry-run OK — the SMS accepted the change, then discarded it (nothing committed).</div>';
+        else h += '<div class="muted" style="margin-top:12px;">No change applied.</div>';
+        if (j.ops && j.ops.length) h += '<p class="muted" style="margin-top:8px;">ops: <code>' + j.ops.map(esc).join('</code>, <code>') + '</code></p>';
+      }
+      h += traceBlock(j.trace) + '</div>';
+      result.innerHTML = h;
+
+      var actionable = (j.outcome === 'widen' || j.outcome === 'create');
+      setActionable((mode === 'preview' || mode === 'validate') && actionable);
+      if (mode === 'publish' && j.published) setActionable(false);
+    }
+    function setActionable(on) {
+      lastActionable = on;
+      btnValidate.disabled = !on;
+      btnPublish.disabled = !on;
+      if (!on) confirmBox.hidden = true;
+    }
+    function call(path, mode, publish) {
+      var b = body();
+      if (!b.layer) { result.innerHTML = '<div class="err">Pick a layer first.</div>'; return; }
+      if (!b.source || !b.destination || !b.port) { result.innerHTML = '<div class="err">Source, destination and port are required.</div>'; return; }
+      if (publish !== undefined) b.publish = publish;
+      result.innerHTML = '<p class="muted">' + (mode === 'preview' ? 'Evaluating over web_api…' : (publish ? 'Publishing…' : 'Validating…')) + '</p>';
+      fetch('/access-automation/' + id + '/' + path, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b)
+      }).then(function (r) { return r.json(); }).then(function (j) { render(j, mode); })
+        .catch(function () { result.innerHTML = '<div class="err">Request failed.</div>'; });
+    }
+    btnPreview.addEventListener('click', function () { confirmBox.hidden = true; call('preview', 'preview'); });
+    btnValidate.addEventListener('click', function () { confirmBox.hidden = true; call('apply', 'validate', false); });
+    btnPublish.addEventListener('click', function () { if (lastActionable) confirmBox.hidden = false; });
+    document.getElementById('aa-confirm-no').addEventListener('click', function () { confirmBox.hidden = true; });
+    document.getElementById('aa-confirm-yes').addEventListener('click', function () { confirmBox.hidden = true; call('apply', 'publish', true); });
+
+    // Re-preview (and lock apply) whenever an input changes, so apply always matches what's shown.
+    ['aa-layer', 'aa-source', 'aa-dest', 'aa-proto', 'aa-port', 'aa-ticket'].forEach(function (eid) {
+      document.getElementById(eid).addEventListener('change', function () { setActionable(false); });
+    });
+
+    fetch('/management/' + id + '/layers').then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (data.error) { layerSel.innerHTML = '<option>' + esc(data.error) + '</option>'; return; }
+        var layers = data.layers || [];
+        if (!layers.length) { layerSel.innerHTML = '<option>No access layers found</option>'; return; }
+        layerSel.innerHTML = layers.map(function (l) { return '<option>' + esc(l.name) + '</option>'; }).join('');
+      })
+      .catch(function () { layerSel.innerHTML = '<option>Failed to load layers</option>'; });
+  })();
+</script>
+{% endblock %}
