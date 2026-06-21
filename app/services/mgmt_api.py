@@ -329,8 +329,10 @@ class _PooledRead:
 
 
 def _pool_key(server):
-    return (getattr(server, "id", None) or f"{server.host}:{server.port}",
-            (getattr(server, "domain", "") or "").strip())
+    sid = getattr(server, "id", None)
+    if sid is None:
+        sid = f"{getattr(server, 'host', '')}:{getattr(server, 'port', '')}"
+    return (sid, (getattr(server, "domain", "") or "").strip())
 
 
 @contextlib.contextmanager
@@ -474,6 +476,100 @@ def _structure_rulebase(items: list[dict], objdict: dict) -> list[dict]:
     return out
 
 
+# --- revision-based policy cache -------------------------------------------------------------
+# Stop re-pulling the whole rulebase + objects on every read. Cache the raw pull per (server, domain,
+# layer, package) and reuse it while the policy is UNCHANGED. The change signal is the latest published
+# session (a database revision) -- cheap to fetch and authoritative; last-modify-time is unreliable on
+# publish, so we never use it. Within a short "revalidate" window we serve the cache without even
+# asking. Our own publishes call invalidate_cache().
+_RAW_CACHE: dict = {}
+_RAW_LOCK = threading.Lock()
+
+
+def _policy_token(session: "MgmtSession") -> str:
+    """The latest published-session uid + publish-time: a monotonic, server-authoritative handle for
+    the policy revision. Empty string when unavailable (then the cache simply always re-pulls)."""
+    try:
+        r = session.call("show-sessions", {"view-published-sessions": True, "limit": 1,
+                                            "details-level": "full"})
+    except MgmtError:
+        return ""
+    rows = r.get("objects") or r.get("sessions") or []
+    if not rows:
+        return ""
+    top = rows[0] or {}
+    pub = top.get("publish-time")
+    stamp = pub.get("posix") if isinstance(pub, dict) else pub
+    return f"{top.get('uid', '')}:{stamp or ''}"
+
+
+def _raw_pull(session: "MgmtSession", layer: str, package, max_rules: int) -> dict:
+    items: list[dict] = []
+    objdict: dict = {}
+    total, offset = 0, 0
+    while offset < max_rules:
+        payload = {"name": layer, "limit": 100, "offset": offset,
+                   "use-object-dictionary": True, "details-level": "full"}
+        if package:
+            payload["package"] = package
+        page = session.call("show-access-rulebase", payload)
+        for o in page.get("objects-dictionary", []):
+            if o.get("uid"):
+                objdict[o["uid"]] = o
+        batch = page.get("rulebase", [])
+        items.extend(batch)
+        total = page.get("total", total)
+        to = page.get("to", 0)
+        if not batch or to >= total or to <= offset:
+            break
+        offset = to
+    return {"items": items, "objdict": objdict, "total": total}
+
+
+def cached_raw(session: "MgmtSession", server, layer: str, package=None, max_rules: int = 5000) -> dict:
+    """Raw rulebase pull for ``layer`` ({items, objdict, total, cached}), reusing a process cache that is
+    invalidated by the published-revision token. ``session`` is an already-open read session."""
+    from . import app_settings
+    if not app_settings.get("mgmt_policy_cache"):
+        return {**_raw_pull(session, layer, package, max_rules), "cached": False}
+    key = (_pool_key(server), layer, package or "")
+    now = time.monotonic()
+
+    def _hit(e):
+        return {"items": e["items"], "objdict": e["objdict"], "total": e["total"], "cached": True}
+
+    with _RAW_LOCK:
+        entry = _RAW_CACHE.get(key)
+    token = None
+    if entry is not None:
+        if (now - entry["at"]) < app_settings.get("mgmt_cache_revalidate"):
+            return _hit(entry)                       # within revalidate window -> don't even ask
+        token = _policy_token(session)
+        if (token and token == entry["token"]
+                and (now - entry["at"]) < app_settings.get("mgmt_cache_max_age")):
+            with _RAW_LOCK:
+                entry["at"] = now                    # unchanged since last publish -> serve cache
+            return _hit(entry)
+
+    raw = _raw_pull(session, layer, package, max_rules)
+    if token is None:
+        token = _policy_token(session)               # cold pull: capture token for future compares
+    with _RAW_LOCK:
+        _RAW_CACHE[key] = {**raw, "token": token, "at": now}
+    return {**raw, "cached": False}
+
+
+def invalidate_cache(server=None) -> None:
+    """Drop cached policy (all, or just one server's) — call after a publish so the next read re-pulls."""
+    with _RAW_LOCK:
+        if server is None:
+            _RAW_CACHE.clear()
+            return
+        pk = _pool_key(server)
+        for k in [k for k in _RAW_CACHE if k[0] == pk]:
+            _RAW_CACHE.pop(k, None)
+
+
 def pull_layers(server, secret: str) -> dict:
     with read_session(server, secret) as s:
         layers = s.list_access_layers()
@@ -481,28 +577,14 @@ def pull_layers(server, secret: str) -> dict:
 
 
 def pull_rulebase(server, secret: str, layer: str, max_rules: int = 5000) -> dict:
-    """Pull a layer's access rulebase with its object dictionary, paginating, and resolve every cell
-    to names. Returns {layer, rows, total, shown, trace}."""
+    """Pull a layer's access rulebase with its object dictionary and resolve every cell to names. Uses
+    the revision-based policy cache. Returns {layer, rows, total, shown, cached, trace}."""
     with read_session(server, secret) as s:
-        items: list[dict] = []
-        objdict: dict = {}
-        total, offset = 0, 0
-        while offset < max_rules:
-            page = s.call("show-access-rulebase",
-                          {"name": layer, "limit": 100, "offset": offset, "use-object-dictionary": True})
-            for o in page.get("objects-dictionary", []):
-                if o.get("uid"):
-                    objdict[o["uid"]] = o
-            batch = page.get("rulebase", [])
-            items.extend(batch)
-            total = page.get("total", total)
-            to = page.get("to", 0)
-            if not batch or to >= total or to <= offset:
-                break
-            offset = to
-        rows = _structure_rulebase(items, objdict)
+        raw = cached_raw(s, server, layer, max_rules=max_rules)
+        rows = _structure_rulebase(raw["items"], raw["objdict"])
         shown = sum(1 for r in rows if r["kind"] == "rule")
-        return {"layer": layer, "rows": rows, "total": total, "shown": shown, "trace": s.trace}
+        return {"layer": layer, "rows": rows, "total": raw["total"], "shown": shown,
+                "cached": raw["cached"], "trace": s.trace}
 
 
 def _collect_export_objects(objdict: dict) -> dict:
@@ -536,26 +618,11 @@ def pull_for_export(server, secret: str, layer: str, max_rules: int = 5000) -> d
     """Pull a layer's rulebase with FULL object details, returning the structured rows plus the
     referenced objects grouped by type. Feeds ``mgmt_export.generate`` — no rendering here."""
     with read_session(server, secret) as s:
-        items: list[dict] = []
-        objdict: dict = {}
-        total, offset = 0, 0
-        while offset < max_rules:
-            page = s.call("show-access-rulebase",
-                          {"name": layer, "limit": 100, "offset": offset,
-                           "use-object-dictionary": True, "details-level": "full"})
-            for o in page.get("objects-dictionary", []):
-                if o.get("uid"):
-                    objdict[o["uid"]] = o
-            batch = page.get("rulebase", [])
-            items.extend(batch)
-            total = page.get("total", total)
-            to = page.get("to", 0)
-            if not batch or to >= total or to <= offset:
-                break
-            offset = to
-        rows = _structure_rulebase(items, objdict)
-        return {"layer": layer, "rules": rows, "objects_by_type": _collect_export_objects(objdict),
-                "total": total, "trace": s.trace}
+        raw = cached_raw(s, server, layer, max_rules=max_rules)
+        rows = _structure_rulebase(raw["items"], raw["objdict"])
+        return {"layer": layer, "rules": rows,
+                "objects_by_type": _collect_export_objects(raw["objdict"]),
+                "total": raw["total"], "cached": raw["cached"], "trace": s.trace}
 
 
 def test_connection(server, secret: str) -> dict:

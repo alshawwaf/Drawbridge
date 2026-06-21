@@ -42,10 +42,10 @@ from enum import Enum
 from typing import Optional
 
 try:  # keep the engine import-safe outside the app runtime (offline smoke test)
-    from .mgmt_api import MgmtError, MgmtSession, read_session
+    from .mgmt_api import (MgmtError, MgmtSession, cached_raw, invalidate_cache, read_session)
 except Exception:  # pragma: no cover
     MgmtSession = object  # type: ignore
-    read_session = None  # type: ignore
+    read_session = cached_raw = invalidate_cache = None  # type: ignore
 
     class MgmtError(Exception):
         pass
@@ -935,13 +935,22 @@ def _apply(session, decision: Decision, req: AccessRequest, layer: str,
 # --------------------------------------------------------------------------- #
 # Top-level entry points the router / webhook call
 # --------------------------------------------------------------------------- #
+def load_layer_cached(session, server, layer: str, package: Optional[str] = None):
+    """Parsed rules for ``layer`` via the revision-based policy cache. Returns (rules, cached)."""
+    raw = cached_raw(session, server, layer, package=package)
+    rules = [_parse_rule(e, raw["objdict"]) for e in _flatten(raw["items"])
+             if e.get("type") == "access-rule"]
+    return rules, bool(raw.get("cached"))
+
+
 def preview(server, secret, req: AccessRequest, layer: str, *, package: Optional[str] = None) -> dict:
-    """Read-only: load -> decide -> describe. Returns {ok, outcome, reason, ..., trace}."""
+    """Read-only: load (cached) -> decide -> describe. Returns {ok, outcome, reason, cached, …, trace}."""
     try:
         with read_session(server, secret) as s:          # read-only, pooled — no login per preview
-            rules = load_layer(s, layer, package)
+            rules, cached = load_layer_cached(s, server, layer, package)
             decision = decide(req, rules)
-            return {"ok": True, **build_preview(s, decision, req, rules), "trace": s.trace}
+            out = build_preview(s, decision, req, rules)
+            return {"ok": True, **out, "cached": cached, "trace": s.trace}
     except MgmtError as exc:
         return {"ok": False, "error": str(exc)}
 
@@ -966,6 +975,7 @@ def execute(server, secret, req: AccessRequest, layer: str, *, package: Optional
                 applied = _apply(s, decision, req, layer, rules, ticket_id)
                 if publish:
                     s.publish()
+                    invalidate_cache(server)   # our change advanced the revision -> drop the read cache
                 else:
                     s.discard()
             except MgmtError:
