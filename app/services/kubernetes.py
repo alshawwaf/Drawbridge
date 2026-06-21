@@ -115,11 +115,14 @@ def api_versions() -> dict:
 def nodes(dc) -> dict:
     """``GET /api/v1/nodes`` — cluster nodes with their InternalIP."""
     items = []
-    for n in _nodes(dc):
+    for i, n in enumerate(_nodes(dc)):
+        if not isinstance(n, dict):
+            continue
+        name = n.get("name") or f"node-{i + 1}"
         ip = n.get("ip")
         addrs = ([{"type": "InternalIP", "address": ip}] if ip else []) + \
-                [{"type": "Hostname", "address": n.get("name")}]
-        items.append({"metadata": _meta(n.get("name"), labels=n.get("labels") or {}),
+                [{"type": "Hostname", "address": name}]
+        items.append({"metadata": _meta(name, labels=n.get("labels") or {}),
                       "status": {"addresses": addrs}})
     return _list("NodeList", items)
 

@@ -113,7 +113,9 @@ def agent_interfaces(dc, vmid: int) -> dict:
     ips = _ips(vm) if vm else []
     if ips:
         result.append({"name": "eth0", "hardware-address": "02:00:00:00:00:01",
-                       "ip-addresses": [{"ip-address": ip, "ip-address-type": "ipv4", "prefix": 24}
+                       "ip-addresses": [{"ip-address": ip,
+                                         "ip-address-type": "ipv6" if ":" in ip else "ipv4",
+                                         "prefix": 64 if ":" in ip else 24}
                                         for ip in ips]})
     return data({"result": result})
 

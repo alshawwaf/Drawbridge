@@ -18,7 +18,7 @@ _NETWORK_NAME = "default-net"  # the single mock network; VM addresses are keyed
 def _subnets(dc) -> list[dict]:
     """The datacenter's subnets as {id, name, cidr} — the canonical ids ports/networks reference."""
     out = []
-    for i, s in enumerate(dc.content.get("subnets", []) or []):
+    for i, s in enumerate((dc.content or {}).get("subnets", []) or []):
         name = s.get("name") or f"subnet-{i + 1}"
         out.append({"id": _id(dc.token, "subnet", name), "name": name, "cidr": s.get("cidr", "")})
     return out
@@ -56,11 +56,11 @@ def _secgroup_names(dc) -> list[str]:
     """Every security group to expose: those explicitly defined, plus any referenced by an instance
     (so a group an instance joins always exists as an object, and explicit groups can be empty)."""
     names: list[str] = []
-    for g in (dc.content.get("security_groups") or []):
+    for g in ((dc.content or {}).get("security_groups") or []):
         name = (g.get("name") if isinstance(g, dict) else str(g)) or ""
         if name and name not in names:
             names.append(name)
-    for inst in (dc.content.get("instances") or []):
+    for inst in ((dc.content or {}).get("instances") or []):
         for name in _instance_sgs(inst):
             if name and name not in names:
                 names.append(name)
@@ -137,10 +137,12 @@ def auth_ok(dc, username: str, password: str) -> bool:
 
 def nova_servers(dc) -> dict:
     servers = []
-    for i, inst in enumerate(dc.content.get("instances", []) or []):
+    for i, inst in enumerate((dc.content or {}).get("instances", []) or []):
         name = inst.get("name") or f"instance-{i + 1}"
         addrs = [{"addr": ip, "version": 6 if ":" in ip else 4, "OS-EXT-IPS:type": "fixed",
-                  "OS-EXT-IPS-MAC:mac_addr": "fa:16:3e:%02x:%02x:%02x" % (i, i, i)} for ip in _ips(inst)]
+                  "OS-EXT-IPS-MAC:mac_addr":
+                      "fa:16:3e:%02x:%02x:%02x" % (i & 0xff, (i >> 8) & 0xff, (i >> 16) & 0xff)}
+                 for ip in _ips(inst)]
         servers.append({
             "id": _id(dc.token, "server", name), "name": name, "status": "ACTIVE",
             "tenant_id": _id(dc.token, "project"), "user_id": _id(dc.token, "user"),
@@ -189,7 +191,7 @@ def neutron_security_groups(dc) -> dict:
 
 def neutron_networks(dc) -> dict:
     subnet_ids = [_id(dc.token, "subnet", (s.get("name") or f"subnet-{i + 1}"))
-                  for i, s in enumerate(dc.content.get("subnets", []) or [])]
+                  for i, s in enumerate((dc.content or {}).get("subnets", []) or [])]
     return {"networks": [{"id": _id(dc.token, "network", "default"), "name": "default-net",
                           "status": "ACTIVE", "admin_state_up": True, "subnets": subnet_ids,
                           "tenant_id": _id(dc.token, "project"), "project_id": _id(dc.token, "project")}]}
@@ -209,7 +211,7 @@ def neutron_ports(dc) -> dict:
     out = []
     subs = _subnets(dc)
     net_id = _id(dc.token, "network", "default")
-    for i, inst in enumerate(dc.content.get("instances", []) or []):
+    for i, inst in enumerate((dc.content or {}).get("instances", []) or []):
         name = inst.get("name") or f"instance-{i + 1}"
         fixed = [{"ip_address": ip, "subnet_id": _subnet_for_ip(dc, subs, ip)} for ip in _ips(inst)]
         out.append({

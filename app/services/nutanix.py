@@ -33,7 +33,12 @@ def _uid(*parts: str) -> str:
 
 
 def _vms(dc) -> list[dict]:
-    return (dc.content or {}).get("vms", []) or []
+    # Guarantee every VM has a name so the v3/v4 builders (which key on vm["name"]) never KeyError 500.
+    out = []
+    for i, vm in enumerate((dc.content or {}).get("vms", []) or []):
+        if isinstance(vm, dict):
+            out.append({**vm, "name": vm.get("name") or f"vm-{i + 1}"})
+    return out
 
 
 def _ips(vm: dict) -> list[str]:
