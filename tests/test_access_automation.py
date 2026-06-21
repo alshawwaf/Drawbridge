@@ -36,10 +36,10 @@ def _tcp(p):
     return ServiceSet(by_proto={"tcp": aa._ports_to_iv(str(p))})
 
 
-def _rule(uid, num, action, src, dst, svc, *, groups=None, enabled=True, complex=False):
-    r = ParsedRule(uid=uid, number=num, name=uid, enabled=enabled, action=action,
-                   src=src, dst=dst, svc=svc, source_group_uids=groups or [], complex=complex)
-    return r
+def _rule(uid, num, action, src, dst, svc, *, groups=None, dest_groups=None, enabled=True, complex=False):
+    return ParsedRule(uid=uid, number=num, name=uid, enabled=enabled, action=action,
+                      src=src, dst=dst, svc=svc, source_group_uids=groups or [],
+                      dest_group_uids=dest_groups or [], complex=complex)
 
 
 WEB = _rule("r8", 8, "Accept", _net("10.1.0.0/24"), _host("172.16.5.10"), _tcp(443),
@@ -78,6 +78,36 @@ def test_decide_widen_prefers_group():
 def test_decide_widen_falls_back_to_source_cell_when_no_group():
     d = aa.decide(AccessRequest(["192.168.9.9/32"], ["172.16.5.10/32"], "tcp", "443"), [WEB_CELL, CLEANUP])
     assert d.outcome is Outcome.WIDEN and d.widen_group_uid is None and d.target_rule.uid == "r7"
+    assert d.widen_field == "source"
+
+
+def test_decide_widen_destination_when_only_dest_differs():
+    # the rule-7.4 case: same source + service, only the destination differs -> widen the DESTINATION
+    dns = _rule("r74", 74, "Accept", _host("10.1.2.250"), _host("9.9.9.9"), _tcp(53))
+    d = aa.decide(AccessRequest(["10.1.2.250/32"], ["1.1.1.1/32"], "tcp", "53"), [dns, CLEANUP])
+    assert d.outcome is Outcome.WIDEN and d.widen_field == "destination"
+    assert d.target_rule.uid == "r74" and d.widen_group_uid is None
+
+
+def test_decide_dest_widen_prefers_a_group_on_the_destination():
+    dns = _rule("rg", 74, "Accept", _host("10.1.2.250"), _net("9.9.9.0/24"), _tcp(53),
+                dest_groups=["grp-dns-dst"])
+    d = aa.decide(AccessRequest(["10.1.2.250/32"], ["1.1.1.1/32"], "tcp", "53"), [dns, CLEANUP])
+    assert d.outcome is Outcome.WIDEN and d.widen_field == "destination" and d.widen_group_uid == "grp-dns-dst"
+
+
+def test_execute_widen_destination_adds_to_rule_dest_cell(monkeypatch):
+    calls = []
+    monkeypatch.setattr(aa, "MgmtSession", _fake_session_factory(calls))
+    dns = _rule("r74", 74, "Accept", _host("10.1.2.250"), _host("9.9.9.9"), _tcp(53))
+    monkeypatch.setattr(aa, "load_layer", lambda s, layer, package=None: [dns, CLEANUP])
+    res = aa.execute(object(), "secret",
+                     AccessRequest(["10.1.2.250/32"], ["1.1.1.1/32"], "tcp", "53"), "DNS", publish=True)
+    assert res["outcome"] == "widen" and res["widen_field"] == "destination"
+    assert res["widen_object"] == "h-1-1-1-1"
+    setr = next(p for c, p in calls if c == "set-access-rule")
+    assert setr["uid"] == "r74" and setr["destination"] == {"add": "h-1-1-1-1"}
+    assert not any(c == "add-access-rule" for c, _ in calls)   # widened, not created
 
 
 def test_decide_create_above_cleanup_for_new_dst():
@@ -289,8 +319,8 @@ def test_preview_is_read_only_and_reports_reuse(monkeypatch):
     monkeypatch.setattr(aa, "load_layer", lambda s, layer, package=None: [WEB, CLEANUP])
     res = aa.preview(object(), "secret",
                      AccessRequest(["192.168.9.9/32"], ["172.16.5.10/32"], "tcp", "443"), "Network")
-    assert res["ok"] and res["outcome"] == "widen"
-    assert res["source"]["exists"] is True and res["source"]["name"] == "existing-host"
+    assert res["ok"] and res["outcome"] == "widen" and res["widen"]["field"] == "source"
+    assert res["widen"]["object"]["exists"] is True and res["widen"]["object"]["name"] == "existing-host"
     cmds = [c for c, _ in calls]
     assert "add-host" not in cmds and "set-group" not in cmds and "publish" not in cmds
 
@@ -303,7 +333,8 @@ def test_execute_cidr_request_materializes_network_not_host(monkeypatch):
     res = aa.execute(object(), "secret",
                      AccessRequest(["10.50.0.0/24"], ["172.16.5.10/32"], "tcp", "443"),
                      "Network", publish=True)
-    assert res["outcome"] == "widen" and res["source_object"] == "n-10-50-0-0-24"
+    assert res["outcome"] == "widen" and res["widen_field"] == "source"
+    assert res["widen_object"] == "n-10-50-0-0-24"
     addnet = [p for c, p in calls if c == "add-network"]
     assert addnet and addnet[0]["subnet4"] == "10.50.0.0" and addnet[0]["mask-length4"] == 24
     assert not any(c == "add-host" for c, _ in calls)
@@ -327,7 +358,7 @@ def test_preview_cidr_reports_network_and_stays_read_only(monkeypatch):
     monkeypatch.setattr(aa, "load_layer", lambda s, layer, package=None: [WEB, CLEANUP])
     res = aa.preview(object(), "secret",
                      AccessRequest(["10.50.0.0/24"], ["172.16.5.10/32"], "tcp", "443"), "Network")
-    assert res["source"]["name"] == "n-10-50-0-0-24" and res["source"]["ip"] == "10.50.0.0/24"
+    assert res["widen"]["object"]["name"] == "n-10-50-0-0-24" and res["widen"]["object"]["ip"] == "10.50.0.0/24"
     assert not any(c in ("add-network", "add-host") for c, _ in calls)   # preview never writes
 
 
