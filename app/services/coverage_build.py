@@ -127,6 +127,8 @@ def _example_value(name, schema, spec):
             name in _FLATTENED_NESTED or "settings" in desc or "configuration" in desc
             or "settings" in n.split("-") or n.endswith(("-config", "-settings", "-configuration"))):
         return _OMIT
+    if n == "tags":
+        return ["lab"]
     if "mask" in n and "length" in n:          # mask-length / ipv4-mask-length → an integer, not an IP
         return 64 if "ipv6" in n else 24
     if t == "boolean":
@@ -139,7 +141,7 @@ def _example_value(name, schema, spec):
         return 1500 if "mtu" in n else (128 if "icmp" in n else 1)
     if t == "array":
         item = _resolve(schema.get("items", {}), spec)
-        iv = _example_value(name, item, spec) if item else "example"
+        iv = _example_value(name, item, spec) if item else _OMIT
         return _OMIT if iv is _OMIT else [iv]
     if t == "object":
         props = _properties(schema, spec)
@@ -173,7 +175,7 @@ def _example_value(name, schema, spec):
         return "black"
     if "comment" in n:
         return "managed as code"
-    return "example"
+    return _OMIT   # no meaningful value to synthesise → leave it out of the example (never print "example")
 
 
 def _tf_obj_name(api_type, obj):
