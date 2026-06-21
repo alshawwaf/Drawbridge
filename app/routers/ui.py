@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from ..config import get_settings
 from ..db import get_db
 from ..links import public_url
-from ..models import Feed, FeedPoll, FeedType, User
+from ..models import Feed, FeedPoll, FeedType, Gateway, ManagementServer, User
 from ..security import get_user_or_none, new_feed_token, verify_password
 from ..schemas.ioc import IOC_FORMATS, IOC_LEVELS, IOC_TYPES
 from ..services import bundle, coverage
@@ -68,6 +68,51 @@ def coverage_update(request: Request, api: str = "management", version: str = ""
         coverage._index.cache_clear()      # surface the new version in the picker
         coverage._artifact.cache_clear()
     return JSONResponse(result)
+
+
+# --- API explorer: embedded Swagger UI over the in-portal converter --------------------
+def _explorer_servers(db: Session, user: User) -> dict:
+    """Saved connections the explorer can target, as base URLs the spec's `servers` block uses.
+    Management Servers drive web_api; Gateways expose gaia_api."""
+    mgmt = db.execute(select(ManagementServer).where(ManagementServer.owner_id == user.id)).scalars().all()
+    gws = db.execute(select(Gateway).where(Gateway.owner_id == user.id)).scalars().all()
+    return {
+        "management": [{"name": m.name, "url": f"https://{m.host}:{m.port}/web_api"} for m in mgmt],
+        "gaia": [{"name": g.name, "url": f"https://{g.host}:{g.port}/gaia_api"} for g in gws],
+    }
+
+
+@router.get("/api-explorer", response_class=HTMLResponse)
+def api_explorer_page(request: Request, api: str = "management", version: str = "",
+                      db: Session = Depends(get_db)):
+    """Interactive Swagger-UI explorer for the Management / Gaia API, built in-portal from the CP docs."""
+    user = get_user_or_none(request, db)
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+    if api not in ("management", "gaia"):
+        api = "management"
+    return templates.TemplateResponse(request, "api_explorer.html", {
+        "api_type": api, "version": version or coverage.latest(api),
+        "versions": coverage.versions(), "servers": _explorer_servers(db, user),
+    })
+
+
+@router.get("/api-explorer/openapi.json")
+def api_explorer_spec(request: Request, api: str = "management", version: str = "",
+                      server_url: str = "", db: Session = Depends(get_db)):
+    """The full OpenAPI document Swagger UI loads — converted live from the CP docs, cached, with the
+    chosen target server pre-filled. `version=''` = latest published."""
+    if get_user_or_none(request, db) is None:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    if api not in ("management", "gaia"):
+        api = "management"
+    from ..services import coverage_build
+    try:
+        spec = coverage_build.openapi_spec(api, version, server_url)
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"error": f"Could not build the {api} {version or 'latest'} spec — {exc}"},
+                            status_code=502)
+    return JSONResponse(spec)
 
 # --- Generic Data Center default (the canonical sk167210 sample) -----------------------
 DEFAULT_FEED_NAME = "Generic-DC-Example"

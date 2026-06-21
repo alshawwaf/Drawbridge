@@ -1,0 +1,136 @@
+{% extends "base.html" %}
+{% block title %}API explorer{% endblock %}
+{% block main_class %}wide{% endblock %}
+{% block content %}
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.17.14/swagger-ui.css">
+<style>
+  .ax-tabs { display:flex; gap:6px; margin:4px 0 12px; }
+  .ax-tabs a { padding:7px 16px; border:1px solid var(--line); border-radius:9px; text-decoration:none;
+    color:var(--fg); font-weight:600; font-size:13px; }
+  .ax-tabs a.active { background:var(--accent); color:#fff; border-color:var(--accent); }
+  .ax-bar { display:flex; gap:14px; align-items:flex-end; flex-wrap:wrap; margin:6px 0 10px; font-size:13px; }
+  .ax-bar label { display:flex; flex-direction:column; gap:3px; font-size:11px; color:var(--subtle-fg);
+    text-transform:uppercase; letter-spacing:.03em; }
+  .ax-bar select, .ax-bar input { padding:6px 9px; min-width:180px; }
+  .ax-bar input.url { min-width:340px; font-family:ui-monospace,monospace; }
+  .ax-bar button { padding:7px 16px; font-weight:600; }
+  .ax-note { font-size:12px; color:var(--subtle-fg); margin:2px 0 12px; line-height:1.5; max-width:980px; }
+  .ax-note code { font-family:ui-monospace,monospace; }
+  #ax-status { font-size:12.5px; margin:8px 0; min-height:1.2em; }
+  #ax-status.err { color:var(--bad-fg,#c4314b); font-weight:600; }
+  /* Swagger UI ships a light theme — frame it as a white panel so it reads consistently in dark mode too. */
+  #swagger-ui { background:#fff; border:1px solid var(--line); border-radius:10px; padding:6px 14px 14px;
+    color-scheme:light; }
+  #swagger-ui .topbar { display:none; }
+  #swagger-ui .information-container { padding:18px 0 0; }
+  #swagger-ui .info { margin:14px 0; }
+</style>
+
+<h1 style="margin-bottom:2px;">API explorer</h1>
+<p class="ax-note" style="margin-top:4px;">
+  Live, interactive reference for the Check Point <strong>Management</strong> and <strong>Gaia</strong> APIs —
+  every command, request schema, and example — converted in-portal straight from Check Point's published
+  documentation (no external service). Pick the API version a server runs, and pre-fill the target so the
+  examples and <em>Try it out</em> point at it.
+</p>
+
+<div class="ax-tabs">
+  <a href="/api-explorer?api=management" class="{{ 'active' if api_type=='management' else '' }}">Management API</a>
+  <a href="/api-explorer?api=gaia" class="{{ 'active' if api_type=='gaia' else '' }}">Gaia API</a>
+</div>
+
+<div class="ax-bar">
+  <label>API version
+    <select id="ax-version">
+      <option value="">Latest (auto)</option>
+      {% for v in versions.get(api_type, []) %}
+      <option value="{{ v }}" {{ 'selected' if v==version else '' }}>{{ v }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>Target server
+    <select id="ax-server">
+      <option value="">Default (from docs)</option>
+      {% for s in servers.get(api_type, []) %}
+      <option value="{{ s.url }}">{{ s.name }} — {{ s.url }}</option>
+      {% endfor %}
+      <option value="__custom__">Custom URL…</option>
+    </select>
+  </label>
+  <label id="ax-custom-wrap" style="display:none;">Custom URL
+    <input id="ax-custom" class="url" type="text"
+           placeholder="https://mgmt.example.com:443/{{ 'web_api' if api_type=='management' else 'gaia_api' }}">
+  </label>
+  <button id="ax-load" class="btn">Load</button>
+</div>
+
+<p class="ax-note">
+  <strong>Try it out</strong> sends requests from your browser directly to the target server.
+  A real Management/Gaia server typically won't return CORS headers, so cross-origin live calls may be
+  blocked by the browser — but the exact request body, headers, and <code>curl</code> are still generated
+  for you to run. For actual policy changes, use the gated editor on the Management Servers page (preview →
+  publish). TLS is always verified server-side; this page never disables it.
+</p>
+
+<div id="ax-status">Loading {{ api_type }} {{ version or 'latest' }} spec…</div>
+<div id="swagger-ui"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.17.14/swagger-ui-bundle.js"></script>
+<script>
+(function () {
+  var API = {{ api_type | tojson }};
+  var verSel = document.getElementById('ax-version');
+  var srvSel = document.getElementById('ax-server');
+  var custWrap = document.getElementById('ax-custom-wrap');
+  var custInp = document.getElementById('ax-custom');
+  var statusEl = document.getElementById('ax-status');
+
+  srvSel.addEventListener('change', function () {
+    custWrap.style.display = (srvSel.value === '__custom__') ? 'flex' : 'none';
+  });
+
+  function targetUrl() {
+    if (srvSel.value === '__custom__') return custInp.value.trim();
+    return srvSel.value;
+  }
+
+  function specUrl() {
+    var p = new URLSearchParams({ api: API, version: verSel.value });
+    var t = targetUrl();
+    if (t) p.set('server_url', t);
+    return '/api-explorer/openapi.json?' + p.toString();
+  }
+
+  function load() {
+    statusEl.className = '';
+    statusEl.textContent = 'Loading ' + API + ' ' + (verSel.value || 'latest') +
+      ' spec… (first load fetches the docs — a few seconds)';
+    document.getElementById('swagger-ui').innerHTML = '';
+    window.ui = SwaggerUIBundle({
+      url: specUrl(),
+      dom_id: '#swagger-ui',
+      presets: [SwaggerUIBundle.presets.apis],
+      layout: 'BaseLayout',
+      docExpansion: 'none',
+      defaultModelsExpandDepth: 0,
+      filter: true,
+      tryItOutEnabled: true,
+      persistAuthorization: true,
+      requestInterceptor: function (req) { return req; },
+      onComplete: function () { statusEl.textContent = ''; },
+      responseInterceptor: function (res) {
+        if (res && res.status === 0) {
+          statusEl.className = 'err';
+          statusEl.textContent = 'The browser blocked that live call (likely CORS / TLS to the target). ' +
+            'The generated request and curl above are still valid.';
+        }
+        return res;
+      }
+    });
+  }
+
+  document.getElementById('ax-load').addEventListener('click', load);
+  load();
+})();
+</script>
+{% endblock %}
