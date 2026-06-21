@@ -43,6 +43,23 @@ class Settings(BaseSettings):
     # disk — older rows are trimmed). It's a live demo viewer, not a log archive.
     syslog_max_records: int = 2000
 
+    # Access automation — generic ticketing webhook (ServiceNow, Jira, Remedy, custom portal …).
+    # The inbound webhook (POST /access-automation/webhook) is DISABLED unless a shared secret is set;
+    # the caller must send it as the X-DCSim-Token header. Never hardcode — set via env.
+    # SECURITY: this token grants policy publish on every ALLOWED management server, so treat it as a
+    # top-tier secret. Optionally scope it to specific servers with DCSIM_WEBHOOK_SERVER_IDS.
+    webhook_token: str = ""
+    webhook_server_ids: str = ""    # comma-separated server ids the webhook may target; blank = all
+
+    # Optional BUILT-IN write-back: post the decision + rule UID to a ServiceNow incident's work notes
+    # via the Table API. (Other vendors use the generic per-request `callback_url`, or just read the
+    # synchronous response.) TLS verification is always on; the password is read from env (never
+    # hardcoded), mirroring DCSIM_ADMIN_PASSWORD.
+    servicenow_instance: str = ""   # e.g. https://dev12345.service-now.com
+    servicenow_user: str = ""
+    servicenow_password: str = ""
+    servicenow_table: str = "incident"
+
 
 @lru_cache
 def get_settings() -> Settings:
