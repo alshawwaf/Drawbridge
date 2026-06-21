@@ -20,8 +20,8 @@
   tr.obj { cursor:pointer; } tr.obj:hover td { background:var(--header-hover); }
   tr.obj .tw { color:var(--faint); font-family:ui-monospace,monospace; font-size:11px; }
   .detail { background:var(--subtle-bg); }
-  .detail pre { background:var(--surface); border:1px solid var(--line); border-radius:8px; padding:12px;
-    font-size:12px; line-height:1.5; overflow:auto; max-height:46vh; margin:0; white-space:pre; }
+  .detail pre { background:var(--surface); color:var(--text); border:1px solid var(--line); border-radius:8px;
+    padding:12px; font-size:12px; line-height:1.5; overflow:auto; max-height:46vh; margin:0; white-space:pre; }
   .ftab { border-collapse:collapse; width:100%; margin-bottom:12px; }
   .ftab td, .ftab th { padding:3px 8px; border-bottom:1px solid var(--line); font-size:12px; text-align:left; }
   .ftab th { font-size:10.5px; text-transform:uppercase; color:var(--subtle-fg); }
@@ -65,15 +65,15 @@
   <div class="covgroup">{{ g.title }}<span class="cnt">· {{ g.total }} objects{% if g.gaps %} · {{ g.gaps }} with a tool gap{% endif %}</span></div>
   <table class="cov">
     <colgroup><col class="c-obj"><col class="c-sup"><col class="c-sup"><col class="c-sup"><col class="c-cnt"></colgroup>
-    <thead><tr><th>Object / command</th><th>web_api</th><th>Terraform</th><th>Ansible</th><th>fields (TF/Ans)</th></tr></thead>
+    <thead><tr><th>Object / command</th><th>web_api</th><th>Terraform</th><th>Ansible</th><th class="num">fields (TF/Ans)</th></tr></thead>
     <tbody>
     {% for r in g.rows %}
       <tr class="obj" data-name="{{ r.name }}">
-        <td><b>{{ r.name }}</b> <span class="tw">{{ r.command }}</span></td>
-        <td><span class="yes">✓</span></td>
-        <td>{% if r.has_tf %}<span class="yes">✓</span>{% else %}<span class="no">✗</span>{% endif %}</td>
-        <td>{% if r.has_ansible %}<span class="yes">✓</span>{% else %}<span class="no">✗</span>{% endif %}</td>
-        <td class="muted">{{ r.fields }} · {{ r.tf_fields }}/{{ r.ansible_fields }}</td>
+        <td class="mono"><b>{{ r.name }}</b> <span class="tw">{{ r.command }}</span></td>
+        <td><span class="pill ok">Yes</span></td>
+        <td>{% if r.has_tf %}<span class="pill ok">Yes</span>{% else %}<span class="pill faint">No</span>{% endif %}</td>
+        <td>{% if r.has_ansible %}<span class="pill ok">Yes</span>{% else %}<span class="pill faint">No</span>{% endif %}</td>
+        <td class="muted num">{{ r.fields }} · {{ r.tf_fields }}/{{ r.ansible_fields }}</td>
       </tr>
     {% endfor %}
     </tbody>

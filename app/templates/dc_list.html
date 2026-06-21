@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Data Centers{% endblock %}
 {% block content %}
+{% from "_macros.html" import row_actions %}
 <div class="page-head">
   <span class="icon-chip lg"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg></span>
   <div class="ph-main">
@@ -40,14 +41,7 @@
       <td><a class="feedname" href="/datacenters/{{ r.dc.id }}">{{ r.dc.name }}</a>{% if r.dc.description %}<div class="subsel">{{ r.dc.description }}</div>{% endif %}</td>
       <td><span class="pill">{{ r.dc.provider }}</span></td>
       <td class="muted">{{ r.summary }}</td>
-      <td class="nowrap" style="text-align:right;">
-        <a class="copybtn" href="/datacenters/{{ r.dc.id }}">Open</a>
-        <a class="copybtn" href="/datacenters/{{ r.dc.id }}/edit" style="margin-left:6px;">Edit</a>
-        <form method="post" action="/datacenters/{{ r.dc.id }}/delete" style="display:inline;">
-          <button class="minibtn" type="submit" style="margin-left:6px;"
-                  data-confirm="Delete “{{ r.dc.name }}”? This removes the mock datacenter.">Delete</button>
-        </form>
-      </td>
+      {{ row_actions(links=[{'label':'Open','url':'/datacenters/' ~ r.dc.id}, {'label':'Edit','url':'/datacenters/' ~ r.dc.id ~ '/edit'}], delete={'url':'/datacenters/' ~ r.dc.id ~ '/delete', 'name': r.dc.name}) }}
     </tr>
   {% endfor %}
   </tbody>

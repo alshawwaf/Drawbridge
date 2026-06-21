@@ -18,13 +18,13 @@
   <tbody>
   {% for r in rows %}
   <tr class="siem-row" data-id="{{ r.id }}">
-    <td><span title="{{ r.at.strftime('%Y-%m-%d %H:%M:%S') }} UTC">{{ r.at.strftime('%H:%M:%S') }}</span></td>
-    <td><span class="muted" style="font-size:12px; white-space:nowrap;">{{ r.source_ip or '—' }}</span></td>
+    <td><span class="ts mono" data-ts="{{ r.at.isoformat() }}" title="{{ r.at.strftime('%Y-%m-%d %H:%M:%S') }} UTC">{{ r.at.strftime('%H:%M:%S') }}</span></td>
+    <td><span class="muted mono" style="font-size:12px; white-space:nowrap;">{{ r.source_ip or '—' }}</span></td>
     <td><span class="pill faint">{{ r.transport }}</span></td>
     <td><span class="pill">{{ r.fmt|upper }}</span></td>
     <td>{% if r.severity %}<span class="pill {{ 'bad' if (r.severity|lower in ['err','crit','alert','emerg'] or r.severity in ['7','8','9','10']) else 'faint' }}">{{ r.severity }}</span>{% else %}<span class="muted">—</span>{% endif %}</td>
-    <td><span class="muted" style="font-size:12px; white-space:nowrap;">{{ r.host or '—' }}</span></td>
-    <td class="tcell-path"><span title="{{ r.summary }}">{{ r.summary or '—' }}</span></td>
+    <td><span class="muted mono" style="font-size:12px; white-space:nowrap;">{{ r.host or '—' }}</span></td>
+    <td class="tcell-path"><span class="mono" title="{{ r.summary }}">{{ r.summary or '—' }}</span></td>
   </tr>
   {% endfor %}
   </tbody>

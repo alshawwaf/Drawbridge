@@ -28,3 +28,32 @@
   <span class="cf-val muted" style="font-style:italic;">{{ value }}</span>
 </div>
 {% endmacro %}
+
+{# THE standard table row-actions cell — one pattern for every list table.
+   links  = [{label, url}]    inline quiet .copybtn actions (e.g. Open / Edit)
+   menu   = [{label, attrs}]  extra items in the "⋯" overflow (attrs raw, e.g. 'data-test="abc"')
+   delete = {url, name}       a single danger "Delete", last in the overflow, with a confirm dialog
+   Reuses base.html .rowacts / .copybtn / .menu / .menu-danger and the global [data-confirm] modal. #}
+{% macro row_actions(links=[], menu=[], delete=None) %}
+<td class="nowrap" style="text-align:right;">
+  <div class="rowacts">
+    {% for l in links %}<a class="copybtn" href="{{ l.url }}">{{ l.label }}</a>{% endfor %}
+    {% if menu or delete %}
+    <div class="menu">
+      <button type="button" class="copybtn menu-trigger" aria-haspopup="true" aria-expanded="false"
+              aria-label="More actions{% if delete %} for {{ delete.name }}{% endif %}">&#8943;</button>
+      <div class="menu-items" role="menu" style="min-width:172px;">
+        {% for m in menu %}<button type="button" role="menuitem" {{ m.attrs | default('') | safe }}>{{ m.label }}</button>{% endfor %}
+        {% if delete %}
+        {% if menu %}<span class="menu-sep"></span>{% endif %}
+        <form method="post" action="{{ delete.url }}" style="margin:0;">
+          <button type="submit" role="menuitem" class="menu-danger"
+                  data-confirm="Delete &ldquo;{{ delete.name }}&rdquo;? This can&rsquo;t be undone.">Delete</button>
+        </form>
+        {% endif %}
+      </div>
+    </div>
+    {% endif %}
+  </div>
+</td>
+{% endmacro %}

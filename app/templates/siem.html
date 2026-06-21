@@ -94,7 +94,7 @@ cp_log_export restart name <span class="cmd-name">dcsim-siem-cef-udp</span></pre
       p.set('fmt', fmt); p.set('page', page); p.set('page_size', psSel.value);
       fetch('/siem/rows?' + p.toString())
         .then(function (r) { return r.ok ? r.text() : ''; })
-        .then(function (html) { if (html) setHTML(rowsEl, html); })
+        .then(function (html) { if (html) { setHTML(rowsEl, html); if (window.paintTimestamps) window.paintTimestamps(); } })
         .catch(function () {});
     }
     window.gotoPage = function (n) { page = Math.max(1, n); load(); window.scrollTo({ top: 0, behavior: 'smooth' }); };
