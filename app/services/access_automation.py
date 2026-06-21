@@ -440,9 +440,8 @@ def decide(req: AccessRequest, rules: list[ParsedRule]) -> Decision:
     """
     req_src, req_dst, req_svc = req.src_iv(), req.dst_iv(), req.svc()
     covering_drop: Optional[ParsedRule] = None   # the catch-all cleanup that floors placement
-    widen_target: Optional[ParsedRule] = None    # reachable accept matching 2 dims, differing in 1
-    widen_field: Optional[str] = None            # the dimension to extend: "source" | "destination"
-    widen_group: Optional[str] = None            # a group on that dimension, if the rule references one
+    widen_target: Optional[ParsedRule] = None    # reachable accept EQUAL in 2 dims, differing in the 3rd
+    widen_field: Optional[str] = None            # the dimension to extend: source | destination | service
     lower_anchor: Optional[ParsedRule] = None     # last rule strictly more specific than req
 
     for r in rules:
@@ -495,22 +494,24 @@ def decide(req: AccessRequest, rules: list[ParsedRule]) -> Decision:
                     target_rule=r,
                 )
 
-        # (2) widen candidate: a reachable ACCEPT that already covers exactly TWO of the three
-        # dimensions {source, destination, service} and differs only in the third -> widen that one.
-        # Handles "add the source" (dst+svc match), "add the destination" (src+svc match, rule 7.4) and
-        # "add the service/application" (src+dst match). Prefer a candidate whose widened cell references
-        # a GROUP (add the member to the group) over a bare-cell edit, even if it appears later.
-        if r.is_accept and not r.complex and not svc_uncertain and covering_drop is None:
+        # (2) widen candidate: a reachable ACCEPT that is EXACTLY EQUAL to the request in two of the
+        # three dimensions {source, destination, service} and differs in the third -> add the request's
+        # value for that third dimension to the rule's CELL. The other two MUST be equal, not merely a
+        # superset: a cell holds a set, and adding a value grants it combined with EVERY member of the
+        # other cells. If a rule's source is {win_client, win_server} and only win_server was requested,
+        # widening its destination would also grant win_client -> over-grant. Requiring equality (and
+        # adding to the cell, never to a shared group) means we grant precisely src x dst x svc.
+        if (widen_target is None and r.is_accept and not r.complex and not svc_uncertain
+                and covering_drop is None):
+            eq = {"source": rel_src == Relation.EQUAL, "destination": rel_dst == Relation.EQUAL,
+                  "service": rel_svc == Relation.EQUAL}
             cov = {"source": _dim_covered(rel_src), "destination": _dim_covered(rel_dst),
                    "service": _dim_covered(rel_svc)}
-            missing = [dim for dim, ok in cov.items() if not ok]
-            if len(missing) == 1:
-                field = missing[0]
-                cell_groups = {"source": r.source_group_uids, "destination": r.dest_group_uids,
-                               "service": r.svc.group_uids}[field]
-                grp = cell_groups[0] if cell_groups else None
-                if widen_target is None or (widen_group is None and grp is not None):
-                    widen_target, widen_field, widen_group = r, field, grp
+            not_covered = [d for d in ("source", "destination", "service") if not cov[d]]
+            if len(not_covered) == 1:
+                field = not_covered[0]
+                if all(eq[d] for d in ("source", "destination", "service") if d != field):
+                    widen_target, widen_field = r, field
 
         # Placement lower bound: a fully-resolved rule strictly MORE specific than req (don't shadow it).
         if not r.complex and _is_proper_superset(rel_src, rel_dst, rel_svc):
@@ -519,12 +520,11 @@ def decide(req: AccessRequest, rules: list[ParsedRule]) -> Decision:
     if widen_target is not None:
         others = {"source": "destination + service", "destination": "source + service",
                   "service": "source + destination"}[widen_field]
-        how = (f"add the {widen_field} to the group it references" if widen_group
-               else f"add the {widen_field} to the rule")
         return Decision(
             Outcome.WIDEN,
-            f"rule {widen_target.number} ({widen_target.name}) already allows {others}; {how}",
-            target_rule=widen_target, widen_group_uid=widen_group, widen_field=widen_field,
+            f"rule {widen_target.number} ({widen_target.name}) matches the request's {others} exactly; "
+            f"add the {widen_field} to that rule",
+            target_rule=widen_target, widen_field=widen_field,
         )
 
     return Decision(
@@ -730,8 +730,7 @@ def build_preview(session, decision: Decision, req: AccessRequest, rules: list[P
         field = decision.widen_field or "source"
         obj = (_svc_object_preview(session, req) if field == "service"
                else _obj(req.src_cidrs[0] if field == "source" else req.dst_cidrs[0]))
-        out["widen"] = {"field": field, "group_uid": decision.widen_group_uid, "object": obj,
-                        "via": "group object" if decision.widen_group_uid else f"rule {field} cell"}
+        out["widen"] = {"field": field, "object": obj, "via": f"rule {field} cell"}
     elif decision.outcome == Outcome.CREATE:
         out["source"] = _obj(req.src_cidrs[0])
         out["destination"] = _obj(req.dst_cidrs[0])
@@ -752,15 +751,12 @@ def _apply(session, decision: Decision, req: AccessRequest, layer: str,
                     else resolve_endpoint(session, req.src_cidrs[0] if field == "source"
                                           else req.dst_cidrs[0]))
         out.update(widen_field=field, widen_object=obj_name)
-        if decision.widen_group_uid:
-            session.call("set-group",
-                         {"uid": decision.widen_group_uid, "members": {"add": obj_name}})       # VERIFY
-            out["ops"].append(f"set-group {decision.widen_group_uid} members.add {obj_name}")
-        else:
-            session.call("set-access-rule",
-                         {"uid": decision.target_rule.uid, "layer": layer,
-                          field: {"add": obj_name}})                                            # VERIFY
-            out["ops"].append(f"set-access-rule {decision.target_rule.uid} {field}.add {obj_name}")
+        # Add to the rule's CELL, never to a shared group — modifying a group widens EVERY rule that
+        # references it. decide() guarantees the other two cells equal the request exactly, so this
+        # grants precisely the requested source x destination x service and nothing more.
+        session.call("set-access-rule",
+                     {"uid": decision.target_rule.uid, "layer": layer, field: {"add": obj_name}})  # VERIFY
+        out["ops"].append(f"set-access-rule {decision.target_rule.uid} {field}.add {obj_name}")
         return out
 
     # CREATE
@@ -844,20 +840,23 @@ if __name__ == "__main__":
         return ServiceSet(by_proto={"tcp": _ports_to_iv(str(p))})
 
     web = ParsedRule(uid="r8", number=8, name="web farm", enabled=True, action="Accept",
-                     src=_net("10.1.0.0/24"), dst=_host("172.16.5.10"), svc=_tcp(443),
-                     source_group_uids=["grp-web-src"])
+                     src=_net("10.1.0.0/24"), dst=_host("172.16.5.10"), svc=_tcp(443))
+    dns1 = ParsedRule(uid="r3", number=3, name="dns one", enabled=True, action="Accept",
+                      src=_host("10.1.2.250"), dst=_host("9.9.9.9"), svc=_tcp(53))
     deny_db = ParsedRule(uid="r9", number=9, name="block db", enabled=True, action="Drop",
                          src=ANY_IP, dst=_host("172.16.5.20"), svc=_tcp(1521))
     cleanup = ParsedRule(uid="rC", number=99, name="Cleanup rule", enabled=True, action="Drop",
                          src=ANY_IP, dst=ANY_IP, svc=ServiceSet(any=True))
-    rulebase = [web, deny_db, cleanup]
+    rulebase = [web, dns1, deny_db, cleanup]
 
     def show(label, req):
         d = decide(req, rulebase)
-        print(f"{label:22} -> {d.outcome.value:7} | {d.reason}")
+        print(f"{label:24} -> {d.outcome.value:7} | {d.reason}")
 
     show("already allowed", AccessRequest(["10.1.0.50/32"], ["172.16.5.10/32"], "tcp", "443"))
-    show("widen (new src)", AccessRequest(["192.168.9.9/32"], ["172.16.5.10/32"], "tcp", "443"))
-    show("widen (new dst)", AccessRequest(["10.1.0.50/32"], ["172.16.9.9/32"], "tcp", "443"))
-    show("create (new dst)", AccessRequest(["192.168.9.9/32"], ["172.16.9.9/32"], "tcp", "22"))
-    show("explicit deny -> review", AccessRequest(["192.168.9.9/32"], ["172.16.5.20/32"], "tcp", "1521"))
+    show("widen source", AccessRequest(["192.168.9.9/32"], ["172.16.5.10/32"], "tcp", "443"))
+    show("widen destination", AccessRequest(["10.1.2.250/32"], ["1.1.1.1/32"], "tcp", "53"))
+    show("widen service", AccessRequest(["10.1.2.250/32"], ["9.9.9.9/32"], "tcp", "8443"))
+    show("over-grant guarded", AccessRequest(["10.1.0.50/32"], ["172.16.9.9/32"], "tcp", "443"))
+    show("create (new)", AccessRequest(["192.168.9.9/32"], ["172.16.9.9/32"], "tcp", "22"))
+    show("explicit deny", AccessRequest(["192.168.9.9/32"], ["172.16.5.20/32"], "tcp", "1521"))
