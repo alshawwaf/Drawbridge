@@ -349,6 +349,12 @@
     .modal h3 { margin:0 0 8px; font-size:18px; font-weight:740; }
     .modal p { color:var(--muted); font-size:14px; margin:0; }
     .modal-actions { display:flex; gap:10px; justify-content:flex-end; margin-top:24px; }
+    /* Form-in-modal: the modal IS the card, so strip the injected form's own card chrome + size it. */
+    #form-modal .modal { max-width:670px; text-align:left; }
+    #form-modal .fm-title { font-size:18px; font-weight:740; margin:0; }
+    #form-modal .fm-body form.card, #form-modal .fm-body form { border:none; box-shadow:none;
+      background:none; padding:0; margin:0; max-width:none; }
+    #form-modal .fm-body hr { border:none; border-top:1px solid var(--line); margin:16px 0; }
 
     /* ============================ Toast ============================ */
     .toast { position:fixed; bottom:22px; right:22px; background:var(--surface-2); color:var(--text);
@@ -541,6 +547,77 @@
       </div>
     </div>
   </div>
+
+  <div id="form-modal" class="modal-overlay" hidden>
+    <div class="modal" role="dialog" aria-modal="true">
+      <div class="row" style="align-items:flex-start; gap:12px; margin-bottom:14px;">
+        <h3 class="fm-title grow"></h3>
+        <button type="button" class="icon-btn" id="fm-close" aria-label="Close" style="margin:-4px -4px 0 0;">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
+      <div class="fm-body"></div>
+    </div>
+  </div>
+
+  <script>
+    // Reusable form-in-modal (progressive enhancement). A link/button with data-modal-form="<url>"
+    // opens a modal, loads that page's FORM FRAGMENT (X-Fragment header), submits via fetch, and reloads
+    // the list on success. The target URL stays a normal page, so no-JS / open-in-new-tab still works.
+    (function () {
+      var fm = document.getElementById('form-modal');
+      if (!fm) return;
+      var titleEl = fm.querySelector('.fm-title'), bodyEl = fm.querySelector('.fm-body');
+      function close() { fm.hidden = true; bodyEl.innerHTML = ''; }
+      function runScripts(root) {            // innerHTML doesn't execute <script>; re-create them so it does
+        root.querySelectorAll('script').forEach(function (old) {
+          var s = document.createElement('script');
+          if (old.src) s.src = old.src; else s.textContent = old.textContent;
+          old.replaceWith(s);
+        });
+      }
+      function wire() {
+        var form = bodyEl.querySelector('form'); if (!form) return;
+        form.addEventListener('submit', function (e) {
+          e.preventDefault();
+          var btn = form.querySelector('[type=submit]'); if (btn) { btn.disabled = true; btn.dataset.t = btn.textContent; btn.textContent = 'Saving…'; }
+          fetch(form.getAttribute('action') || location.pathname,
+                { method: 'POST', body: new FormData(form), headers: { 'X-Fragment': '1' }, redirect: 'follow' })
+            .then(function (r) {
+              if (r.redirected || (r.ok && !/\/(new|edit)\/?$/.test(new URL(r.url).pathname))) { location.reload(); return null; }
+              return r.text();                // validation error etc. → re-render the form in place
+            })
+            .then(function (html) {
+              if (html === null) return;
+              bodyEl.innerHTML = html; runScripts(bodyEl); wire();
+            })
+            .catch(function () { if (btn) { btn.disabled = false; btn.textContent = btn.dataset.t || 'Save'; } });
+        });
+      }
+      function open(url, title) {
+        titleEl.textContent = title || '';
+        bodyEl.innerHTML = '<p class="muted">Loading…</p>';
+        fm.hidden = false;
+        fetch(url, { headers: { 'X-Fragment': '1' } })
+          .then(function (r) { return r.text(); })
+          .then(function (html) {
+            bodyEl.innerHTML = html; runScripts(bodyEl); wire();
+            var f = bodyEl.querySelector('input:not([type=hidden]),select,textarea'); if (f) f.focus();
+          })
+          .catch(function () { bodyEl.innerHTML = '<p class="err">Could not load the form. <a href="' + url + '">Open the page instead.</a></p>'; });
+      }
+      document.addEventListener('click', function (e) {
+        var cancel = e.target.closest('[data-fm-cancel]');
+        if (cancel && !fm.hidden) { e.preventDefault(); close(); return; }   // Cancel closes the modal (navigates on the full page)
+        var t = e.target.closest('[data-modal-form]'); if (!t) return;
+        e.preventDefault();
+        open(t.getAttribute('data-modal-form'), t.getAttribute('data-modal-title'));
+      });
+      document.getElementById('fm-close').addEventListener('click', close);
+      fm.addEventListener('click', function (e) { if (e.target === fm) close(); });
+      document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && !fm.hidden) close(); });
+    })();
+  </script>
 
   <script>
     // Theme toggle (persists; default dark).

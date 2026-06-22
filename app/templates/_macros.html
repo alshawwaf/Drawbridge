@@ -37,7 +37,7 @@
 {% macro row_actions(links=[], menu=[], delete=None) %}
 <td class="nowrap" style="text-align:right;">
   <div class="rowacts">
-    {% for l in links %}<a class="copybtn" href="{{ l.url }}">{{ l.label }}</a>{% endfor %}
+    {% for l in links %}<a class="copybtn" href="{{ l.url }}"{% if l.modal %} data-modal-form="{{ l.url }}" data-modal-title="{{ l.modal }}"{% endif %}>{{ l.label }}</a>{% endfor %}
     {% if menu or delete %}
     <div class="menu">
       <button type="button" class="copybtn menu-trigger" aria-haspopup="true" aria-expanded="false"

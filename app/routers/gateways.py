@@ -65,11 +65,16 @@ def gateways_list(request: Request, db: Session = Depends(get_db)):
     })
 
 
+def _form_tpl(request: Request) -> str:
+    """The full page normally; just the form fragment when loaded into the modal (X-Fragment header)."""
+    return "_gateway_form.html" if request.headers.get("x-fragment") else "gateway_form.html"
+
+
 @router.get("/gateways/new", response_class=HTMLResponse)
 def gateways_new(request: Request, db: Session = Depends(get_db)):
     if get_user_or_none(request, db) is None:
         return RedirectResponse("/login", status_code=303)
-    return templates.TemplateResponse(request, "gateway_form.html",
+    return templates.TemplateResponse(request, _form_tpl(request),
                                       {"gw": None, "error": None, "action": "/gateways/new",
                                        "has_password": False, "crypto_ok": gateway_creds.available()})
 
@@ -205,7 +210,7 @@ def gateways_edit(gid: int, request: Request, db: Session = Depends(get_db)):
     if user is None:
         return RedirectResponse("/login", status_code=303)
     gw = _owned(db, gid, user)
-    return templates.TemplateResponse(request, "gateway_form.html",
+    return templates.TemplateResponse(request, _form_tpl(request),
                                       {"gw": gw, "error": None, "action": f"/gateways/{gid}/edit",
                                        "has_password": gateway_creds.has_password(db, gw),
                                        "crypto_ok": gateway_creds.available()})
