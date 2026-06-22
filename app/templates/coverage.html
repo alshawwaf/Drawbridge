@@ -288,21 +288,45 @@
     function closeUpd() { updModal.hidden = true; }
     document.getElementById('upd-close').addEventListener('click', closeUpd);
     updModal.addEventListener('click', function (e) { if (e.target === updModal) closeUpd(); });
+    function toolsBlock(t) {
+      // Terraform provider + Ansible collection: the version the bundled support was derived from, vs the
+      // latest published on the Terraform Registry / Ansible Galaxy, with a 'newer available' flag.
+      if (!t) return '';
+      var rows = [['Terraform provider', 'terraform'],
+                  ['Ansible check_point.mgmt', 'ansible_mgmt'],
+                  ['Ansible check_point.gaia', 'ansible_gaia']];
+      var h = '<div style="margin-top:16px;"><b>Terraform / Ansible support basis</b>' +
+              '<table class="acttable" style="margin-top:6px;"><tbody>';
+      rows.forEach(function (r) {
+        var baked = t.baked[r[1]] || '—', latest = t.latest[r[1]] || '—', out = t.outdated[r[1]];
+        h += '<tr><td>' + r[0] + '</td><td><code>' + esc(baked) + '</code> <span class="muted">bundled</span></td><td>' +
+             (out ? '<span class="pill" style="background:var(--warn-bg);color:var(--warn);">v' + esc(latest) + ' available</span>'
+                  : '<span class="pill ok">latest</span>') + '</td></tr>';
+      });
+      h += '</tbody></table>';
+      if (t.any_outdated) {
+        h += '<p class="muted" style="margin-top:6px;">A newer provider / collection is out. Re-bake the ' +
+             'comparison to pull the latest support: <code>python tools/build_coverage.py --all</code>.</p>';
+      }
+      return h + '</div>';
+    }
     document.getElementById('cov-update').addEventListener('click', function () {
       updModal.hidden = false;
-      updBody.innerHTML = '<p class="muted">Fetching the latest <b>' + esc(api) + '</b> spec from CP-Docs-To-Swagger and generating the comparison… a large spec can take a few seconds.</p>';
+      updBody.innerHTML = '<p class="muted">Fetching the latest <b>' + esc(api) + '</b> spec from CP-Docs-To-Swagger and checking the latest Terraform / Ansible versions… a large spec can take a few seconds.</p>';
       fetch('/coverage/update?api=' + encodeURIComponent(api), { method: 'POST' })
         .then(function (r) { return r.json(); })
         .then(function (j) {
           if (!j.ok) { updBody.innerHTML = '<div class="err">' + esc(j.error || 'Update failed.') + '</div>'; return; }
           if (j.added) {
             updBody.innerHTML = '<div class="ok">✓ Bundled <b>' + esc(j.version) + '</b> (' + esc(j.object_count) + ' objects).</div>' +
+              toolsBlock(j.tools) +
               '<div class="row" style="margin-top:12px;"><button class="btn" id="upd-reload">View ' + esc(j.version) + '</button></div>';
             document.getElementById('upd-reload').addEventListener('click', function () {
               window.location = '/coverage?api=' + encodeURIComponent(api) + '&version=' + encodeURIComponent(j.version);
             });
           } else {
-            updBody.innerHTML = '<div class="ok">✓ Already up to date — <b>' + esc(j.version) + '</b> (' + esc(j.object_count) + ' objects) is bundled.</div>';
+            updBody.innerHTML = '<div class="ok">✓ Already up to date — <b>' + esc(j.version) + '</b> (' + esc(j.object_count) + ' objects) is bundled.</div>' +
+              toolsBlock(j.tools);
           }
         })
         .catch(function () { updBody.innerHTML = '<div class="err">Update request failed.</div>'; });

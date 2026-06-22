@@ -35,7 +35,25 @@ def main():
     ap.add_argument("--version", default="")
     ap.add_argument("--spec", default="")
     ap.add_argument("--all", action="store_true", help="generate EVERY local version, not just the latest")
+    ap.add_argument("--no-derive-tools", action="store_true",
+                    help="skip the live Terraform/Ansible derivation and use the curated maps instead")
     args = ap.parse_args()
+
+    # Derive TF/Ansible support from the LIVE provider + collections once (shared across every artifact),
+    # so the comparison reflects what each tool actually covers today. Falls back to the curated maps if
+    # terraform isn't installed or the registries are unreachable.
+    tools = None
+    if not args.no_derive_tools:
+        from app.services import tool_schemas as tssvc
+        try:
+            print("Deriving Terraform + Ansible support from the live provider/collections…")
+            tools = tssvc.from_live()
+            print(f"  terraform {tools.versions.get('terraform')} ({len(tools.tf_resources)} resources) · "
+                  f"ansible mgmt {tools.versions.get('ansible_mgmt')} / gaia {tools.versions.get('ansible_gaia')} "
+                  f"({len(tools.ans_modules)} modules)")
+        except tssvc.ToolSchemaError as exc:
+            print(f"  live derivation unavailable ({exc}); falling back to the curated maps")
+
     for api_type in (["management", "gaia"] if args.api == "both" else [args.api]):
         todo = _all_versions(api_type) if args.all else [args.version or _latest(api_type)]
         for version in todo:
@@ -43,7 +61,7 @@ def main():
                          if args.all else (args.spec or os.path.join(SPEC_ROOT, api_type, version, "openapi.json")))
             with open(spec_path) as f:
                 spec = json.load(f)
-            art = cb.build_from_spec(api_type, version, spec)
+            art = cb.build_from_spec(api_type, version, spec, tools=tools)
             if not art["object_count"]:
                 print(f"{api_type} {version}: 0 objects — skipped (no add-*/set-* paths in this spec)")
                 continue

@@ -72,6 +72,10 @@ def coverage_update(request: Request, api: str = "management", version: str = ""
     if result.get("ok") and result.get("added"):
         coverage._index.cache_clear()      # surface the new version in the picker
         coverage._artifact.cache_clear()
+    try:                                   # also report latest Terraform/Ansible versions vs the bundled
+        result["tools"] = coverage_build.tool_version_status(api, result.get("version") or version)
+    except Exception:  # noqa: BLE001 — best-effort; the CP-spec result still stands
+        pass
     return JSONResponse(result)
 
 
