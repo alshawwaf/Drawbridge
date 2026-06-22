@@ -18,6 +18,11 @@ def _excluded(path: str) -> bool:
         return True
     if path.endswith("/polls-fragment") or "/apply-status/" in path:
         return True
+    # The API-explorer proxy relays the user's REAL Management/Gateway request+response bodies (which can
+    # carry credentials / a session sid). Don't persist those to the activity log — it's a passthrough to
+    # the user's own server, not portal traffic worth capturing in full.
+    if path == "/api-explorer/proxy":
+        return True
     return False
 
 
