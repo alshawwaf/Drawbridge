@@ -58,6 +58,22 @@
 </td>
 {% endmacro %}
 
+{# Export dropdown (reuses the .menu component + global toggle). table_id = a registered exporter id;
+   query = the current view's querystring (no leading '?'), so the export matches what's on screen. The
+   links get id="exp-csv-<id>"/"exp-pdf-<id>" so a page with live (JS) filters can refresh their href. #}
+{% macro export_menu(table_id, query='') %}
+<div class="menu" style="display:inline-block;">
+  <button type="button" class="copybtn menu-trigger" aria-haspopup="true" aria-expanded="false" title="Export this table">
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:5px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Export <span class="msel-caret" style="margin-left:3px;">▾</span></button>
+  <div class="menu-items" role="menu" style="min-width:184px;">
+    <span class="menu-label">Export this view</span>
+    <a role="menuitem" id="exp-csv-{{ table_id }}" href="/export/{{ table_id }}.csv{{ ('?' ~ query) if query else '' }}">Download CSV</a>
+    <a role="menuitem" id="exp-pdf-{{ table_id }}" target="_blank" rel="noopener"
+       href="/export/{{ table_id }}/print?{{ (query ~ '&') if query else '' }}auto=1">Save as PDF…</a>
+  </div>
+</div>
+{% endmacro %}
+
 {# A "Columns" chooser popover (reuses the .msel component). columns = the table's spec (Col objects);
    visible = the resolved visible id list; next = the relative path to return to after saving. Locked
    columns render checked+disabled (server forces them in). Posts to /prefs/table/{id}/columns. #}

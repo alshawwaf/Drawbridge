@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros.html" import export_menu %}
 {% block title %}Access automation{% endblock %}
 {% block content %}
 {% from "_macros.html" import row_actions, columns_menu %}
@@ -9,6 +10,7 @@
     <p class="ph-sub">Turn a ticket request — <code>source → destination : service</code> — into the minimal correct change on a layer: reuse a rule that already permits it, widen one that almost does, or create a least-privilege rule at the right position. Pick a management server to start. Approvals stay in your ticketing system; this is the technical apply.</p>
   </div>
   <div class="ph-actions">
+    {{ export_menu('access-servers') }}
     <a class="btn secondary" href="/management">Manage servers →</a>
   </div>
 </div>

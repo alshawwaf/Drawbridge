@@ -42,9 +42,9 @@ TABLE_SPECS: dict[str, list[Col]] = {
     "gateways": [
         Col("name", "Name", locked=True),
         Col("address", "Address"),
+        Col("username", "Username"),
         Col("tls", "TLS"),
         Col("layers", "Layers"),
-        Col("username", "Username"),
         Col("created", "Created", default=False),
     ],
     "management": [

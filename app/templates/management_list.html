@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros.html" import export_menu %}
 {% block title %}Management Servers{% endblock %}
 {% block content %}
 {% from "_macros.html" import row_actions, columns_menu %}
@@ -9,6 +10,7 @@
     <p class="ph-sub">Connect to a Check Point Management Server (or MDS domain) over the <code>web_api</code> to pull, view, edit and export policy — for admins who manage specific layers without SmartConsole. Secrets are stored AES-256-encrypted; TLS verification stays on.</p>
   </div>
   <div class="ph-actions">
+    {{ export_menu('management') }}
     <a class="btn" href="/management/new">+ New management server</a>
   </div>
 </div>

@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros.html" import export_menu %}
 {% block title %}Activity log{% endblock %}
 {% block main_class %}wide{% endblock %}
 {% block content %}
@@ -68,6 +69,7 @@
       </div>
       <button type="button" class="linkbtn" id="reset-filters" hidden>↺ Reset</button>
       <span class="grow"></span>
+      {{ export_menu('activity') }}
       <button class="secondary" type="submit" formaction="/activity/clear" id="clear-btn" style="padding:8px 13px;"
               data-confirm="Clear all log entries matching the current view? This cannot be undone.">Clear all</button>
       <button class="danger" type="submit" id="del-btn" disabled style="padding:8px 11px;"
@@ -139,6 +141,13 @@
       var anyFilter = selectedKinds().length || selectedDc().length || selectedStatus().length || searchText();
       clearBtn.textContent = anyFilter ? 'Clear filtered' : 'Clear all';
       $('reset-filters').hidden = !anyFilter;
+      updateExportLinks();                       // keep CSV / PDF export matching the current filters
+    }
+    function updateExportLinks() {
+      var qs = query().toString();
+      var csv = $('exp-csv-activity'), pdf = $('exp-pdf-activity');
+      if (csv) csv.href = '/export/activity.csv' + (qs ? '?' + qs : '');
+      if (pdf) pdf.href = '/export/activity/print?' + (qs ? qs + '&' : '') + 'auto=1';
     }
     // Relative timestamps ("12s ago"), refreshed with each load + on a timer.
     function rel(iso) {
