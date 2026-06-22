@@ -182,54 +182,97 @@ def _example_value(name, schema, spec):
     return _OMIT   # no meaningful value to synthesise → leave it out of the example (never print "example")
 
 
-def _tf_obj_name(api_type, obj):
+# Object/field support is decided one of two ways. When a live ``ToolSchemas`` (tools) is supplied — the
+# DEFAULT for a bundled build — support is VERIFIED against the real provider resource set / collection
+# module set, so a new release that closes a gap is reflected automatically and the curated maps below
+# serve only as candidate-name *hints* (renames TF/Ansible don't derive from the API field name). When
+# tools is None (no terraform / no network), the curated maps are the source of truth (the old behaviour),
+# so a plain offline build and the test-suite still work.
+def _tf_obj_name(api_type, obj, tools=None):
+    cand = ("checkpoint_management_" if api_type == "management" else "checkpoint_gaia_") + obj.replace("-", "_")
+    if tools is not None:
+        return cand if cand in tools.tf_resources else None
     if api_type == "management":
-        return None if obj in TF_MISSING_OBJECTS else "checkpoint_management_" + obj.replace("-", "_")
-    return "checkpoint_gaia_" + obj.replace("-", "_")   # the provider covers ~all Gaia objects
+        return None if obj in TF_MISSING_OBJECTS else cand
+    return cand                               # curated: the provider covers ~all Gaia objects
 
 
-def _ans_obj_name(api_type, obj):
+def _ans_obj_name(api_type, obj, tools=None):
     if api_type == "management":
-        return None if obj in _MGMT_ANSIBLE_MISSING else "cp_mgmt_" + obj.replace("-", "_")
-    if obj not in _GAIA_ANSIBLE_OBJECTS:
-        return None   # many Gaia objects (routing, arp, lldp, dhcp6, …) have no cp_gaia_* module
-    return "cp_gaia_" + _GAIA_ANSIBLE_MODULE.get(obj, obj.replace("-", "_"))
+        cand = "cp_mgmt_" + obj.replace("-", "_")
+        if tools is not None:
+            return cand if cand in tools.ans_modules else None
+        return None if obj in _MGMT_ANSIBLE_MISSING else cand
+    cands = ["cp_gaia_" + _GAIA_ANSIBLE_MODULE.get(obj, obj.replace("-", "_")),
+             "cp_gaia_" + obj.replace("-", "_")]
+    if tools is not None:
+        return next((c for c in cands if c in tools.ans_modules), None)
+    return cands[0] if obj in _GAIA_ANSIBLE_OBJECTS else None
 
 
-def _tf_field_name(api_type, fname, tf_obj, ftype=None):
-    """The Terraform argument name for an API field, or None if TF has no equivalent. For management,
-    generic fields TF splits (ip-address → ipv4_address) resolve to the real TF arg; Gaia fields are 1:1."""
+def _tf_field_candidates(api_type, fname, ftype):
+    """Ordered Terraform arg names an API field could map to (rename hints first — TF uses ipv4_address,
+    not ip_address — then the plain hyphens→underscores form)."""
+    if api_type != "management":
+        return [fname.replace("-", "_")]
+    c = []
+    if fname == "vpn":                         # community LIST → vpn_communities; boolean blade → vpn
+        c.append("vpn_communities" if ftype == "array" else "vpn")
+    if fname in _MGMT_TF_RENAME:
+        c.append(_MGMT_TF_RENAME[fname])
+    c.append(fname.replace("-", "_"))
+    return c
+
+
+def _ans_field_candidates(api_type, fname):
+    """Ordered Ansible option names — the collection mirrors the API field (hyphens→underscores) first,
+    with the v4/v6 rename as a fallback."""
+    c = [fname.replace("-", "_")]
+    if api_type == "management" and fname in _MGMT_TF_RENAME:
+        c.append(_MGMT_TF_RENAME[fname])
+    return c
+
+
+def _tf_field_name(api_type, fname, tf_obj, ftype=None, tools=None):
+    """The Terraform argument name for an API field, or None if TF has no equivalent."""
     if tf_obj is None:
         return None
-    if api_type == "management":
-        if fname in _MGMT_TF_NO_FIELD:
-            return None
-        if fname == "vpn":                     # community LIST → vpn_communities; boolean blade → vpn
-            return "vpn_communities" if ftype == "array" else "vpn"
-        return _MGMT_TF_RENAME.get(fname, fname.replace("-", "_"))
-    return fname.replace("-", "_")
+    cands = _tf_field_candidates(api_type, fname, ftype)
+    if tools is not None:                      # verified against the resource's real arg set
+        args = tools.tf_resources.get(tf_obj, set())
+        return next((c for c in cands if c in args), None)
+    if api_type == "management" and fname in _MGMT_TF_NO_FIELD:
+        return None
+    return cands[0]
 
 
-def _ans_field_name(fname, ans_obj):
-    return None if ans_obj is None else fname.replace("-", "_")   # collections mirror the API field set
+def _ans_field_name(fname, ans_obj, api_type="management", tools=None):
+    if ans_obj is None:
+        return None
+    cands = _ans_field_candidates(api_type, fname)
+    if tools is not None:                      # verified against the module's real option set
+        opts = tools.ans_modules.get(ans_obj, set())
+        return next((c for c in cands if c in opts), None)
+    return cands[0]                            # curated: collections mirror the API field set
 
 
-def _field_support(api_type, fname, tf_obj, ans_obj, ftype=None):
-    tfn, ann = _tf_field_name(api_type, fname, tf_obj, ftype), _ans_field_name(fname, ans_obj)
+def _field_support(api_type, fname, tf_obj, ans_obj, ftype=None, tools=None):
+    tfn = _tf_field_name(api_type, fname, tf_obj, ftype, tools)
+    ann = _ans_field_name(fname, ans_obj, api_type, tools)
     return {"api": True, "request_only": fname in REQUEST_ONLY,
             "tf": tfn is not None, "ansible": ann is not None,
             "tf_name": tfn, "ansible_name": ann}
 
 
-def _build_object(spec, api_type, path):
+def _build_object(spec, api_type, path, tools=None):
     cmd = path.lstrip("/")
     obj = re.sub(r"^(add|set)-", "", cmd)
-    tf_obj, ans_obj = _tf_obj_name(api_type, obj), _ans_obj_name(api_type, obj)
+    tf_obj, ans_obj = _tf_obj_name(api_type, obj, tools), _ans_obj_name(api_type, obj, tools)
     schema = _request_schema(spec, path)
     required = (_resolve(schema, spec).get("required")) or []
     fields, example = [], {}
     for fname, fschema in _properties(schema, spec).items():
-        sup = _field_support(api_type, fname, tf_obj, ans_obj, fschema.get("type"))
+        sup = _field_support(api_type, fname, tf_obj, ans_obj, fschema.get("type"), tools)
         fields.append({"name": fname, "type": fschema.get("type", "string"), "enum": fschema.get("enum"),
                        "required": fname in required, **sup})
         if not sup["request_only"]:
@@ -240,13 +283,16 @@ def _build_object(spec, api_type, path):
             "fields": fields, "example": example}
 
 
-def build_from_spec(api_type: str, version: str, spec: dict) -> dict:
-    """Turn one OpenAPI document into the coverage artifact."""
+def build_from_spec(api_type: str, version: str, spec: dict, tools=None) -> dict:
+    """Turn one OpenAPI document into the coverage artifact. ``tools`` (a tool_schemas.ToolSchemas) makes
+    TF/Ansible support derived from the live provider + collections; omitted -> the curated maps."""
     prefixes = ("/add-",) if api_type == "management" else ("/add-", "/set-")
     paths = sorted(p for p in spec.get("paths", {}) if p.startswith(prefixes))
-    objects = [_build_object(spec, api_type, p) for p in paths]
-    return {"api_type": api_type, "version": version, "tool_versions": TOOL_VERSIONS,
-            "source": "CP-Docs-To-Swagger OpenAPI", "object_count": len(objects), "objects": objects}
+    objects = [_build_object(spec, api_type, p, tools) for p in paths]
+    tool_versions = dict(tools.versions) if (tools is not None and tools.versions) else dict(TOOL_VERSIONS)
+    return {"api_type": api_type, "version": version, "tool_versions": tool_versions,
+            "tools_derived": tools is not None, "source": "CP-Docs-To-Swagger OpenAPI",
+            "object_count": len(objects), "objects": objects}
 
 
 def write_artifact(art: dict, out_dir: str | None = None) -> str:
@@ -397,6 +443,26 @@ def openapi_spec(api_type: str, version: str = "", server_url: str = "") -> dict
 
 def explorer_spec_cache_clear() -> None:
     _cached_spec.cache_clear()
+
+
+def tool_version_status(api_type: str, version: str) -> dict:
+    """Compare the bundled artifact's BAKED Terraform/Ansible versions against the LATEST published on the
+    Terraform Registry + Ansible Galaxy, so 'Check for updates' can flag 'a newer provider/collection is
+    available — re-bake to refresh support'. Lightweight + best-effort (returns blanks on failure)."""
+    from . import coverage, tool_schemas
+    baked = (coverage._artifact(api_type, version) or {}).get("tool_versions", {}) or {}
+    latest = tool_schemas.latest_versions()
+
+    def num(v):
+        m = re.search(r"(\d[\d.]*)", str(v or ""))
+        return m.group(1) if m else ""
+
+    keys = ("terraform", "ansible_mgmt", "ansible_gaia")
+    baked_n = {k: num(baked.get(k)) for k in keys}
+    latest_n = {k: num(latest.get(k)) for k in keys}
+    outdated = {k: bool(baked_n[k] and latest_n[k] and baked_n[k] != latest_n[k]) for k in keys}
+    return {"baked": baked_n, "latest": latest_n, "outdated": outdated,
+            "any_outdated": any(outdated.values())}
 
 
 def _norm_version(spec: dict, fallback: str) -> str:
