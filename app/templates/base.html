@@ -166,7 +166,7 @@
 
     /* ============================ Table ============================ */
     .tablewrap { overflow-x:auto; }
-    .tablewrap:has(.menu.open) { overflow:visible; }   /* let an open row-action menu escape the scroll clip */
+    .tablewrap:has(.menu.open), .tablewrap:has(.msel.open) { overflow:visible; }   /* let an open row-action / columns menu escape the scroll clip */
     table { width:100%; border-collapse:collapse; }
     thead th { text-align:left; padding:11px 16px; color:var(--faint); font-weight:700; font-size:10.5px;
       text-transform:uppercase; letter-spacing:.7px; background:var(--surface-3);
@@ -434,7 +434,8 @@
     .msel-caret { color:var(--faint); font-size:9px; }
     .msel-panel { position:absolute; top:calc(100% + 8px); left:0; min-width:216px; background:var(--surface-2);
       border:1px solid var(--line); border-radius:12px; box-shadow:var(--shadow-lg); z-index:600; padding:6px; display:none;
-      max-height:340px; overflow-y:auto; }
+      max-height:340px; overflow-y:auto;
+      text-transform:none; letter-spacing:normal; font-weight:400; font-size:13px; line-height:1.45; color:var(--text); }
     .msel-panel.right { left:auto; right:0; }
     .msel.open .msel-panel { display:block; animation:pop .14s ease; }
     .msel-opt { display:flex; align-items:center; gap:10px; padding:7px 10px; border-radius:8px; cursor:pointer;
