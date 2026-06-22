@@ -114,8 +114,8 @@ def build_request(source, destination, protocol, port, application=None, service
     if service:
         return AccessRequest(src_cidrs=[src_cidr], dst_cidrs=[dst_cidr], service=service)
     protocol = str(protocol or "tcp").lower()
-    if protocol not in ("tcp", "udp"):
-        raise ValueError("protocol must be 'tcp' or 'udp'.")
+    if protocol not in ("tcp", "udp", "sctp"):   # the port-based protocols; ICMP/GRE/RPC/… go via `service`
+        raise ValueError("protocol must be 'tcp', 'udp', or 'sctp' (use a named service otherwise).")
     return AccessRequest(src_cidrs=[src_cidr], dst_cidrs=[dst_cidr],
                          protocol=protocol, ports=_validate_port(port))
 

@@ -30,18 +30,37 @@
       <input id="aa-source" placeholder="192.168.9.9"></label></div>
     <div class="grow"><label>Destination <span class="muted">(ip, cidr, or Any)</span>
       <input id="aa-dest" placeholder="172.16.5.10"></label></div>
-    <div style="width:110px;"><label>Protocol
-      <select id="aa-proto"><option value="tcp">tcp</option><option value="udp">udp</option></select></label></div>
-    <div style="width:120px;"><label>Port <span class="muted">(or range)</span>
+    <div style="width:170px;"><label>Service type
+      <select id="aa-svctype">
+        <optgroup label="Port-based">
+          <option value="tcp">TCP</option>
+          <option value="udp">UDP</option>
+          <option value="sctp">SCTP</option>
+        </optgroup>
+        <optgroup label="Other protocol / service">
+          <option value="icmp">ICMP</option>
+          <option value="rpc">RPC</option>
+          <option value="dce-rpc">DCE-RPC</option>
+          <option value="gtp">GTP</option>
+          <option value="compound-tcp">Compound TCP</option>
+          <option value="citrix-tcp">Citrix TCP</option>
+          <option value="other">Other (IP protocol)</option>
+          <option value="group">Services group</option>
+        </optgroup>
+        <optgroup label="Application Control">
+          <option value="app">Application / Site</option>
+        </optgroup>
+      </select></label></div>
+    <div style="width:120px;" id="aa-port-wrap"><label>Port <span class="muted">(or range)</span>
       <input id="aa-port" placeholder="443"></label></div>
-    <div style="width:150px;"><label>Service <span class="muted">(optional)</span>
-      <input id="aa-svc" placeholder="icmp, GRE…" list="aa-svclist" autocomplete="off">
+    <div style="width:180px;" id="aa-svc-wrap" hidden><label>Service <span class="muted" id="aa-svc-hint">name</span>
+      <input id="aa-svc" placeholder="echo-request, GRE…" list="aa-svclist" autocomplete="off">
       <datalist id="aa-svclist"></datalist></label></div>
-    <div style="width:160px;"><label>Application <span class="muted">(optional)</span>
+    <div style="width:180px;" id="aa-app-wrap" hidden><label>Application / site
       <input id="aa-app" placeholder="Facebook" list="aa-applist" autocomplete="off">
       <datalist id="aa-applist"></datalist></label></div>
   </div>
-  <p class="muted" style="margin:2px 0 0; font-size:12px;">Fill <b>Service</b> (e.g. icmp, GRE, AH) for a non-TCP/UDP protocol, or <b>Application</b> (e.g. Facebook) for an app — each is correlated to the real Check Point object. Precedence: Application &rsaquo; Service &rsaquo; protocol/port.</p>
+  <p class="muted" style="margin:2px 0 0; font-size:12px;">Pick the <b>Service type</b> — Check Point isn’t only TCP/UDP. Port-based (TCP/UDP/SCTP) takes a <b>port</b>; ICMP, RPC, DCE-RPC, GTP, Compound/Citrix TCP, “Other” (an IP protocol) and a services group are matched by <b>name</b> (correlated to the real predefined object); Application/Site matches an app. The engine reasons about each kind correctly — distinct protocols never falsely overlap a port.</p>
   <div class="row" style="margin-top:14px; gap:8px;">
     <button type="button" class="btn" id="aa-preview">Preview decision</button>
     <button type="button" class="btn secondary" id="aa-validate" disabled>Dry-run apply (validate)</button>
@@ -163,17 +182,34 @@ Content-Type: application/json
       }
       return h + '</div>';
     }
+    var PORT_BASED = { tcp: 1, udp: 1, sctp: 1 };
+    function svcType() { return document.getElementById('aa-svctype').value; }
     function body() {
-      return {
+      var t = svcType();
+      var b = {
         layer: layerSel.value || '',
         source: document.getElementById('aa-source').value.trim(),
         destination: document.getElementById('aa-dest').value.trim(),
-        protocol: document.getElementById('aa-proto').value,
-        port: document.getElementById('aa-port').value.trim(),
-        service: document.getElementById('aa-svc').value.trim(),
-        application: document.getElementById('aa-app').value.trim(),
+        protocol: 'tcp', port: '', service: '', application: '',
         ticket_id: document.getElementById('aa-ticket').value.trim()
       };
+      // the single Service-type selector decides which one of {port, named service, application} is sent
+      if (PORT_BASED[t]) { b.protocol = t; b.port = document.getElementById('aa-port').value.trim(); }
+      else if (t === 'app') { b.application = document.getElementById('aa-app').value.trim(); }
+      else { b.service = document.getElementById('aa-svc').value.trim(); }
+      return b;
+    }
+    // show the input that matches the chosen service type; the predefined named protocols filter the
+    // type-ahead to their Check Point object kind so the right object is suggested.
+    var SVC_HINTS = { icmp: 'icmp / icmp6', rpc: 'RPC', 'dce-rpc': 'DCE-RPC', gtp: 'GTP',
+                      'compound-tcp': 'Compound TCP', 'citrix-tcp': 'Citrix TCP',
+                      other: 'IP protocol — GRE, AH, ESP…', group: 'services group' };
+    function syncSvcType() {
+      var t = svcType(), named = !PORT_BASED[t] && t !== 'app';
+      document.getElementById('aa-port-wrap').hidden = !PORT_BASED[t];
+      document.getElementById('aa-svc-wrap').hidden = !named;
+      document.getElementById('aa-app-wrap').hidden = t !== 'app';
+      if (named) document.getElementById('aa-svc-hint').textContent = SVC_HINTS[t] || 'name';
     }
     function outcomeBadge(o) {
       var map = {
@@ -307,25 +343,37 @@ Content-Type: application/json
     result.addEventListener('click', function (e) {
       var chip = e.target.closest ? e.target.closest('[data-app],[data-svc]') : null;
       if (!chip) return;
-      if (chip.hasAttribute('data-app')) document.getElementById('aa-app').value = chip.getAttribute('data-app');
-      else document.getElementById('aa-svc').value = chip.getAttribute('data-svc');
+      if (chip.hasAttribute('data-app')) {
+        document.getElementById('aa-svctype').value = 'app';      // chip implies the Application/Site kind
+        document.getElementById('aa-app').value = chip.getAttribute('data-app');
+      } else {
+        document.getElementById('aa-svc').value = chip.getAttribute('data-svc');   // stays the chosen named kind
+      }
+      syncSvcType();
       call('preview', 'preview');
     });
 
     // Re-preview (and lock apply) whenever an input changes, so apply always matches what's shown.
-    ['aa-layer', 'aa-source', 'aa-dest', 'aa-proto', 'aa-port', 'aa-svc', 'aa-app', 'aa-ticket'].forEach(function (eid) {
+    ['aa-layer', 'aa-source', 'aa-dest', 'aa-svctype', 'aa-port', 'aa-svc', 'aa-app', 'aa-ticket'].forEach(function (eid) {
       document.getElementById(eid).addEventListener('change', function () { setActionable(false); });
     });
+    document.getElementById('aa-svctype').addEventListener('change', syncSvcType);
+    syncSvcType();                                   // set the initial visible input (TCP -> Port)
 
     // Type-ahead: real Check Point applications / services matching what's typed (debounced).
-    function typeahead(inputId, listId, path) {
+    // ``kindFn`` (optional) returns the Check Point service kind to filter to, so e.g. picking ICMP only
+    // suggests service-icmp/icmp6 objects — the right object for the chosen protocol.
+    function typeahead(inputId, listId, path, kindFn) {
       var inp = document.getElementById(inputId), lst = document.getElementById(listId), t;
       inp.addEventListener('input', function () {
         var q = inp.value.trim();
         clearTimeout(t);
         if (q.length < 2) { lst.innerHTML = ''; return; }
         t = setTimeout(function () {
-          fetch('/access-automation/' + id + '/' + path + '?q=' + encodeURIComponent(q))
+          var url = '/access-automation/' + id + '/' + path + '?q=' + encodeURIComponent(q);
+          var kind = kindFn ? kindFn() : '';
+          if (kind) url += '&kind=' + encodeURIComponent(kind);
+          fetch(url)
             .then(function (r) { return r.json(); })
             .then(function (d) {
               lst.innerHTML = (d.candidates || []).slice(0, 12).map(function (c) {
@@ -336,7 +384,7 @@ Content-Type: application/json
       });
     }
     typeahead('aa-app', 'aa-applist', 'app-search');
-    typeahead('aa-svc', 'aa-svclist', 'svc-search');
+    typeahead('aa-svc', 'aa-svclist', 'svc-search', function () { var t = svcType(); return PORT_BASED[t] || t === 'app' ? '' : t; });
 
     fetch('/management/' + id + '/layers').then(function (r) { return r.json(); })
       .then(function (data) {

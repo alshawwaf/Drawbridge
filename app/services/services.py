@@ -17,11 +17,26 @@ _cache: dict = {}
 _RESOLVE_LIMIT = 200      # deep page so a duplicate can't hide past it (truncation guard, like apps)
 
 
-def _query(session, term: str, limit: int) -> list[dict]:
-    """All service-* objects matching ``term`` (one show-objects call, filtered client-side by type)."""
+# A picked Service type -> the Check Point object type(s) to keep. ICMP spans both families; the rest map
+# 1:1. An unknown/empty kind keeps every service-* type (the original behaviour).
+_KIND_TYPES: dict = {
+    "icmp": ("service-icmp", "service-icmp6"), "sctp": ("service-sctp",),
+    "rpc": ("service-rpc",), "dce-rpc": ("service-dce-rpc",), "gtp": ("service-gtp",),
+    "compound-tcp": ("service-compound-tcp",), "citrix-tcp": ("service-citrix-tcp",),
+    "other": ("service-other",), "group": ("service-group",),
+    "tcp": ("service-tcp",), "udp": ("service-udp",),
+}
+
+
+def _query(session, term: str, limit: int, kind: str = "") -> list[dict]:
+    """Service-* objects matching ``term`` (one show-objects call, filtered client-side by type). When
+    ``kind`` is a known Service type, restrict to that object type so the suggestions match the protocol
+    the user picked (e.g. icmp -> only service-icmp / service-icmp6)."""
+    keep = _KIND_TYPES.get((kind or "").lower())
     try:
         r = session.call("show-objects", {"filter": term, "limit": limit, "details-level": "standard"})
-        return [o for o in (r.get("objects") or []) if (o.get("type") or "").startswith("service-")]
+        objs = [o for o in (r.get("objects") or []) if (o.get("type") or "").startswith("service-")]
+        return [o for o in objs if o.get("type") in keep] if keep else objs
     except Exception:  # noqa: BLE001 — best-effort; a failure just yields no candidates
         return []
 
@@ -44,17 +59,18 @@ def _candidates(objects: list[dict]) -> list[dict]:
     return out
 
 
-def search(session, term: str, limit: int = 40) -> list[dict]:
-    """Candidate services matching ``term`` (for the UI type-ahead). Cached ~60s per (server, term)."""
+def search(session, term: str, limit: int = 40, kind: str = "") -> list[dict]:
+    """Candidate services matching ``term`` (for the UI type-ahead), optionally restricted to a picked
+    Service ``kind``. Cached ~60s per (server, term, kind)."""
     term = (term or "").strip()
     if len(term) < 2:
         return []
-    key = (_server_key(session), term.lower(), limit)
+    key = (_server_key(session), term.lower(), limit, (kind or "").lower())
     now = time.monotonic()
     hit = _cache.get(key)
     if hit and hit[0] > now:
         return hit[1]
-    cands = _candidates(_query(session, term, limit))
+    cands = _candidates(_query(session, term, limit, kind))
     _cache[key] = (now + _TTL, cands)
     return cands
 
@@ -90,7 +106,7 @@ def resolve(session, term: str) -> dict:
     return out
 
 
-def search_server(server, secret: str, term: str) -> list[dict]:
+def search_server(server, secret: str, term: str, kind: str = "") -> list[dict]:
     from .mgmt_api import read_session
     with read_session(server, secret) as s:
-        return search(s, term)
+        return search(s, term, kind=kind)

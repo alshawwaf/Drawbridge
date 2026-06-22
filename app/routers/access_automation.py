@@ -152,8 +152,10 @@ def aa_app_search(sid: int, request: Request, q: str = "", db: Session = Depends
 
 
 @router.get("/access-automation/{sid}/svc-search")
-def aa_svc_search(sid: int, request: Request, q: str = "", db: Session = Depends(get_db)):
-    """Type-ahead: real Check Point services matching ``q`` (icmp, GRE, sctp, …). Best-effort -> []."""
+def aa_svc_search(sid: int, request: Request, q: str = "", kind: str = "", db: Session = Depends(get_db)):
+    """Type-ahead: real Check Point services matching ``q`` (icmp, GRE, GTP, …). ``kind`` (the picked
+    Service type: icmp/rpc/dce-rpc/gtp/other/…) narrows the suggestions to that object type so the right
+    object is offered. Best-effort -> []."""
     user = get_user_or_none(request, db)
     if user is None:
         return JSONResponse({"error": "Not authenticated"}, status_code=401)
@@ -162,7 +164,7 @@ def aa_svc_search(sid: int, request: Request, q: str = "", db: Session = Depends
     if err:
         return JSONResponse({"candidates": []})
     try:
-        return JSONResponse({"candidates": services.search_server(ms, secret, q)})
+        return JSONResponse({"candidates": services.search_server(ms, secret, q, kind=kind)})
     except Exception:  # noqa: BLE001
         return JSONResponse({"candidates": []})
 
