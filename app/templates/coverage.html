@@ -17,7 +17,28 @@
   table.cov th, table.cov td { padding:6px 9px; text-align:left; border-bottom:1px solid var(--line); font-size:12.5px; }
   table.cov col.c-obj { width:34%; } table.cov col.c-sup { width:11%; } table.cov col.c-cnt { width:11%; }
   table.cov th:nth-child(n+2), table.cov td:nth-child(n+2) { text-align:center; }
-  .covgroup { margin:18px 0 4px; font-weight:700; } .covgroup .cnt { font-weight:500; color:var(--faint); font-size:12px; margin-left:6px; }
+  /* the "No" (no tool equivalent) is a gap — make it unmistakably red, not a faint neutral pill */
+  table.cov .pill.no { background:var(--danger); color:#fff; font-weight:700; }
+  /* object exists but the tool is missing some managed fields (e.g. 7/8) — amber, distinct from a red No */
+  table.cov .fdef { color:var(--warn); font-weight:700; }
+  /* collapsible category sections */
+  .covsec { margin:14px 0 2px; }
+  .covgroup { display:flex; align-items:center; gap:9px; margin:0; padding:9px 8px; cursor:pointer;
+    border-radius:10px; user-select:none; }
+  .covgroup:hover { background:var(--header-hover); }
+  .covgroup:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+  .cov-chev { color:var(--faint); font-size:11px; width:11px; transition:transform .14s; transform:rotate(90deg); }
+  .covsec.collapsed .cov-chev { transform:rotate(0deg); }
+  .covsec.collapsed .covbody { display:none; }
+  .covgroup .cov-title { font-weight:700; }
+  .covgroup .cnt { font-weight:500; color:var(--faint); font-size:12px; }
+  .gapbadge { font-size:11px; font-weight:700; color:var(--danger); background:var(--danger-bg);
+    border-radius:var(--r-pill); padding:2px 9px; }
+  .okbadge { font-size:11px; font-weight:600; color:var(--ok); background:var(--ok-bg);
+    border-radius:var(--r-pill); padding:2px 9px; }
+  .cov-toggle { display:inline-flex; align-items:center; gap:7px; cursor:pointer; font-weight:600; }
+  .cov-toggle input { margin:0; }
+  .cov-empty { color:var(--faint); padding:16px 8px; font-size:13px; }
   tr.obj { cursor:pointer; } tr.obj:hover td { background:var(--header-hover); }
   tr.obj .tw { color:var(--faint); font-family:ui-monospace,monospace; font-size:11px; }
   .detail { background:var(--subtle-bg); }
@@ -55,6 +76,17 @@
   <button class="copybtn" id="cov-update" type="button">Check for updates ↻</button>
   <input id="filter" type="text" placeholder="filter objects…" style="margin-left:auto; min-width:180px;">
 </div>
+{% set total_gap = groups | sum(attribute='incomplete') %}
+<div class="cov-bar" style="margin-top:-4px;">
+  <label class="cov-toggle"><input type="checkbox" id="gaps-only"> Show gaps only
+    {% if total_gap %}<span class="gapbadge">{{ total_gap }}</span>{% else %}<span class="okbadge">✓ none</span>{% endif %}
+  </label>
+  <span class="muted" style="font-size:12px;">objects not fully supported across API · Terraform · Ansible</span>
+  <span style="margin-left:auto; display:flex; gap:8px;">
+    <button class="copybtn" id="cov-expand" type="button">Expand all</button>
+    <button class="copybtn" id="cov-collapse" type="button">Collapse all</button>
+  </span>
+</div>
 <div class="leg" style="margin-bottom:8px;">
   <span><b class="yes">✓</b> supported</span><span><b class="no">✗</b> no equivalent (gap)</span><span><b class="na">n/a</b> request-only param — not a managed field</span>
   <span class="muted">click a row for full example + field diff · web_api is authoritative</span>
@@ -63,23 +95,33 @@
 
 <div id="cov-root" data-api="{{ api_type }}" data-version="{{ version }}">
 {% for g in groups %}
-  <div class="covgroup">{{ g.title }}<span class="cnt">· {{ g.total }} objects{% if g.gaps %} · {{ g.gaps }} with a tool gap{% endif %}</span></div>
-  <table class="cov">
-    <colgroup><col class="c-obj"><col class="c-sup"><col class="c-sup"><col class="c-sup"><col class="c-cnt"></colgroup>
-    <thead><tr><th>Object / command</th><th>web_api</th><th>Terraform</th><th>Ansible</th><th class="num">fields (TF/Ans)</th></tr></thead>
-    <tbody>
-    {% for r in g.rows %}
-      <tr class="obj" data-name="{{ r.name }}">
-        <td class="mono"><b>{{ r.name }}</b> <span class="tw">{{ r.command }}</span></td>
-        <td><span class="pill ok">Yes</span></td>
-        <td>{% if r.has_tf %}<span class="pill ok">Yes</span>{% else %}<span class="pill faint">No</span>{% endif %}</td>
-        <td>{% if r.has_ansible %}<span class="pill ok">Yes</span>{% else %}<span class="pill faint">No</span>{% endif %}</td>
-        <td class="muted num">{{ r.fields }} · {{ r.tf_fields }}/{{ r.ansible_fields }}</td>
-      </tr>
-    {% endfor %}
-    </tbody>
-  </table>
+  <section class="covsec">
+    <div class="covgroup" role="button" tabindex="0" aria-expanded="true">
+      <span class="cov-chev">▸</span>
+      <span class="cov-title">{{ g.title }}</span>
+      <span class="cnt">{{ g.total }} object{{ 's' if g.total != 1 else '' }}</span>
+      {% if g.incomplete %}<span class="gapbadge">{{ g.incomplete }} gap{{ 's' if g.incomplete != 1 else '' }}</span>{% else %}<span class="okbadge">✓ complete</span>{% endif %}
+    </div>
+    <div class="covbody">
+    <table class="cov">
+      <colgroup><col class="c-obj"><col class="c-sup"><col class="c-sup"><col class="c-sup"><col class="c-cnt"></colgroup>
+      <thead><tr><th>Object / command</th><th>web_api</th><th>Terraform</th><th>Ansible</th><th class="num">fields (TF/Ans)</th></tr></thead>
+      <tbody>
+      {% for r in g.rows %}
+        <tr class="obj" data-name="{{ r.name }}" data-full="{{ '1' if r.full else '0' }}">
+          <td class="mono"><b>{{ r.name }}</b> <span class="tw">{{ r.command }}</span></td>
+          <td><span class="pill ok">Yes</span></td>
+          <td>{% if r.has_tf %}<span class="pill ok">Yes</span>{% else %}<span class="pill no">No</span>{% endif %}</td>
+          <td>{% if r.has_ansible %}<span class="pill ok">Yes</span>{% else %}<span class="pill no">No</span>{% endif %}</td>
+          <td class="muted num">{{ r.fields }} · <span class="{{ 'fdef' if r.has_tf and not r.tf_full else '' }}">{{ r.tf_fields }}</span>/<span class="{{ 'fdef' if r.has_ansible and not r.ans_full else '' }}">{{ r.ansible_fields }}</span></td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </section>
 {% endfor %}
+  <p class="cov-empty" id="cov-none" hidden>No objects match — clear the filter or turn off “gaps only”.</p>
 </div>
 
 <div class="modal-overlay" id="upd-modal" hidden>
@@ -98,13 +140,70 @@
     document.getElementById('ver').addEventListener('change', function () {
       window.location = '/coverage?api=' + api + '&version=' + encodeURIComponent(this.value);
     });
-    document.getElementById('filter').addEventListener('input', function () {
-      var q = this.value.toLowerCase();
-      root.querySelectorAll('tr.obj').forEach(function (tr) {
-        tr.style.display = tr.getAttribute('data-name').indexOf(q) > -1 ? '' : 'none';
-        if (tr._detail) tr._detail.style.display = 'none';
+    // --- filter (text) + "gaps only" + collapsible categories ---------------------------------
+    var filterInput = document.getElementById('filter');
+    var gapsChk = document.getElementById('gaps-only');
+    var noneMsg = document.getElementById('cov-none');
+    var STORE = 'cov:' + api;
+    var q = '', gapsOnly = false;
+
+    function rowVisible(tr) {
+      var nameOk = tr.getAttribute('data-name').indexOf(q) > -1;
+      var gapOk = !gapsOnly || tr.getAttribute('data-full') !== '1';   // data-full=1 → fully supported
+      return nameOk && gapOk;
+    }
+    function expand(sec, open) {
+      sec.classList.toggle('collapsed', !open);
+      var h = sec.querySelector('.covgroup'); if (h) h.setAttribute('aria-expanded', String(open));
+    }
+    function applyFilters() {
+      q = (filterInput.value || '').toLowerCase();
+      var active = !!(gapsOnly || q), shown = 0;
+      root.querySelectorAll('.covsec').forEach(function (sec) {
+        var any = false;
+        sec.querySelectorAll('tr.obj').forEach(function (tr) {
+          var vis = rowVisible(tr);
+          tr.style.display = vis ? '' : 'none';
+          if (tr._detail) tr._detail.style.display = vis ? '' : 'none';   // keep an open detail in sync both ways
+          if (vis) { any = true; shown++; }
+        });
+        sec.style.display = (active && !any) ? 'none' : '';        // hide categories with no matches
+        if (!active) sec._userCollapsed = false;                   // reset manual intent when not filtering
+        if (active && any && !sec._userCollapsed) expand(sec, true);  // surface matches, unless user collapsed it
+      });
+      if (noneMsg) noneMsg.hidden = !(active && shown === 0);
+    }
+    function setAllCollapsed(c) {
+      root.querySelectorAll('.covsec').forEach(function (sec) {
+        sec._userCollapsed = c;
+        expand(sec, !c);
+      });
+    }
+
+    filterInput.addEventListener('input', applyFilters);
+    gapsChk.addEventListener('change', function () {
+      gapsOnly = this.checked;
+      try { localStorage.setItem(STORE + ':gaps', gapsOnly ? '1' : '0'); } catch (e) {}
+      applyFilters();
+    });
+    document.getElementById('cov-expand').addEventListener('click', function () { setAllCollapsed(false); });
+    document.getElementById('cov-collapse').addEventListener('click', function () { setAllCollapsed(true); });
+
+    root.querySelectorAll('.covgroup').forEach(function (h) {
+      function toggle() {
+        var sec = h.closest('.covsec'); if (!sec) return;
+        var collapsed = sec.classList.contains('collapsed');
+        sec._userCollapsed = !collapsed;            // remember intent so an active filter won't fight it
+        expand(sec, collapsed);
+      }
+      h.addEventListener('click', toggle);
+      h.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); }
       });
     });
+
+    try { if (localStorage.getItem(STORE + ':gaps') === '1') { gapsChk.checked = true; gapsOnly = true; } } catch (e) {}
+    applyFilters();
     function esc(s) { var d = document.createElement('div'); d.textContent = (s == null ? '' : s); return d.innerHTML; }
 
     function link(inner, url) {

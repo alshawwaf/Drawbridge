@@ -99,12 +99,21 @@ def object_groups(api_type: str, version: str) -> list[dict]:
     buckets: dict[str, list] = {}
     for o in art.get("objects", []):
         stored = [f for f in o["fields"] if not f.get("request_only")]
+        n = len(stored)
+        tf_fields = sum(1 for f in stored if f["tf"])
+        ansible_fields = sum(1 for f in stored if f["ansible"])
+        has_tf = o["terraform"] is not None
+        has_ansible = o["ansible"] is not None
+        # "Fully supported" = the tool has the object AND covers every managed field. request-only
+        # params are already excluded from `stored`, so a shortfall here is a genuine field gap (e.g.
+        # subordinate-ca 7/8), not an n/a artefact — surfaced so partials aren't hidden behind a green Yes.
+        tf_full = has_tf and tf_fields >= n
+        ans_full = has_ansible and ansible_fields >= n
         row = {
             "name": o["name"], "command": o["command"],
-            "has_tf": o["terraform"] is not None, "has_ansible": o["ansible"] is not None,
-            "fields": len(stored),
-            "tf_fields": sum(1 for f in stored if f["tf"]),
-            "ansible_fields": sum(1 for f in stored if f["ansible"]),
+            "has_tf": has_tf, "has_ansible": has_ansible,
+            "fields": n, "tf_fields": tf_fields, "ansible_fields": ansible_fields,
+            "tf_full": tf_full, "ans_full": ans_full, "full": tf_full and ans_full,
         }
         buckets.setdefault(_category(api_type, o["name"]), []).append(row)
     order = [c[0] for c in (_MGMT_CATS if api_type == "management" else _GAIA_CATS)] + ["Other"]
@@ -113,7 +122,10 @@ def object_groups(api_type: str, version: str) -> list[dict]:
         rows = sorted(buckets.get(cat, []), key=lambda r: r["name"])
         if rows:
             out.append({"title": cat, "rows": rows, "total": len(rows),
-                        "gaps": sum(1 for r in rows if not (r["has_tf"] and r["has_ansible"]))})
+                        # object-level misses (kept for back-compat) + the richer "not fully supported"
+                        # count (object OR field gap) that drives the header badge + "gaps only" filter.
+                        "gaps": sum(1 for r in rows if not (r["has_tf"] and r["has_ansible"])),
+                        "incomplete": sum(1 for r in rows if not r["full"])})
     return out
 
 
