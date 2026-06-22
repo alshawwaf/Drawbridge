@@ -35,7 +35,7 @@
   </div>
   <pre id="cmd-pre">cp_log_export add name <span class="cmd-name">dcsim-siem-cef-udp</span> \
   target-server {{ host }} target-port {{ port }} \
-  protocol <span id="cmd-proto">udp</span> format <span id="cmd-fmt">cef</span>
+  protocol <span id="cmd-proto" class="tok">udp</span> format <span id="cmd-fmt" class="tok">cef</span>
 cp_log_export restart name <span class="cmd-name">dcsim-siem-cef-udp</span></pre>
   <div class="row" style="margin:8px 0 0;"><button class="copybtn" type="button" data-copy-from="#cmd-pre">Copy command</button></div>
   <p class="muted" style="font-size:12px;">Listening on <code>{{ host }}:{{ port }}</code> (TCP + UDP). On a hosted instance, make sure that port is reachable from the Management Server — the bundled <code>docker-compose.yml</code> publishes it; on Dokploy add a TCP+UDP entrypoint (see <a href="https://github.com/alshawwaf/Datacenter-Integration-Simulator/blob/main/docs/integrations/siem.md">deployment notes</a>). No gateway yet? Click <b>Send test log</b>.</p>
@@ -129,14 +129,25 @@ cp_log_export restart name <span class="cmd-name">dcsim-siem-cef-udp</span></pre
       var name = 'dcsim-siem-' + f.trim() + '-' + p.trim();
       document.querySelectorAll('.cmd-name').forEach(function (el) { el.textContent = name; });
     }
+    // Re-trigger the pulse animation by removing the class, forcing reflow, then re-adding it.
+    function flash(el) {
+      if (!el) return;
+      el.classList.remove('flash');
+      void el.offsetWidth;
+      el.classList.add('flash');
+    }
     document.querySelectorAll('.cmdpick').forEach(function (grp) {
       var out = document.getElementById(grp.getAttribute('data-cmd'));
       grp.addEventListener('click', function (e) {
         var c = e.target.closest('.chip'); if (!c) return;
+        var next = c.getAttribute('data-val');
+        if (out && out.textContent === next) return;
         grp.querySelectorAll('.chip').forEach(function (x) { x.classList.remove('active'); });
         c.classList.add('active');
-        if (out) out.textContent = c.getAttribute('data-val');
+        if (out) out.textContent = next;
         syncCmdName();
+        flash(out);
+        document.querySelectorAll('.cmd-name').forEach(flash);
       });
     });
     syncCmdName();
