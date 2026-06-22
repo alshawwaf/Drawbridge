@@ -14,7 +14,7 @@ from ..db import get_db
 from ..models import ManagementServer, User
 from ..security import get_user_or_none
 from ..services import gaia_export, mgmt_api, mgmt_creds, mgmt_export, table_prefs
-from ..services.gaia_client import ensure_pinned, fetch_gateway_cert
+from ..services.gaia_client import ensure_pinned, fetch_gateway_cert, pin_now
 from .ui import _flash, _pop_flash, templates
 
 router = APIRouter(include_in_schema=False)
@@ -67,6 +67,18 @@ def mgmt_new(request: Request, db: Session = Depends(get_db)):
                                        "has_secret": False, "crypto_ok": mgmt_creds.available()})
 
 
+def _autotrust_note(db: Session, ms) -> str:
+    """Pin the cert NOW (behind the scenes) when auto-trust is on and nothing is pinned yet, and report
+    the fingerprint — so the user never has to uncheck the box and fetch manually. Graceful fallback to
+    the lazy first-connect pin if the server isn't reachable at save time."""
+    if not (getattr(ms, "auto_trust", False) and not (ms.cert_pem or "").strip()):
+        return ""
+    pinned, fp = pin_now(db, ms)
+    if pinned:
+        return f" Its certificate was trusted automatically (SHA-256 {fp})."
+    return " It’ll be pinned automatically on first connect (the server wasn’t reachable just now)."
+
+
 @router.post("/management/new")
 def mgmt_create(request: Request, name: str = Form(...), host: str = Form(...), port: str = Form("443"),
                 username: str = Form(""), domain: str = Form(""), cert_pem: str = Form(""),
@@ -85,9 +97,7 @@ def mgmt_create(request: Request, name: str = Form(...), host: str = Form(...), 
         mgmt_creds.store_secret(db, ms, password, kind="password")
     elif password:
         note = " (the secret was not stored — encryption is unavailable in this environment)"
-    msg = f"Management server “{name}” saved.{note}"
-    if ms.auto_trust and not ms.cert_pem:
-        msg += " Its certificate is pinned on the first connect."
+    msg = f"Management server “{name}” saved.{note}{_autotrust_note(db, ms)}"
     _flash(request, msg, "error" if note else "success")
     return RedirectResponse("/management", status_code=303)
 
@@ -297,7 +307,8 @@ def mgmt_update(sid: int, request: Request, name: str = Form(...), host: str = F
         else:
             note = " (the new secret was not stored — encryption is unavailable here)"
     db.commit()
-    _flash(request, f"Management server “{name}” updated.{note}", "error" if note else "success")
+    _flash(request, f"Management server “{name}” updated.{note}{_autotrust_note(db, ms)}",
+           "error" if note else "success")
     return RedirectResponse("/management", status_code=303)
 
 

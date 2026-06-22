@@ -8,13 +8,17 @@ import hashlib
 import ssl
 
 
+def cert_fingerprint(pem: str) -> str:
+    """The colon-grouped SHA-256 fingerprint of a PEM certificate (for review/display)."""
+    der = ssl.PEM_cert_to_DER_cert(pem)
+    digest = hashlib.sha256(der).hexdigest().upper()
+    return ":".join(digest[i:i + 2] for i in range(0, len(digest), 2))
+
+
 def fetch_gateway_cert(host: str, port: int = 443, timeout: float = 6.0) -> dict:
     """Retrieve the gateway's leaf certificate (PEM) and its SHA-256 fingerprint for review."""
     pem = ssl.get_server_certificate((host, port), timeout=timeout)
-    der = ssl.PEM_cert_to_DER_cert(pem)
-    digest = hashlib.sha256(der).hexdigest().upper()
-    fingerprint = ":".join(digest[i:i + 2] for i in range(0, len(digest), 2))
-    return {"pem": pem.strip(), "fingerprint": fingerprint}
+    return {"pem": pem.strip(), "fingerprint": cert_fingerprint(pem)}
 
 
 def ensure_pinned(db, gw) -> bool:
@@ -37,3 +41,14 @@ def ensure_pinned(db, gw) -> bool:
     gw.cert_pem = pem
     db.commit()
     return True
+
+
+def pin_now(db, gw) -> tuple[bool, str]:
+    """Eagerly establish trust AT SAVE TIME: if the profile opts into auto-trust and has no cert pinned
+    yet, fetch the certificate it currently presents and pin it now (server-side) — so the first
+    apply/fetch verifies against an already-pinned cert instead of relying on a lazy first-connect that
+    can error if the gateway blips. Returns (pinned_now, fingerprint). Best-effort: if the gateway isn't
+    reachable right now it returns (False, "") and the lazy ensure_pinned still covers the next connect."""
+    if ensure_pinned(db, gw):
+        return True, cert_fingerprint(gw.cert_pem)
+    return False, ""

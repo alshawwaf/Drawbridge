@@ -32,7 +32,7 @@ def test_form_offers_auto_trust_on_by_default_for_new():
                    crypto_ok=True, has_password=False)
     assert 'name="auto_trust"' in html
     assert 'name="auto_trust" value="1" checked' in html  # default on for new gateways
-    assert "pin it on first connect" in html
+    assert "pin it for you on save" in html                # eager pin: trust handled behind the scenes
 
 
 def test_form_auto_trust_reflects_disabled_state_on_edit():
