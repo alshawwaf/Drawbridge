@@ -445,7 +445,8 @@ _OBJ_REQ = AccessRequest(["10.1.1.1/32"], ["8.8.8.8/32"], "tcp", "443")
     (["zone"],  ["h8888"], ["s443"]),   # security-zone source
     (["uoint"], ["h8888"], ["s443"]),   # updatable-object (Internet / geo)
     (["hv6"],   ["h8888"], ["s443"]),   # an IPv6 host object inside a v4 rule
-    (["hsrc"],  ["h8888"], ["sgre"]),   # service-other (GRE / raw IP protocol)
+    # (service-other is now a named+opaque service: create-around an ACCEPT, REVIEW only for a possible
+    #  DROP — covered by test_service_other_drop_keeps_port_request_in_path)
 ])
 def test_unenumerable_cell_objects_route_to_review(src, dst, svc):
     # any cell holding an object whose IP/port extent we can't enumerate is "extent-unknown" -> the rule
@@ -1003,3 +1004,54 @@ def test_malformed_port_reviews_not_crashes():
     # partial ("443,xyz" keeps the valid 443) is a real request -> a normal decision, just never a crash
     req = AccessRequest(src_cidrs=["10.1.1.1/32"], dst_cidrs=["0.0.0.0/0"], protocol="tcp", ports="443,xyz")
     assert aa.decide(req, rules).outcome in (Outcome.CREATE, Outcome.NO_OP, Outcome.WIDEN, Outcome.REVIEW)
+
+
+# --- named (non-tcp/udp) services: resolve like apps + reason by name ------------------------------
+_SVC_OD = {
+    "h": {"uid": "h", "type": "host", "name": "h", "ipv4-address": "10.0.0.5"},
+    "any": {"uid": "any", "type": "CpmiAnyObject", "name": "Any"},
+    "t443": {"uid": "t443", "type": "service-tcp", "name": "https", "port": "443"},
+    "echo": {"uid": "echo", "type": "service-icmp", "name": "echo-request"},
+    "gre": {"uid": "gre", "type": "service-other", "name": "GRE"},
+    "acc": {"uid": "acc", "name": "Accept"}, "drp": {"uid": "drp", "name": "Drop"},
+}
+
+
+def test_icmp_request_disjoint_from_tcp_rule_creates():
+    rules = [_irule(1, ["h"], ["any"], ["t443"], "acc", _SVC_OD),
+             _irule(2, ["any"], ["any"], ["any"], "drp", _SVC_OD)]
+    # different source so there's no exact-two-cell widen candidate; icmp ≠ tcp/443 -> create
+    req = AccessRequest(src_cidrs=["10.9.9.9/32"], dst_cidrs=["0.0.0.0/0"], service="echo-request")
+    assert aa.decide(req, rules).outcome is Outcome.CREATE     # icmp not covered by the tcp/443 rule
+
+
+def test_named_service_already_permitted_is_no_op():
+    rules = [_irule(1, ["any"], ["any"], ["echo"], "acc", _SVC_OD),
+             _irule(2, ["any"], ["any"], ["any"], "drp", _SVC_OD)]
+    req = AccessRequest(src_cidrs=["10.0.0.5/32"], dst_cidrs=["0.0.0.0/0"], service="echo-request")
+    assert aa.decide(req, rules).outcome is Outcome.NO_OP
+
+
+def test_named_service_widens_exact_two_cells():
+    # rule: src h, dst Any, svc echo-request, Accept ; request src 10.0.0.9 -> widen the source
+    rules = [_irule(1, ["h"], ["any"], ["echo"], "acc", _SVC_OD),
+             _irule(2, ["any"], ["any"], ["any"], "drp", _SVC_OD)]
+    req = AccessRequest(src_cidrs=["10.0.0.9/32"], dst_cidrs=["0.0.0.0/0"], service="echo-request")
+    d = aa.decide(req, rules)
+    assert d.outcome is Outcome.WIDEN and d.widen_field == "source"
+
+
+def test_service_other_drop_keeps_port_request_in_path():
+    # a DROP whose service is service-other (ambiguous protocol) must not be assumed disjoint from a
+    # tcp/443 request -> REVIEW (never step over a possible deny).
+    rules = [_irule(1, ["any"], ["any"], ["gre"], "drp", _SVC_OD),
+             _irule(2, ["any"], ["any"], ["any"], "drp", _SVC_OD)]
+    req = AccessRequest(src_cidrs=["10.0.0.5/32"], dst_cidrs=["0.0.0.0/0"], protocol="tcp", ports="443")
+    assert aa.decide(req, rules).outcome is Outcome.REVIEW
+
+
+def test_build_request_named_service_and_precedence():
+    r = tk.build_request("10.0.0.5", "Any", "tcp", "", service="icmp")
+    assert r.service == "icmp" and r.application is None
+    r2 = tk.build_request("10.0.0.5", "Any", "tcp", "443", application="Facebook", service="icmp")
+    assert r2.application == "Facebook" and r2.service is None     # application wins

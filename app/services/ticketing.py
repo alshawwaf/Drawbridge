@@ -96,10 +96,11 @@ def _norm_endpoint(value) -> str:
     return _norm_cidr(v)
 
 
-def build_request(source, destination, protocol, port, application=None) -> AccessRequest:
-    """Validate + normalise a raw tuple into an AccessRequest. Shared by the UI and the webhook. When
-    `application` is given (e.g. "Facebook") it's an app request and protocol/port are ignored.
-    Source/destination may be an IP, a CIDR, or 'Any'. Raises ValueError (clean) on anything malformed."""
+def build_request(source, destination, protocol, port, application=None, service=None) -> AccessRequest:
+    """Validate + normalise a raw tuple into an AccessRequest. Shared by the UI and the webhook.
+    Precedence: `application` (e.g. "Facebook") > `service` (a named non-port service, e.g. "icmp" /
+    "GRE") > protocol+port. Source/destination may be an IP, a CIDR, or 'Any'. Raises ValueError on
+    anything malformed."""
     if source in (None, "") or destination in (None, ""):
         raise ValueError("source and destination are required.")
     try:
@@ -109,6 +110,9 @@ def build_request(source, destination, protocol, port, application=None) -> Acce
     application = str(application).strip() if application else ""
     if application:
         return AccessRequest(src_cidrs=[src_cidr], dst_cidrs=[dst_cidr], application=application)
+    service = str(service).strip() if service else ""
+    if service:
+        return AccessRequest(src_cidrs=[src_cidr], dst_cidrs=[dst_cidr], service=service)
     protocol = str(protocol or "tcp").lower()
     if protocol not in ("tcp", "udp"):
         raise ValueError("protocol must be 'tcp' or 'udp'.")
@@ -143,6 +147,7 @@ def parse_payload(data: dict) -> TicketRequest:
         _first(data, "protocol", "proto", "u_protocol", default="tcp"),
         _first(data, "port", "ports", "service_port", "u_port", default=""),
         _first(data, "application", "app", "u_application"),
+        _first(data, "service", "service_name", "u_service"),
     )
     apply_flag = str(_first(data, "apply", "commit", "u_apply", default="")).strip().lower() in _TRUE
     return TicketRequest(

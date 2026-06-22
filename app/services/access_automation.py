@@ -113,7 +113,9 @@ class ServiceSet:
     any: bool = False
     by_proto: dict = field(default_factory=dict)
     apps: set = field(default_factory=set)        # exact application-site names (e.g. {"Facebook"})
-    opaque: bool = False                          # has an app category/group we can't expand
+    named: set = field(default_factory=set)       # non-port service objects by name (icmp, GRE, sctp, …)
+    opaque: bool = False                          # an app category/group, or a service whose protocol
+                                                  # reach we can't bound vs a port request (other/rpc/gtp…)
     complex: bool = False                         # held a service we could not parse (named, >, < ...)
     group_uids: list = field(default_factory=list)  # service-group uids referenced (widen target)
 
@@ -162,18 +164,23 @@ def svc_relation(req: ServiceSet, rule: ServiceSet) -> Relation:
         return Relation.SUPERSET
     if req.apps:                          # APPLICATION request, e.g. {"Facebook"}
         if req.apps & rule.apps:
-            exact = rule.apps == req.apps and not rule.by_proto and not rule.opaque
+            exact = rule.apps == req.apps and not rule.by_proto and not rule.named and not rule.opaque
             return Relation.EQUAL if exact else Relation.SUBSET
         return Relation.OVERLAP if rule.opaque else Relation.DISJOINT
-    if not rule.by_proto:                 # PORT request vs an apps-only rule -> can't serve a port
-        return Relation.DISJOINT
+    if req.named:                         # NAMED service request (icmp / GRE / sctp / …) — match by name
+        if req.named & rule.named:
+            exact = (rule.named == req.named and not rule.by_proto and not rule.apps and not rule.opaque)
+            return Relation.EQUAL if exact else Relation.SUBSET
+        return Relation.OVERLAP if rule.opaque else Relation.DISJOINT
+    if not rule.by_proto:                 # PORT request vs a non-port rule. Disjoint UNLESS the rule holds
+        return Relation.OVERLAP if rule.opaque else Relation.DISJOINT   # a protocol-ambiguous service.
     a_in_b = _portset_covers(rule.by_proto, req.by_proto)
     b_in_a = _portset_covers(req.by_proto, rule.by_proto)
-    # If the rule cell ALSO holds applications / an opaque container / an unparsable member, it grants
-    # strictly more than the ports, so a pure-port request can never be EXACTLY EQUAL to it -- only a
-    # SUBSET (still 'covered', so a genuine no-op stays a no-op). Returning EQUAL would let a widen treat
-    # the service as an exact match and drag the rule's extra apps onto the new source/destination.
-    rule_port_only = not (rule.apps or rule.opaque or rule.complex)
+    # If the rule cell ALSO holds applications / named services / an opaque member, it grants strictly
+    # more than the ports, so a pure-port request can never be EXACTLY EQUAL to it -- only a SUBSET (still
+    # 'covered', so a genuine no-op stays a no-op). Returning EQUAL would let a widen treat the service as
+    # an exact match and drag the rule's extra apps/services onto the new source/destination.
+    rule_port_only = not (rule.apps or rule.named or rule.opaque or rule.complex)
     if a_in_b and b_in_a:
         return Relation.EQUAL if rule_port_only else Relation.SUBSET
     if a_in_b:
@@ -190,9 +197,10 @@ def svc_relation(req: ServiceSet, rule: ServiceSet) -> Relation:
 class AccessRequest:
     src_cidrs: list[str]      # e.g. ["192.168.9.9/32"]
     dst_cidrs: list[str]
-    protocol: str = "tcp"     # "tcp" | "udp" (ignored when `application` is set)
-    ports: str = ""           # "443" or "8000-8100" (ignored when `application` is set)
-    application: Optional[str] = None   # an application-site name (e.g. "Facebook") instead of a port
+    protocol: str = "tcp"     # "tcp" | "udp" (ignored when `application`/`service` is set)
+    ports: str = ""           # "443" or "8000-8100" (ignored when `application`/`service` is set)
+    application: Optional[str] = None   # an application-site name (e.g. "Facebook") — overrides everything
+    service: Optional[str] = None       # a named non-port service (e.g. "echo-request", "GRE") by name
     action: str = "Accept"
 
     def src_iv(self):
@@ -204,6 +212,8 @@ class AccessRequest:
     def svc(self) -> ServiceSet:
         if self.application:
             return ServiceSet(apps={self.application})
+        if self.service:
+            return ServiceSet(named={self.service})
         return ServiceSet(by_proto={self.protocol.lower(): _ports_to_iv(self.ports)})
 
 
@@ -403,6 +413,17 @@ def _parse_svc(cell, objdict: dict) -> ServiceSet:
             s.apps.add(name)
         elif t in ("application-site-category", "application-site-group"):
             s.opaque = True                 # can't enumerate which apps it contains
+        elif t in ("service-icmp", "service-icmp6", "service-sctp"):
+            # Distinct protocols (icmp 1 / icmp6 58 / sctp 132) — can NEVER overlap a tcp/udp port
+            # request, so match them by name only (like apps), no port-uncertainty.
+            s.named.add(name)
+        elif t in ("service-other", "service-dce-rpc", "service-rpc", "service-gtp",
+                   "service-citrix-tcp", "service-compound-tcp"):
+            # Match by name, but their protocol/port reach can't be bounded (service-other is an
+            # arbitrary IP protocol; rpc/gtp/citrix/compound match dynamically) -> opaque so a PORT
+            # request can't assume it's disjoint (stays in the path -> REVIEW for a deny).
+            s.named.add(name)
+            s.opaque = True
         elif t == "service-group":
             s.group_uids.append(o.get("uid", ""))
             sub = _parse_svc(o.get("members", []), objdict)
@@ -411,6 +432,7 @@ def _parse_svc(cell, objdict: dict) -> ServiceSet:
             for proto, iv in sub.by_proto.items():
                 s.by_proto[proto] = _merge(s.by_proto.get(proto, []) + iv)
             s.apps |= sub.apps
+            s.named |= sub.named
             s.opaque = s.opaque or sub.opaque
             s.complex = s.complex or sub.complex
         else:
@@ -508,6 +530,8 @@ def _svc_uncertain(req_svc: ServiceSet, rule_svc: ServiceSet) -> bool:
         return False
     if req_svc.apps and not (req_svc.apps & rule_svc.apps):
         return rule_svc.opaque
+    if req_svc.named and not (req_svc.named & rule_svc.named):
+        return rule_svc.opaque         # a named-service request vs an opaque rule cell -> uncertain
     return False
 
 
@@ -563,7 +587,7 @@ def decide(req: AccessRequest, rules: list[ParsedRule]) -> Decision:
     # Guard 2 -- a request that resolves to no concrete service (empty/garbage port, no application) has
     # an empty interval set, which would read as "covered by anything" -> a false NO_OP. Fail loud so the
     # pure surface is self-defending (build_request guards this too, as defense in depth).
-    if not req_svc.any and not req_svc.apps and not (
+    if not req_svc.any and not req_svc.apps and not req_svc.named and not (
             req_svc.by_proto and any(iv for iv in req_svc.by_proto.values())):
         return Decision(
             Outcome.REVIEW,
@@ -861,10 +885,13 @@ def lookup_application(session, name: str) -> bool:
 
 
 def _resolve_svc_object(session, req: AccessRequest) -> str:
-    """The object to put in the rule's 'Services & Applications' cell: an application-site referenced by
-    name (predefined; the publish validates it), or a reused/created port service."""
+    """The object to put in the rule's 'Services & Applications' cell: an application-site or a named
+    service referenced by name (predefined / already correlated to the canonical Check Point name), or
+    a reused/created tcp/udp port service."""
     if req.application:
         return req.application
+    if req.service:
+        return req.service
     return resolve_service(session, req.protocol, req.ports)
 
 
@@ -872,6 +899,8 @@ def _svc_object_preview(session, req: AccessRequest) -> dict:
     if req.application:
         return {"name": req.application, "exists": lookup_application(session, req.application),
                 "kind": "application"}
+    if req.service:                       # already correlated to a real service by services.resolve()
+        return {"name": req.service, "exists": True, "kind": "service"}
     ex = lookup_service(session, req.protocol, req.ports)
     from . import naming
     return {"name": ex or naming.service_name(req.protocol, req.ports), "exists": bool(ex), "kind": "service"}
@@ -997,24 +1026,52 @@ def _resolve_app(session, req: AccessRequest):
     return res
 
 
-def _app_review(app_res: dict, base: dict) -> dict:
-    return {"ok": True, "outcome": "review", "target_rule": None, "app_resolution": app_res,
-            "reason": (f"the application “{app_res['term']}” has no single confident match on this "
-                       f"server — choose the exact Check Point application below"), **base}
+def _resolve_svc(session, req: AccessRequest):
+    """Correlate a named (non-port) service to its canonical Check Point service object. A confident,
+    unique match rewrites req.service; otherwise the caller routes to REVIEW with candidates."""
+    if not req.service:
+        return None
+    from . import services
+    res = services.resolve(session, req.service)
+    if res.get("match"):
+        req.service = res["match"]
+    return res
+
+
+def _correlate(session, req: AccessRequest):
+    """Resolve the request's application and/or named service to canonical Check Point objects. Returns
+    (resolutions, unresolved, kind): ``resolutions`` is the dict to attach to the result; ``unresolved``
+    is the resolution that lacked a confident match (-> REVIEW with candidates), or None."""
+    res: dict = {}
+    app_res = _resolve_app(session, req)
+    if app_res is not None:
+        res["app_resolution"] = app_res
+    svc_res = _resolve_svc(session, req)
+    if svc_res is not None:
+        res["svc_resolution"] = svc_res
+    for r, kind in ((app_res, "application"), (svc_res, "service")):
+        if r is not None and not r.get("match"):
+            return res, r, kind
+    return res, None, ""
+
+
+def _obj_review(res: dict, unresolved: dict, kind: str, base: dict) -> dict:
+    return {"ok": True, "outcome": "review", "target_rule": None,
+            "reason": (f"the {kind} “{unresolved['term']}” has no single confident match on this "
+                       f"server — choose the exact Check Point {kind} below"), **res, **base}
 
 
 def preview(server, secret, req: AccessRequest, layer: str, *, package: Optional[str] = None) -> dict:
     """Read-only: correlate app -> load (cached) -> decide -> describe."""
     try:
         with read_session(server, secret) as s:          # read-only, pooled — no login per preview
-            app_res = _resolve_app(s, req)
-            if app_res and not app_res["match"]:
-                return _app_review(app_res, {"cached": False, "trace": s.trace})
+            res, unresolved, kind = _correlate(s, req)
+            if unresolved is not None:
+                return _obj_review(res, unresolved, kind, {"cached": False, "trace": s.trace})
             rules, cached = load_layer_cached(s, server, layer, package)
             decision = decide(req, rules)
             out = build_preview(s, decision, req, rules)
-            return {"ok": True, **out, "cached": cached, "trace": s.trace,
-                    **({"app_resolution": app_res} if app_res else {})}
+            return {"ok": True, **out, "cached": cached, "trace": s.trace, **res}
     except MgmtError as exc:
         return {"ok": False, "error": str(exc)}
 
@@ -1029,15 +1086,14 @@ def execute(server, secret, req: AccessRequest, layer: str, *, package: Optional
         # fresh rules, locks held only for this commit.
         with MgmtSession(server, secret, session_timeout=write_session_timeout(),
                          session_description="DC-Sim access automation (apply)") as s:
-            app_res = _resolve_app(s, req)
-            if app_res and not app_res["match"]:        # never apply an unresolved / ambiguous application
+            res, unresolved, kind = _correlate(s, req)
+            if unresolved is not None:        # never apply an unresolved / ambiguous application or service
                 return {"ok": True, "applied": False, "published": False,
-                        **_app_review(app_res, {"trace": s.trace})}
+                        **_obj_review(res, unresolved, kind, {"trace": s.trace})}
             rules = load_layer(s, layer, package)
             decision = decide(req, rules)
             base = {"outcome": decision.outcome.value, "reason": decision.reason,
-                    "target_rule": _brief(decision.target_rule),
-                    **({"app_resolution": app_res} if app_res else {})}
+                    "target_rule": _brief(decision.target_rule), **res}
             if decision.outcome in (Outcome.NO_OP, Outcome.REVIEW):
                 return {"ok": True, "applied": False, "published": False, **base, "trace": s.trace}
             try:

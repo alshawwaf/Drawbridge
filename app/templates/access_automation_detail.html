@@ -32,13 +32,16 @@
       <input id="aa-dest" placeholder="172.16.5.10"></label></div>
     <div style="width:110px;"><label>Protocol
       <select id="aa-proto"><option value="tcp">tcp</option><option value="udp">udp</option></select></label></div>
-    <div style="width:130px;"><label>Port <span class="muted">(or range)</span>
+    <div style="width:120px;"><label>Port <span class="muted">(or range)</span>
       <input id="aa-port" placeholder="443"></label></div>
-    <div style="width:170px;"><label>Application <span class="muted">(optional)</span>
+    <div style="width:150px;"><label>Service <span class="muted">(optional)</span>
+      <input id="aa-svc" placeholder="icmp, GRE…" list="aa-svclist" autocomplete="off">
+      <datalist id="aa-svclist"></datalist></label></div>
+    <div style="width:160px;"><label>Application <span class="muted">(optional)</span>
       <input id="aa-app" placeholder="Facebook" list="aa-applist" autocomplete="off">
       <datalist id="aa-applist"></datalist></label></div>
   </div>
-  <p class="muted" style="margin:2px 0 0; font-size:12px;">Fill <b>Application</b> (e.g. Facebook, YouTube) to match on an app instead of a port — it overrides protocol/port.</p>
+  <p class="muted" style="margin:2px 0 0; font-size:12px;">Fill <b>Service</b> (e.g. icmp, GRE, AH) for a non-TCP/UDP protocol, or <b>Application</b> (e.g. Facebook) for an app — each is correlated to the real Check Point object. Precedence: Application &rsaquo; Service &rsaquo; protocol/port.</p>
   <div class="row" style="margin-top:14px; gap:8px;">
     <button type="button" class="btn" id="aa-preview">Preview decision</button>
     <button type="button" class="btn secondary" id="aa-validate" disabled>Dry-run apply (validate)</button>
@@ -155,6 +158,7 @@ Content-Type: application/json
         destination: document.getElementById('aa-dest').value.trim(),
         protocol: document.getElementById('aa-proto').value,
         port: document.getElementById('aa-port').value.trim(),
+        service: document.getElementById('aa-svc').value.trim(),
         application: document.getElementById('aa-app').value.trim(),
         ticket_id: document.getElementById('aa-ticket').value.trim()
       };
@@ -195,7 +199,8 @@ Content-Type: application/json
       var h = '<div class="runbox">';
       h += '<div class="row" style="align-items:center; gap:10px;">' + outcomeBadge(j.outcome) +
            '<span>' + esc(j.reason) + '</span></div>';
-      if (j.app_resolution) h += appBlock(j.app_resolution);
+      if (j.app_resolution) h += objBlock(j.app_resolution, 'data-app', 'application');
+      if (j.svc_resolution) h += objBlock(j.svc_resolution, 'data-svc', 'service');
       if (j.anomaly) h += '<div class="err-inline">Heads-up: an existing ordering anomaly was detected near the insert point — review placement.</div>';
 
       var rows = '';
@@ -229,17 +234,17 @@ Content-Type: application/json
       setActionable((mode === 'preview' || mode === 'validate') && actionable);
       if (mode === 'publish' && j.published) setActionable(false);
     }
-    function appBlock(res) {
+    function objBlock(res, dataAttr, label) {
       var h = res.match
-        ? '<div class="ok" style="margin-top:10px;">✓ Application matched to Check Point: <b>' + esc(res.match) +
-          '</b> <span class="muted">(' + esc(res.confidence) + ' match)</span></div>'
-        : '<div class="err-inline" style="margin-top:10px;">' + esc(res.note || 'Pick the exact Check Point application.') + '</div>';
+        ? '<div class="ok" style="margin-top:10px;">✓ ' + label.charAt(0).toUpperCase() + label.slice(1) +
+          ' matched to Check Point: <b>' + esc(res.match) + '</b> <span class="muted">(' + esc(res.confidence) + ' match)</span></div>'
+        : '<div class="err-inline" style="margin-top:10px;">' + esc(res.note || ('Pick the exact Check Point ' + label + '.')) + '</div>';
       var c = res.candidates || [];
       if (c.length) {
         h += '<div class="row" style="gap:6px; flex-wrap:wrap; margin-top:8px;">';
         c.forEach(function (x) {
           if (res.match && x.name === res.match) return;     // don't repeat the matched one
-          h += '<button type="button" class="copybtn" data-app="' + escAttr(x.name) + '" title="pick this application">' +
+          h += '<button type="button" class="copybtn" ' + dataAttr + '="' + escAttr(x.name) + '" title="pick this ' + label + '">' +
                esc(x.name) + (x.category ? ' <span class="muted">· ' + esc(x.category) + '</span>' : '') + '</button>';
         });
         h += '</div>';
@@ -255,7 +260,7 @@ Content-Type: application/json
     function call(path, mode, publish) {
       var b = body();
       if (!b.layer) { result.innerHTML = '<div class="err">Pick a layer first.</div>'; return; }
-      if (!b.source || !b.destination || (!b.port && !b.application)) { result.innerHTML = '<div class="err">Source, destination, and a port or application are required.</div>'; return; }
+      if (!b.source || !b.destination || (!b.port && !b.application && !b.service)) { result.innerHTML = '<div class="err">Source, destination, and a port, service, or application are required.</div>'; return; }
       if (publish !== undefined) b.publish = publish;
       result.innerHTML = '<p class="muted">' + (mode === 'preview' ? 'Evaluating over web_api…' : (publish ? 'Publishing…' : 'Validating…')) + '</p>';
       fetch('/access-automation/' + id + '/' + path, {
@@ -284,37 +289,40 @@ Content-Type: application/json
       }).catch(function () { result.innerHTML = '<div class="err">Take-over request failed.</div>'; });
     });
 
-    // Pick a suggested application chip -> fill the field and re-evaluate.
+    // Pick a suggested application/service chip -> fill the right field and re-evaluate.
     result.addEventListener('click', function (e) {
-      var chip = e.target.closest ? e.target.closest('[data-app]') : null;
+      var chip = e.target.closest ? e.target.closest('[data-app],[data-svc]') : null;
       if (!chip) return;
-      document.getElementById('aa-app').value = chip.getAttribute('data-app');
+      if (chip.hasAttribute('data-app')) document.getElementById('aa-app').value = chip.getAttribute('data-app');
+      else document.getElementById('aa-svc').value = chip.getAttribute('data-svc');
       call('preview', 'preview');
     });
 
     // Re-preview (and lock apply) whenever an input changes, so apply always matches what's shown.
-    ['aa-layer', 'aa-source', 'aa-dest', 'aa-proto', 'aa-port', 'aa-app', 'aa-ticket'].forEach(function (eid) {
+    ['aa-layer', 'aa-source', 'aa-dest', 'aa-proto', 'aa-port', 'aa-svc', 'aa-app', 'aa-ticket'].forEach(function (eid) {
       document.getElementById(eid).addEventListener('change', function () { setActionable(false); });
     });
 
-    // Type-ahead: real Check Point applications matching what's typed (debounced) into the datalist.
-    (function () {
-      var appInput = document.getElementById('aa-app'), appList = document.getElementById('aa-applist'), t;
-      appInput.addEventListener('input', function () {
-        var q = appInput.value.trim();
+    // Type-ahead: real Check Point applications / services matching what's typed (debounced).
+    function typeahead(inputId, listId, path) {
+      var inp = document.getElementById(inputId), lst = document.getElementById(listId), t;
+      inp.addEventListener('input', function () {
+        var q = inp.value.trim();
         clearTimeout(t);
-        if (q.length < 2) { appList.innerHTML = ''; return; }
+        if (q.length < 2) { lst.innerHTML = ''; return; }
         t = setTimeout(function () {
-          fetch('/access-automation/' + id + '/app-search?q=' + encodeURIComponent(q))
+          fetch('/access-automation/' + id + '/' + path + '?q=' + encodeURIComponent(q))
             .then(function (r) { return r.json(); })
             .then(function (d) {
-              appList.innerHTML = (d.candidates || []).slice(0, 12).map(function (c) {
+              lst.innerHTML = (d.candidates || []).slice(0, 12).map(function (c) {
                 return '<option value="' + escAttr(c.name) + '">' + esc(c.category || c.kind || '') + '</option>';
               }).join('');
             }).catch(function () {});
         }, 250);
       });
-    })();
+    }
+    typeahead('aa-app', 'aa-applist', 'app-search');
+    typeahead('aa-svc', 'aa-svclist', 'svc-search');
 
     fetch('/management/' + id + '/layers').then(function (r) { return r.json(); })
       .then(function (data) {

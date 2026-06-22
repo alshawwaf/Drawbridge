@@ -22,7 +22,7 @@ from ..db import get_db
 from ..models import ManagementServer, User
 from ..security import get_user_or_none
 from ..services import access_automation as aa
-from ..services import applications, decision_tree, mgmt_api, mgmt_creds, table_prefs, ticketing
+from ..services import applications, decision_tree, mgmt_api, mgmt_creds, services, table_prefs, ticketing
 from ..services.gaia_client import ensure_pinned
 from .ui import _pop_flash, templates
 
@@ -35,7 +35,8 @@ class AccessReqBody(BaseModel):
     destination: str
     protocol: str = "tcp"
     port: str = ""
-    application: str | None = None      # an application-site name (e.g. "Facebook") instead of a port
+    application: str | None = None      # an application-site name (e.g. "Facebook") — overrides everything
+    service: str | None = None          # a named non-port service (e.g. "icmp", "GRE") — overrides port
     ticket_id: str = ""
     publish: bool = False
     package: str | None = None
@@ -113,7 +114,7 @@ def _run(db: Session, sid: int, user: User, body: AccessReqBody, *, do_apply: bo
         return err
     try:
         req = ticketing.build_request(body.source, body.destination, body.protocol, body.port,
-                                      body.application)
+                                      body.application, body.service)
     except ValueError as exc:
         return JSONResponse({"error": str(exc)}, status_code=400)
     if not body.layer:
@@ -140,6 +141,22 @@ def aa_app_search(sid: int, request: Request, q: str = "", db: Session = Depends
         return JSONResponse({"candidates": []})
     try:
         return JSONResponse({"candidates": applications.search_server(ms, secret, q)})
+    except Exception:  # noqa: BLE001
+        return JSONResponse({"candidates": []})
+
+
+@router.get("/access-automation/{sid}/svc-search")
+def aa_svc_search(sid: int, request: Request, q: str = "", db: Session = Depends(get_db)):
+    """Type-ahead: real Check Point services matching ``q`` (icmp, GRE, sctp, …). Best-effort -> []."""
+    user = get_user_or_none(request, db)
+    if user is None:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    ms = _owned(db, sid, user)
+    secret, err = _secret_or_error(db, ms)
+    if err:
+        return JSONResponse({"candidates": []})
+    try:
+        return JSONResponse({"candidates": services.search_server(ms, secret, q)})
     except Exception:  # noqa: BLE001
         return JSONResponse({"candidates": []})
 
