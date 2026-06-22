@@ -221,21 +221,46 @@ def to_mermaid(dark: bool = False, visible_ids: "set[str] | None" = None) -> str
     return "\n".join(out)
 
 
+# The on-page collapse cuts the tree at this BFS depth: depths 0..DEFAULT_DEPTH show, deeper nodes are
+# hidden behind a clickable "＋ N more" stub on their parent — expand step-by-step or "Expand all".
+DEFAULT_DEPTH = 2
+
+
+def _bfs_depth() -> dict:
+    """Shortest-path depth of every node from the single start node (req=0). Drives the collapse: the
+    tree is cut at DEFAULT_DEPTH and continues behind '＋ more' stubs."""
+    start = next((n.id for n in NODES if n.kind == "start"), NODES[0].id if NODES else "")
+    adj: dict = {}
+    for e in EDGES:
+        adj.setdefault(e.src, []).append(e.dst)
+    depth = {start: 0}
+    queue = [start]
+    while queue:
+        cur = queue.pop(0)
+        for child in adj.get(cur, []):
+            if child not in depth:
+                depth[child] = depth[cur] + 1
+                queue.append(child)
+    return {n.id: depth.get(n.id, 0) for n in NODES}
+
+
 def default_visible() -> set:
-    """Node ids shown before the user expands anything (the core flow, level 0)."""
-    return {n.id for n in NODES if n.level <= DEFAULT_LEVEL}
+    """Node ids shown before the user expands anything — the first DEFAULT_DEPTH+1 levels of the tree."""
+    depth = _bfs_depth()
+    return {n.id for n in NODES if depth[n.id] <= DEFAULT_DEPTH}
 
 
 def to_graph() -> dict:
-    """The tree as data for the on-page collapsible renderer: every node (with its detail level + the
+    """The tree as data for the on-page collapsible renderer: every node (with its BFS depth + the
     pre-formatted Mermaid declaration) and edge, plus the per-theme %%{init}%% directive and classDefs.
-    The client filters this to the currently-visible nodes and joins the pieces — so the Mermaid TEXT is
-    still produced by THIS module (no format drift), it just assembles a subset. Static engine metadata
-    only (no request-derived data)."""
+    The client shows depths 0..default_depth, puts a '＋ more' stub where a visible node has hidden
+    children, and reveals the next level on click. The Mermaid TEXT is still produced by THIS module's
+    node/edge declarations (no format drift). Static engine metadata only (no request-derived data)."""
+    depth = _bfs_depth()
     return {
         "start": next((n.id for n in NODES if n.kind == "start"), NODES[0].id if NODES else ""),
-        "default_level": DEFAULT_LEVEL,
-        "nodes": [{"id": n.id, "kind": n.kind, "level": n.level, "mm": _mm_node_decl(n)} for n in NODES],
+        "default_depth": DEFAULT_DEPTH,
+        "nodes": [{"id": n.id, "kind": n.kind, "depth": depth[n.id], "mm": _mm_node_decl(n)} for n in NODES],
         "edges": [{"src": e.src, "dst": e.dst, "mm": _mm_edge_decl(e)} for e in EDGES],
         "themes": {"dark":  {"init": _mm_init(True),  "classDefs": _mm_classdefs(True)},
                    "light": {"init": _mm_init(False), "classDefs": _mm_classdefs(False)}},

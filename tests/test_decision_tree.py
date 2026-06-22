@@ -90,13 +90,20 @@ def test_all_nodes_reachable_from_a_single_start():
             assert n.id in dsts, f"{n.id} is never reached by an edge"
 
 
-def test_default_collapsed_view_is_the_core_flow():
+def test_default_collapsed_view_cuts_at_bfs_depth():
     dv = dt.default_visible()
     allids = {n.id for n in dt.NODES}
-    assert dv < allids, "nothing is collapsed — the detail tier is missing"
-    assert dv == {n.id for n in dt.NODES if n.level <= dt.DEFAULT_LEVEL}
-    assert {"req", "perm", "deny", "widen", "create", "noop"} <= dv      # core outcomes always shown
-    assert not ({"inline", "recurse", "inlineEnd", "opts"} & dv)         # detail collapsed by default
+    assert dv < allids, "nothing is collapsed — the depth cut is missing"
+    depth = dt._bfs_depth()
+    assert dv == {n.id for n in dt.NODES if depth[n.id] <= dt.DEFAULT_DEPTH}
+    assert {"req", "unsup", "resolve"} <= dv                              # the top levels show
+    assert not ({"create", "noop", "inline", "recurse", "opts"} & dv)    # deeper nodes are behind '+ more'
+
+
+def test_bfs_depth_root_is_zero_and_all_reachable():
+    depth = dt._bfs_depth()
+    assert depth["req"] == 0 and all(d >= 0 for d in depth.values())
+    assert set(depth) == {n.id for n in dt.NODES}                         # every node got a depth
 
 
 def test_to_mermaid_visible_subset_filters_nodes_and_edges():
@@ -112,9 +119,9 @@ def test_to_mermaid_visible_subset_filters_nodes_and_edges():
 
 def test_to_graph_is_client_consumable_and_matches_mermaid():
     g = dt.to_graph()
-    assert g["start"] == "req" and g["default_level"] == dt.DEFAULT_LEVEL
+    assert g["start"] == "req" and g["default_depth"] == dt.DEFAULT_DEPTH
     assert {n["id"] for n in g["nodes"]} == {n.id for n in dt.NODES}
-    assert all(set(n) >= {"id", "kind", "level", "mm"} for n in g["nodes"])
+    assert all(set(n) >= {"id", "kind", "depth", "mm"} for n in g["nodes"])
     assert {(e["src"], e["dst"]) for e in g["edges"]} == {(e.src, e.dst) for e in dt.EDGES}
     for theme in ("dark", "light"):
         assert g["themes"][theme]["init"].startswith("%%{init:") and g["themes"][theme]["classDefs"]
