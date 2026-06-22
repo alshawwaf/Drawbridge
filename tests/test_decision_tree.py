@@ -1,7 +1,14 @@
-"""The decision-tree diagram exporters: structurally complete + valid Mermaid / .drawio / DOT."""
+"""The decision-tree diagram exporters: structurally complete + valid Mermaid / .drawio / DOT,
+and KEPT IN LOCK-STEP with the engine (the sync guards below go red if decide() grows an outcome or
+the inline-layer / automation-mode branches lose their visual representation)."""
 import xml.etree.ElementTree as ET
 
 from app.services import decision_tree as dt
+from app.services.access_automation import Outcome
+
+# every engine Outcome must map to a tree node KIND (keyed on kind, not id: REVIEW has several leaves)
+_OUTCOME_KIND = {Outcome.NO_OP: "noop", Outcome.WIDEN: "widen", Outcome.CREATE: "create",
+                 Outcome.REVIEW: "review"}
 
 
 def test_edges_reference_real_nodes_and_outcomes_present():
@@ -50,3 +57,81 @@ def test_renderers_registry():
     assert set(dt.RENDERERS) == {"drawio", "mmd", "dot"}
     for fn, ctype, ext in dt.RENDERERS.values():
         assert callable(fn) and ctype and ext
+
+
+# --- sync guards: the visual can't silently drift from decide() ----------------------------------
+def test_every_engine_outcome_maps_to_a_tree_node_kind():
+    # a NEW or renamed Outcome forces an update here (and a matching node) -> the suite goes red
+    assert set(_OUTCOME_KIND) == set(Outcome)
+    kinds = {n.kind for n in dt.NODES}
+    for outcome, kind in _OUTCOME_KIND.items():
+        assert kind in kinds, f"no tree node represents Outcome.{outcome.name}"
+    # reverse: no orphan outcome-leaf kind left behind after an outcome is removed
+    assert (kinds & {"noop", "widen", "create", "review"}) == set(_OUTCOME_KIND.values())
+
+
+def test_all_nodes_reachable_from_a_single_start():
+    starts = [n.id for n in dt.NODES if n.kind == "start"]
+    assert len(starts) == 1, "the collapse BFS + the flow both need exactly one start node"
+    adj: dict = {}
+    for e in dt.EDGES:
+        adj.setdefault(e.src, []).append(e.dst)
+    seen, stack = set(), [starts[0]]
+    while stack:
+        x = stack.pop()
+        if x in seen:
+            continue
+        seen.add(x)
+        stack += adj.get(x, [])
+    assert seen == {n.id for n in dt.NODES}, "node unreachable from start (orphaned in the diagram)"
+    dsts = {e.dst for e in dt.EDGES}
+    for n in dt.NODES:                                  # no drawn-but-unwired outcome leaf
+        if n.kind in ("noop", "widen", "create", "review"):
+            assert n.id in dsts, f"{n.id} is never reached by an edge"
+
+
+def test_default_collapsed_view_is_the_core_flow():
+    dv = dt.default_visible()
+    allids = {n.id for n in dt.NODES}
+    assert dv < allids, "nothing is collapsed — the detail tier is missing"
+    assert dv == {n.id for n in dt.NODES if n.level <= dt.DEFAULT_LEVEL}
+    assert {"req", "perm", "deny", "widen", "create", "noop"} <= dv      # core outcomes always shown
+    assert not ({"inline", "recurse", "inlineEnd", "opts"} & dv)         # detail collapsed by default
+
+
+def test_to_mermaid_visible_subset_filters_nodes_and_edges():
+    dv = dt.default_visible()
+    sub = dt.to_mermaid(dark=True, visible_ids=dv)
+    assert "  inline" not in sub and "  recurse" not in sub              # collapsed nodes absent
+    assert "applies an inline layer" not in sub                         # edge with a hidden endpoint dropped
+    full = dt.to_mermaid(dark=True)
+    assert "  recurse" in full and "applies an inline layer" in full    # the WHOLE tree (download) keeps all
+    # subset output is still valid Mermaid in the SAME format
+    assert sub.startswith("%%{init:") and "flowchart TD" in sub and "classDef review" in sub
+
+
+def test_to_graph_is_client_consumable_and_matches_mermaid():
+    g = dt.to_graph()
+    assert g["start"] == "req" and g["default_level"] == dt.DEFAULT_LEVEL
+    assert {n["id"] for n in g["nodes"]} == {n.id for n in dt.NODES}
+    assert all(set(n) >= {"id", "kind", "level", "mm"} for n in g["nodes"])
+    assert {(e["src"], e["dst"]) for e in g["edges"]} == {(e.src, e.dst) for e in dt.EDGES}
+    for theme in ("dark", "light"):
+        assert g["themes"][theme]["init"].startswith("%%{init:") and g["themes"][theme]["classDefs"]
+    # the pre-formatted node line is byte-identical to what to_mermaid emits (no JS/Python format drift)
+    full = dt.to_mermaid(dark=True)
+    for n in g["nodes"]:
+        assert ("  " + n["mm"]) in full
+
+
+def test_inline_layer_recursion_and_automation_modes_are_drawn():
+    # guards the two engine features shipped alongside this: they must stay represented in the visual
+    ids = {n.id for n in dt.NODES}
+    assert {"inline", "recurse", "inlineEnd", "opts"} <= ids
+    edges = {(e.src, e.dst) for e in dt.EDGES}
+    assert ("resolve", "inline") in edges                               # inline branch wired off resolve
+    assert ("inline", "recurse") in edges                               # the recursion step
+    assert ("inlineEnd", "create") in edges and ("inlineEnd", "noop") in edges   # drop / accept cleanup
+    assert ("opts", "create") in edges                                  # override-deny -> create above the deny
+    inline_end = next(n for n in dt.NODES if n.id == "inlineEnd")
+    assert "cleanup" in inline_end.label.lower()

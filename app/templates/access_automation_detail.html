@@ -91,12 +91,22 @@ Content-Type: application/json
     #aa-flow-dt:not([data-processed]){font-family:ui-monospace,monospace;font-size:11px;color:var(--muted);white-space:pre-wrap;}
     .dtwrap{overflow:auto;max-height:74vh;border:1px solid var(--line);border-radius:12px;padding:12px;background:var(--surface-2);}
     .dtwrap svg{height:auto;display:block;margin:0 auto;}
+    /* a collapsed node that still hides branches: dashed outline + a ＋ badge, click to expand */
+    g.node.dt-exp{cursor:pointer;}
+    g.node.dt-exp rect, g.node.dt-exp polygon, g.node.dt-exp path, g.node.dt-exp circle{stroke-dasharray:5 4;}
+    text.dt-plus{font:700 16px ui-sans-serif,system-ui,sans-serif;fill:var(--info,#0ea5e9);cursor:pointer;pointer-events:all;}
+    .dthint{font-size:11.5px;color:var(--muted);margin:0 0 8px;}
+    .dthint b{color:var(--info,#0ea5e9);font-weight:700;}
   </style>
   <div class="dtbar">
     <span class="dtzoom" role="group" aria-label="Diagram zoom">
       <button type="button" class="copybtn" id="dt-zout" title="Zoom out" aria-label="Zoom out">−</button>
       <button type="button" class="copybtn" id="dt-zreset" title="Reset to original size">100%</button>
       <button type="button" class="copybtn" id="dt-zin" title="Zoom in" aria-label="Zoom in">+</button>
+    </span>
+    <span class="dtzoom" role="group" aria-label="Diagram detail" id="dt-detail" hidden>
+      <button type="button" class="copybtn" id="dt-expand" title="Show every branch (inline-layer recursion, automation modes)">Expand all</button>
+      <button type="button" class="copybtn" id="dt-collapse" title="Collapse back to the core flow">Collapse</button>
     </span>
     <div class="menu" style="display:inline-block;">
       <button type="button" class="copybtn menu-trigger" aria-haspopup="true" aria-expanded="false" title="Export this diagram">
@@ -109,8 +119,10 @@ Content-Type: application/json
       </div>
     </div>
   </div>
+  <p class="dthint" id="dt-hint" hidden><b>Dashed</b> nodes hide deeper branches (inline-layer recursion, automation modes) — click one to expand step by step, or “Expand all”.</p>
   <div class="dtwrap" id="aa-flow-wrap"><pre class="mermaid" id="aa-flow-dt">{{ decision_mermaid_dark }}</pre></div>
   <pre id="aa-flow-dt-light" hidden>{{ decision_mermaid_light }}</pre>
+  <script id="dt-graph-data" type="application/json">{{ decision_graph_json|safe }}</script>
   <div class="row" style="gap:8px;margin-top:14px;flex-wrap:wrap;justify-content:center;">
     <span class="pill ok">No-op · already allowed</span>
     <span class="pill" style="background:var(--info-bg);color:var(--info);">Widen · extend a rule</span>
@@ -347,6 +359,55 @@ Content-Type: application/json
     var lightSrc = lightEl ? lightEl.textContent : darkSrc;   // theme styling is baked into each source
     var f = 1;                                                // zoom factor; 1 = fit-to-width (original)
     function isLight(){ return document.documentElement.getAttribute('data-theme') === 'light'; }
+
+    // --- collapsible tree: rebuild the Mermaid source from the engine's graph, filtered to `visible` ---
+    var GRAPH = null;
+    try { GRAPH = JSON.parse(document.getElementById('dt-graph-data').textContent); } catch (e) {}
+    var visible = new Set();                                  // node ids currently shown (survives re-render)
+    function resetVisible(){ visible = new Set(); if (GRAPH) GRAPH.nodes.forEach(function (n){ if (n.level <= GRAPH.default_level) visible.add(n.id); }); }
+    resetVisible();
+    function childrenOf(id){ return GRAPH.edges.filter(function (e){ return e.src === id; }).map(function (e){ return e.dst; }); }
+    function hiddenChildren(id){ return childrenOf(id).filter(function (c){ return !visible.has(c); }); }
+    function nodeIdOf(g){                                     // map a Mermaid <g id="flowchart-<id>-N"> back to our id
+      var gid = g.id || ''; if (gid.indexOf('flowchart-') !== 0) return null;
+      for (var i = 0; i < GRAPH.nodes.length; i++){ var nid = GRAPH.nodes[i].id; if (gid.indexOf('flowchart-' + nid + '-') === 0) return nid; }
+      return null;
+    }
+    function buildSource(dark){                              // SAME pieces decision_tree.to_mermaid emits — just a subset
+      var T = dark ? GRAPH.themes.dark : GRAPH.themes.light;
+      var lines = [T.init, 'flowchart TD'];
+      var vnodes = GRAPH.nodes.filter(function (n){ return visible.has(n.id); });
+      vnodes.forEach(function (n){ lines.push('  ' + n.mm); });
+      lines.push('');
+      GRAPH.edges.forEach(function (e){ if (visible.has(e.src) && visible.has(e.dst)) lines.push('  ' + e.mm); });
+      lines.push('');
+      T.classDefs.forEach(function (c){ lines.push('  ' + c); });
+      var byKind = {};
+      vnodes.forEach(function (n){ (byKind[n.kind] = byKind[n.kind] || []).push(n.id); });
+      Object.keys(byKind).forEach(function (k){ lines.push('  class ' + byKind[k].join(',') + ' ' + k + ';'); });
+      return lines.join('\n');
+    }
+    function activeSrc(){ return GRAPH ? buildSource(!isLight()) : (isLight() ? lightSrc : darkSrc); }
+
+    function applyAffordances(){                             // dashed outline + ＋ badge on collapsed-with-children
+      if (!GRAPH) return;
+      var svg = el.querySelector('svg'); if (!svg) return;
+      svg.querySelectorAll('g.node').forEach(function (g){
+        var id = nodeIdOf(g); var old = g.querySelector('.dt-plus'); if (old) old.remove();
+        g.classList.remove('dt-exp');
+        if (!id || !visible.has(id) || hiddenChildren(id).length === 0) return;
+        g.classList.add('dt-exp');
+        try {
+          var b = g.getBBox();
+          var t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+          t.setAttribute('class', 'dt-plus'); t.setAttribute('text-anchor', 'end');
+          t.setAttribute('x', b.x + b.width - 6); t.setAttribute('y', b.y + 17); t.textContent = '＋';
+          var ttl = document.createElementNS('http://www.w3.org/2000/svg', 'title');
+          ttl.textContent = 'Expand ' + hiddenChildren(id).length + ' more';
+          g.appendChild(t); g.appendChild(ttl);
+        } catch (e) {}
+      });
+    }
     function applyZoom(){
       var svg = el.querySelector('svg'); if (!svg) return;
       // CSS `zoom` scales the element AND its layout box, so f=1 keeps Mermaid's own fit (no clipping)
@@ -355,16 +416,31 @@ Content-Type: application/json
       var lbl = document.getElementById('dt-zreset'); if (lbl) lbl.textContent = Math.round(f * 100) + '%';
     }
     function render(){
-      el.removeAttribute('data-processed'); el.innerHTML = ''; el.textContent = isLight() ? lightSrc : darkSrc;
+      el.removeAttribute('data-processed'); el.innerHTML = ''; el.textContent = activeSrc();
       mermaid.initialize({ startOnLoad: false, securityLevel: 'loose' });   // theme + font baked into the source
       try {
         var p = mermaid.run({ nodes: [el] });
-        if (p && p.then) p.then(applyZoom); else applyZoom();
+        if (p && p.then) p.then(function (){ applyAffordances(); applyZoom(); });
+        else { applyAffordances(); applyZoom(); }
       } catch (e) {}
     }
     document.getElementById('dt-zin').addEventListener('click', function () { f = Math.min(3, +(f + 0.25).toFixed(2)); applyZoom(); });
     document.getElementById('dt-zout').addEventListener('click', function () { f = Math.max(0.4, +(f - 0.25).toFixed(2)); applyZoom(); });
     document.getElementById('dt-zreset').addEventListener('click', function () { f = 1; applyZoom(); });   // back to fit
+
+    if (GRAPH && GRAPH.nodes.length > visible.size) {        // there IS hidden detail -> show the controls + hint
+      var detail = document.getElementById('dt-detail'); if (detail) detail.hidden = false;
+      var hint = document.getElementById('dt-hint'); if (hint) hint.hidden = false;
+      el.addEventListener('click', function (ev){            // delegate: click a collapsed node -> reveal its children
+        var g = ev.target.closest ? ev.target.closest('g.node') : null; if (!g) return;
+        var id = nodeIdOf(g); if (!id || hiddenChildren(id).length === 0) return;
+        childrenOf(id).forEach(function (c){ visible.add(c); }); render();
+      });
+      var eb = document.getElementById('dt-expand');
+      if (eb) eb.addEventListener('click', function (){ GRAPH.nodes.forEach(function (n){ visible.add(n.id); }); render(); });
+      var cb = document.getElementById('dt-collapse');
+      if (cb) cb.addEventListener('click', function (){ resetVisible(); render(); });
+    }
     render();
     var t; new MutationObserver(function (m){
       if (m.some(function (x){ return x.attributeName === 'data-theme'; })) { clearTimeout(t); t = setTimeout(render, 60); }

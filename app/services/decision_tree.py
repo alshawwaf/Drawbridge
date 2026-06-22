@@ -27,6 +27,10 @@ class Node:
     y: int
     w: int = 250
     h: int = 64
+    level: int = 0   # detail TIER for the on-page collapse: 0 = the core flow (always shown), >=1 =
+                     # detail (inline-layer recursion, automation modes) collapsed until expanded. NOT a
+                     # BFS depth — it's a hand-set "how much detail" tier so the core flow stays whole
+                     # when collapsed. The exported .mmd/.drawio/.dot ALWAYS contain every node.
 
 
 @dataclass(frozen=True)
@@ -36,8 +40,11 @@ class Edge:
     label: str = ""
 
 
-# The tree — mirrors decide(): guard (unsupported/malformed) -> resolve each cell (exact/approx/opaque)
-# -> already permitted? -> denied/unverifiable? -> two cells equal? -> else create.
+# The tree — mirrors decide(). CORE flow (level 0, always shown): guard (unsupported/malformed) ->
+# resolve each cell (exact/approx/opaque) -> already permitted? -> denied/unverifiable? -> two cells
+# equal? -> else create. DETAIL (level 1, collapsed on-page until expanded): the inline-layer recursion
+# branch (decide() recurses into an "Apply Layer" sub-rulebase) and the Settings-driven automation modes
+# (override-deny / ignore-conditions). Keep this in lock-step with access_automation.decide().
 NODES: list[Node] = [
     Node("req", "Access request", "source · destination · service / app", "start", 60, 20),
     Node("unsup", "Unsupported / malformed?", "IPv6 · no concrete service", "decision", 60, 130),
@@ -49,13 +56,30 @@ NODES: list[Node] = [
     Node("perm", "Already permitted?", "first reachable Accept that covers it", "decision", 60, 374),
     Node("noop", "No-op", "already allowed — attach the rule", "noop", 420, 374, 240),
     Node("deny", "Denied or can't verify in path?",
-         "explicit / partial / approx drop · negate · conditional", "decision", 60, 484, 250, 68),
+         "covering / partial deny · unresolved or negated cell · conditional rule", "decision",
+         60, 484, 250, 68),
     Node("revD", "Review", "a deny, or scope we can't verify", "review", 420, 486, 240),
     Node("widen", "Two cells equal the request?", "widen the third — add to that cell", "decision",
          60, 598, 250, 68),
     Node("doWiden", "Widen the rule", "add the differing source / dest / service", "widen",
          420, 600, 240),
-    Node("create", "Create least-privilege rule", "above the cleanup / a blocking drop", "create", 60, 712),
+    Node("create", "Create least-privilege rule",
+         "above a blocking / cleanup drop · below a more-specific rule · else bottom", "create",
+         60, 712, 250, 68),
+
+    # --- DETAIL tier 1: inline-layer recursion ("Apply Layer") -----------------------------------
+    Node("inline", "In-path rule applies an inline layer?", "action “Apply Layer” — a sub-rulebase",
+         "decision", 760, 230, 260, 68, level=1),
+    Node("revI", "Review", "inline: partial match · conditional parent · unknown cleanup", "review",
+         1090, 130, 250, 68, level=1),
+    Node("recurse", "Recurse into the inline layer", "run the same flow on its sub-rulebase",
+         "process", 760, 350, 260, 64, level=1),
+    Node("inlineEnd", "Inline layer’s implicit cleanup", "what a no-match inside the layer does",
+         "decision", 760, 470, 260, 68, level=1),
+    # --- DETAIL tier 1: Settings-driven automation modes -----------------------------------------
+    Node("opts", "Automation mode (Settings)",
+         "override-deny: create above a blocking drop · ignore-conditions: treat VPN / time / data "
+         "rules as unconditional", "process", 420, 600, 300, 84, level=1),
 ]
 
 EDGES: list[Edge] = [
@@ -63,9 +87,27 @@ EDGES: list[Edge] = [
     Edge("unsup", "revU", "yes"), Edge("unsup", "resolve", "no"),
     Edge("resolve", "revO", "opaque object"), Edge("resolve", "perm", "resolved"),
     Edge("perm", "noop", "yes"), Edge("perm", "deny", "no"),
-    Edge("deny", "revD", "yes"), Edge("deny", "widen", "no"),
+    Edge("deny", "revD", "blocked → review"), Edge("deny", "widen", "no"),
     Edge("widen", "doWiden", "yes"), Edge("widen", "create", "no"),
+
+    # inline-layer recursion (detail) — branches off "resolve"; outcomes reuse the core leaves
+    Edge("resolve", "inline", "applies an inline layer"),
+    Edge("inline", "revI", "partial match"),
+    Edge("inline", "recurse", "request fully inside → descend"),
+    Edge("recurse", "noop", "inner rule allows it"),
+    Edge("recurse", "doWiden", "inner 2-of-3 → widen"),
+    Edge("recurse", "inlineEnd", "no inner rule covers it"),
+    Edge("inlineEnd", "noop", "cleanup accept"),
+    Edge("inlineEnd", "create", "cleanup drop → inside the layer"),
+    Edge("inlineEnd", "revI", "cleanup unknown"),
+    # automation modes (detail) — the override-deny path turns a blocking-drop REVIEW into a CREATE
+    Edge("deny", "opts", "options"),
+    Edge("opts", "create", "override-deny → above the deny"),
 ]
+
+# The on-page diagram starts collapsed to this tier; deeper nodes expand step-by-step. Downloads/exports
+# are never filtered (the whole tree is always in the .mmd/.drawio/.dot).
+DEFAULT_LEVEL = 0
 
 # kind -> (fill, stroke, font). LIGHT palette — refined for a WHITE canvas (diagrams.net / Visio /
 # Graphviz / GitHub-rendered .mmd): soft tinted fills, a saturated border, dark-tinted text.
@@ -125,31 +167,72 @@ def _mm_text(n: Node) -> str:
     return txt.replace('"', "&quot;")
 
 
-def to_mermaid(dark: bool = False) -> str:
-    """Mermaid flowchart with a baked-in %%{init}%% directive (theme + Inter font + spacing) so it looks
-    the same wherever it renders. ``dark`` picks the on-page (dark-canvas) palette; default light is for
-    the .mmd download / GitHub / diagrams.net import."""
-    pal = PALETTE_DARK if dark else PALETTE
+def _mm_init(dark: bool) -> str:
     cfg = {"theme": "base", "themeVariables": _MM_THEME[dark],
            "flowchart": {"curve": "basis", "nodeSpacing": 46, "rankSpacing": 52, "padding": 12,
                          "htmlLabels": True, "useMaxWidth": True}}
-    out = ["%%{init: " + json.dumps(cfg, separators=(",", ":")) + "}%%", "flowchart TD"]
-    for n in NODES:
-        o, c = _MM_SHAPE[n.kind]
-        out.append(f"  {n.id}{o}{_mm_text(n)}{c}")
+    return "%%{init: " + json.dumps(cfg, separators=(",", ":")) + "}%%"
+
+
+def _mm_node_decl(n: Node) -> str:
+    o, c = _MM_SHAPE[n.kind]
+    return f"{n.id}{o}{_mm_text(n)}{c}"
+
+
+def _mm_edge_decl(e: Edge) -> str:
+    arrow = f" -->|{e.label}| " if e.label else " --> "
+    return f"{e.src}{arrow}{e.dst}"
+
+
+def _mm_classdefs(dark: bool) -> list[str]:
+    pal = PALETTE_DARK if dark else PALETTE
+    return [f"classDef {kind} fill:{fill},stroke:{stroke},color:{font},stroke-width:1.5px;"
+            for kind, (fill, stroke, font) in pal.items()]
+
+
+def to_mermaid(dark: bool = False, visible_ids: "set[str] | None" = None) -> str:
+    """Mermaid flowchart with a baked-in %%{init}%% directive (theme + spacing) so it looks the same
+    wherever it renders. ``dark`` picks the on-page (dark-canvas) palette; default light is for the .mmd
+    download / GitHub / diagrams.net import. ``visible_ids`` (None = the WHOLE tree, used by the downloads
+    and golden tests) restricts the emitted nodes — and any edge whose endpoints are both visible — so the
+    on-page view can render a collapsed subset in the SAME format the client assembles incrementally."""
+    nodes = [n for n in NODES if visible_ids is None or n.id in visible_ids]
+    out = [_mm_init(dark), "flowchart TD"]
+    out += [f"  {_mm_node_decl(n)}" for n in nodes]
     out.append("")
     for e in EDGES:
-        arrow = f" -->|{e.label}| " if e.label else " --> "
-        out.append(f"  {e.src}{arrow}{e.dst}")
+        if visible_ids is not None and not (e.src in visible_ids and e.dst in visible_ids):
+            continue
+        out.append(f"  {_mm_edge_decl(e)}")
     out.append("")
-    for kind, (fill, stroke, font) in pal.items():
-        out.append(f"  classDef {kind} fill:{fill},stroke:{stroke},color:{font},stroke-width:1.5px;")
+    out += [f"  {c}" for c in _mm_classdefs(dark)]
     grouped: dict[str, list[str]] = {}
-    for n in NODES:
+    for n in nodes:
         grouped.setdefault(n.kind, []).append(n.id)
     for kind, ids in grouped.items():
         out.append(f"  class {','.join(ids)} {kind};")
     return "\n".join(out)
+
+
+def default_visible() -> set:
+    """Node ids shown before the user expands anything (the core flow, level 0)."""
+    return {n.id for n in NODES if n.level <= DEFAULT_LEVEL}
+
+
+def to_graph() -> dict:
+    """The tree as data for the on-page collapsible renderer: every node (with its detail level + the
+    pre-formatted Mermaid declaration) and edge, plus the per-theme %%{init}%% directive and classDefs.
+    The client filters this to the currently-visible nodes and joins the pieces — so the Mermaid TEXT is
+    still produced by THIS module (no format drift), it just assembles a subset. Static engine metadata
+    only (no request-derived data)."""
+    return {
+        "start": next((n.id for n in NODES if n.kind == "start"), NODES[0].id if NODES else ""),
+        "default_level": DEFAULT_LEVEL,
+        "nodes": [{"id": n.id, "kind": n.kind, "level": n.level, "mm": _mm_node_decl(n)} for n in NODES],
+        "edges": [{"src": e.src, "dst": e.dst, "mm": _mm_edge_decl(e)} for e in EDGES],
+        "themes": {"dark":  {"init": _mm_init(True),  "classDefs": _mm_classdefs(True)},
+                   "light": {"init": _mm_init(False), "classDefs": _mm_classdefs(False)}},
+    }
 
 
 # --- diagrams.net (.drawio / mxGraph XML) --------------------------------------------------------
