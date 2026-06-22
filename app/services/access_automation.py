@@ -983,14 +983,38 @@ def load_layer_cached(session, server, layer: str, package: Optional[str] = None
     return rules, bool(raw.get("cached"))
 
 
+def _resolve_app(session, req: AccessRequest):
+    """If the request is application-based, correlate its name to a real Check Point application. On a
+    confident (unique exact / normalized-exact) hit, rewrite req.application to CP's canonical name so
+    BOTH the rulebase match and any new rule use it. Returns the resolution dict (or None if not an app
+    request); the caller turns a no-confident-match into REVIEW with candidates."""
+    if not req.application:
+        return None
+    from . import applications
+    res = applications.resolve(session, req.application)
+    if res.get("match"):
+        req.application = res["match"]
+    return res
+
+
+def _app_review(app_res: dict, base: dict) -> dict:
+    return {"ok": True, "outcome": "review", "target_rule": None, "app_resolution": app_res,
+            "reason": (f"the application “{app_res['term']}” has no single confident match on this "
+                       f"server — choose the exact Check Point application below"), **base}
+
+
 def preview(server, secret, req: AccessRequest, layer: str, *, package: Optional[str] = None) -> dict:
-    """Read-only: load (cached) -> decide -> describe. Returns {ok, outcome, reason, cached, …, trace}."""
+    """Read-only: correlate app -> load (cached) -> decide -> describe."""
     try:
         with read_session(server, secret) as s:          # read-only, pooled — no login per preview
+            app_res = _resolve_app(s, req)
+            if app_res and not app_res["match"]:
+                return _app_review(app_res, {"cached": False, "trace": s.trace})
             rules, cached = load_layer_cached(s, server, layer, package)
             decision = decide(req, rules)
             out = build_preview(s, decision, req, rules)
-            return {"ok": True, **out, "cached": cached, "trace": s.trace}
+            return {"ok": True, **out, "cached": cached, "trace": s.trace,
+                    **({"app_resolution": app_res} if app_res else {})}
     except MgmtError as exc:
         return {"ok": False, "error": str(exc)}
 
@@ -1005,10 +1029,15 @@ def execute(server, secret, req: AccessRequest, layer: str, *, package: Optional
         # fresh rules, locks held only for this commit.
         with MgmtSession(server, secret, session_timeout=write_session_timeout(),
                          session_description="DC-Sim access automation (apply)") as s:
+            app_res = _resolve_app(s, req)
+            if app_res and not app_res["match"]:        # never apply an unresolved / ambiguous application
+                return {"ok": True, "applied": False, "published": False,
+                        **_app_review(app_res, {"trace": s.trace})}
             rules = load_layer(s, layer, package)
             decision = decide(req, rules)
             base = {"outcome": decision.outcome.value, "reason": decision.reason,
-                    "target_rule": _brief(decision.target_rule)}
+                    "target_rule": _brief(decision.target_rule),
+                    **({"app_resolution": app_res} if app_res else {})}
             if decision.outcome in (Outcome.NO_OP, Outcome.REVIEW):
                 return {"ok": True, "applied": False, "published": False, **base, "trace": s.trace}
             try:

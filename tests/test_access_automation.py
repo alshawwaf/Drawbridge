@@ -572,7 +572,11 @@ def _fake_session_factory(calls, hosts=None, services=None, fail_on=None):
             if fail_on and command == fail_on:
                 raise aa.MgmtError("server said no")
             if command == "show-objects":
-                ip = (payload or {}).get("filter")
+                p = payload or {}
+                if (p.get("type") or "").startswith("application-site"):
+                    f = p.get("filter") or ""        # echo the searched app so it resolves exactly (it exists)
+                    return {"objects": [{"name": f, "uid": "app-" + f, "type": "application-site"}]} if f else {"objects": []}
+                ip = p.get("filter")
                 return {"objects": [{"name": hosts[ip], "ipv4-address": ip}]} if ip in hosts else {"objects": []}
             if command in ("show-services-tcp", "show-services-udp"):
                 proto = "tcp" if command.endswith("tcp") else "udp"

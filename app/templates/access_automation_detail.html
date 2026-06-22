@@ -35,7 +35,8 @@
     <div style="width:130px;"><label>Port <span class="muted">(or range)</span>
       <input id="aa-port" placeholder="443"></label></div>
     <div style="width:170px;"><label>Application <span class="muted">(optional)</span>
-      <input id="aa-app" placeholder="Facebook"></label></div>
+      <input id="aa-app" placeholder="Facebook" list="aa-applist" autocomplete="off">
+      <datalist id="aa-applist"></datalist></label></div>
   </div>
   <p class="muted" style="margin:2px 0 0; font-size:12px;">Fill <b>Application</b> (e.g. Facebook, YouTube) to match on an app instead of a port — it overrides protocol/port.</p>
   <div class="row" style="margin-top:14px; gap:8px;">
@@ -182,6 +183,7 @@ Content-Type: application/json
       var h = '<div class="runbox">';
       h += '<div class="row" style="align-items:center; gap:10px;">' + outcomeBadge(j.outcome) +
            '<span>' + esc(j.reason) + '</span></div>';
+      if (j.app_resolution) h += appBlock(j.app_resolution);
       if (j.anomaly) h += '<div class="err-inline">Heads-up: an existing ordering anomaly was detected near the insert point — review placement.</div>';
 
       var rows = '';
@@ -214,6 +216,23 @@ Content-Type: application/json
       var actionable = (j.outcome === 'widen' || j.outcome === 'create');
       setActionable((mode === 'preview' || mode === 'validate') && actionable);
       if (mode === 'publish' && j.published) setActionable(false);
+    }
+    function appBlock(res) {
+      var h = res.match
+        ? '<div class="ok" style="margin-top:10px;">✓ Application matched to Check Point: <b>' + esc(res.match) +
+          '</b> <span class="muted">(' + esc(res.confidence) + ' match)</span></div>'
+        : '<div class="err-inline" style="margin-top:10px;">' + esc(res.note || 'Pick the exact Check Point application.') + '</div>';
+      var c = res.candidates || [];
+      if (c.length) {
+        h += '<div class="row" style="gap:6px; flex-wrap:wrap; margin-top:8px;">';
+        c.forEach(function (x) {
+          if (res.match && x.name === res.match) return;     // don't repeat the matched one
+          h += '<button type="button" class="copybtn" data-app="' + esc(x.name) + '" title="pick this application">' +
+               esc(x.name) + (x.category ? ' <span class="muted">· ' + esc(x.category) + '</span>' : '') + '</button>';
+        });
+        h += '</div>';
+      }
+      return h;
     }
     function setActionable(on) {
       lastActionable = on;
@@ -253,10 +272,37 @@ Content-Type: application/json
       }).catch(function () { result.innerHTML = '<div class="err">Take-over request failed.</div>'; });
     });
 
+    // Pick a suggested application chip -> fill the field and re-evaluate.
+    result.addEventListener('click', function (e) {
+      var chip = e.target.closest ? e.target.closest('[data-app]') : null;
+      if (!chip) return;
+      document.getElementById('aa-app').value = chip.getAttribute('data-app');
+      call('preview', 'preview');
+    });
+
     // Re-preview (and lock apply) whenever an input changes, so apply always matches what's shown.
     ['aa-layer', 'aa-source', 'aa-dest', 'aa-proto', 'aa-port', 'aa-app', 'aa-ticket'].forEach(function (eid) {
       document.getElementById(eid).addEventListener('change', function () { setActionable(false); });
     });
+
+    // Type-ahead: real Check Point applications matching what's typed (debounced) into the datalist.
+    (function () {
+      var appInput = document.getElementById('aa-app'), appList = document.getElementById('aa-applist'), t;
+      appInput.addEventListener('input', function () {
+        var q = appInput.value.trim();
+        clearTimeout(t);
+        if (q.length < 2) { appList.innerHTML = ''; return; }
+        t = setTimeout(function () {
+          fetch('/access-automation/' + id + '/app-search?q=' + encodeURIComponent(q))
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+              appList.innerHTML = (d.candidates || []).slice(0, 12).map(function (c) {
+                return '<option value="' + esc(c.name) + '">' + esc(c.category || c.kind || '') + '</option>';
+              }).join('');
+            }).catch(function () {});
+        }, 250);
+      });
+    })();
 
     fetch('/management/' + id + '/layers').then(function (r) { return r.json(); })
       .then(function (data) {
