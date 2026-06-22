@@ -608,6 +608,29 @@
         document.querySelectorAll('.menu.open').forEach(function (m) { m.classList.remove('open'); });
       });
     })();
+    // Multi-select / column-chooser popovers (.msel): toggle on the button, stay open while ticking
+    // options, close on outside click. Global so any page (filters, the Columns chooser) gets it.
+    (function () {
+      document.addEventListener('click', function (e) {
+        var btn = e.target.closest('.msel-btn');
+        if (btn) {
+          e.preventDefault();
+          var msel = btn.closest('.msel'), wasOpen = msel.classList.contains('open');
+          document.querySelectorAll('.msel.open').forEach(function (m) { m.classList.remove('open'); });
+          if (!wasOpen) msel.classList.add('open');
+          return;
+        }
+        if (e.target.closest('.msel-panel')) return;
+        document.querySelectorAll('.msel.open').forEach(function (m) { m.classList.remove('open'); });
+      });
+      document.addEventListener('DOMContentLoaded', function () {   // initial badge = count of checked opts
+        document.querySelectorAll('.msel').forEach(function (m) {
+          var b = m.querySelector('.msel-badge'); if (!b) return;
+          var n = m.querySelectorAll('input:checked:not([disabled])').length;
+          b.textContent = n; b.hidden = !n;
+        });
+      });
+    })();
     // Relative timestamps: render any element with class "ts" + data-ts="ISO" as "5m ago"
     // (absolute local time on hover). One renderer for every table; survives row swaps via window.paintTimestamps.
     (function () {
