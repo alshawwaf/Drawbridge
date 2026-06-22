@@ -402,10 +402,12 @@
     .modal h3 { margin:0 0 8px; font-size:18px; font-weight:740; }
     .modal p { color:var(--muted); font-size:14px; margin:0; }
     .modal-actions { display:flex; gap:10px; justify-content:flex-end; margin-top:24px; }
-    /* Form-in-modal: the modal IS the card, so strip the injected form's own card chrome + size it. */
-    #form-modal .modal { max-width:670px; text-align:left; padding:0; scroll-padding-top:46px; }
-    /* OS-window-style title bar: a full-bleed gradient header that stays put while the body scrolls. */
-    #form-modal .fm-head { position:sticky; top:0; z-index:3; display:flex; align-items:center; gap:12px;
+    /* Form-in-modal: the modal IS the card. It's a flex column — the gradient header and the scrolling
+       body are separate rows, so the SCROLLBAR lives only in the body (never crossing the header or the
+       rounded top corners, which is what left a white notch when the whole modal was the scroll area). */
+    #form-modal .modal { max-width:670px; text-align:left; padding:0; overflow:hidden;
+      display:flex; flex-direction:column; }
+    #form-modal .fm-head { flex:none; z-index:3; display:flex; align-items:center; gap:12px;
       margin:0; padding:8px 14px 8px 22px; color:#fff;
       background:linear-gradient(100deg, var(--accent) 0%, #c026d3 46%, #7b3ff2 100%);
       border-radius:16px 16px 0 0; box-shadow:0 1px 0 rgba(0,0,0,.14); }
@@ -413,7 +415,8 @@
       text-shadow:0 1px 2px rgba(0,0,0,.22); }
     #form-modal #fm-close { margin:0; flex:none; width:28px; height:28px; color:#fff; border-color:transparent; }
     #form-modal #fm-close:hover { color:#fff; background:rgba(255,255,255,.22); }
-    #form-modal .fm-body { padding:18px 24px 0; }
+    #form-modal .fm-body { flex:1 1 auto; min-height:0; overflow-y:auto; padding:18px 24px 0;
+      scroll-padding-bottom:56px; }
     #form-modal .fm-body form.card, #form-modal .fm-body form { border:none; box-shadow:none;
       background:none; padding:0; margin:0; max-width:none; }
     #form-modal .fm-body hr { border:none; border-top:1px solid var(--line); margin:16px 0; }
