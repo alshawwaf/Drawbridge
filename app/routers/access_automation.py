@@ -100,10 +100,16 @@ def aa_detail(sid: int, request: Request, db: Session = Depends(get_db)):
     if user is None:
         return RedirectResponse("/login", status_code=303)
     ms = _owned(db, sid, user)
+    # Bake the COLLAPSED (core-flow) view as the initial paint so the no-JS / CDN-blocked fallback isn't
+    # overwhelming; the client rebuilds from decision_graph and expands the detail tiers on demand.
+    import json
+    dv = decision_tree.default_visible()
     return templates.TemplateResponse(request, "access_automation_detail.html",
                                       {"ms": ms, "has_secret": mgmt_creds.has_secret(db, ms),
-                                       "decision_mermaid_dark": decision_tree.to_mermaid(dark=True),
-                                       "decision_mermaid_light": decision_tree.to_mermaid(dark=False),
+                                       "decision_mermaid_dark": decision_tree.to_mermaid(True, dv),
+                                       "decision_mermaid_light": decision_tree.to_mermaid(False, dv),
+                                       "decision_graph_json": json.dumps(
+                                           decision_tree.to_graph()).replace("<", "\\u003c"),
                                        "flash": _pop_flash(request)})
 
 
