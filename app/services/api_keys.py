@@ -13,9 +13,17 @@ import hmac
 import secrets
 import threading
 import time
+from datetime import timezone
 
 from ..db import SessionLocal
 from ..models import ApiKey, utcnow
+
+
+def as_utc(d):
+    """Coerce a (possibly naive, from SQLite) datetime to tz-aware UTC, so comparisons never raise."""
+    if d is None:
+        return None
+    return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
 
 SCOPES = ("mcp", "webhook", "api")     # api = the general REST API (/api/v1) for any HTTP client
 _PREFIX = "dcsim"                      # token looks like dcsim_<scope>_<random> — scope is visible, not secret
@@ -38,17 +46,19 @@ def _normalize_scope(scope: str) -> str:
     return scope if scope in SCOPES else "mcp"
 
 
-def generate(name: str, scope: str = "mcp", created_by: str = "") -> tuple[ApiKey, str]:
+def generate(name: str, scope: str = "mcp", created_by: str = "", expires_at=None) -> tuple[ApiKey, str]:
     """Create a key and return (record, PLAINTEXT). The plaintext is the only time the secret exists in
     the clear — show it once to the admin, then it's unrecoverable (only the hash is stored). Retries once
-    on the astronomically-unlikely key_hash UNIQUE collision (256-bit token) so it self-heals, never 500s."""
+    on the astronomically-unlikely key_hash UNIQUE collision (256-bit token) so it self-heals, never 500s.
+    ``expires_at`` (tz-aware, optional) makes the key stop authenticating after that time."""
     from sqlalchemy.exc import IntegrityError
     scope = _normalize_scope(scope)
     name = (name or "key").strip()[:120]
     created_by = (created_by or "")[:120]
     for _ in range(3):
         secret = f"{_PREFIX}_{scope}_{secrets.token_urlsafe(32)}"
-        row = ApiKey(name=name, scope=scope, key_hash=_hash(secret), hint=secret[-4:], created_by=created_by)
+        row = ApiKey(name=name, scope=scope, key_hash=_hash(secret), hint=secret[-4:],
+                     created_by=created_by, expires_at=expires_at)
         db = SessionLocal()
         try:
             db.add(row)
@@ -93,9 +103,10 @@ def revoke(key_id: int) -> bool:
     return True
 
 
-def _active(scope: str) -> list[tuple[int, str]]:
-    """[(id, key_hash)] for a scope, cached ~5s. The single chokepoint for verify()/any_active(), so it
-    normalizes the scope (an unknown scope can't silently cache an empty list under a typo'd key)."""
+def _active(scope: str) -> list[tuple[int, str, object]]:
+    """[(id, key_hash, expires_at)] for a scope, cached ~5s. The single chokepoint for verify()/
+    any_active(), so it normalizes the scope (an unknown scope can't silently cache an empty list under a
+    typo'd key). Expiry is checked per call (not cache-bound) by _live()."""
     scope = _normalize_scope(scope)
     now = time.monotonic()
     hit = _cache.get(scope)
@@ -104,7 +115,8 @@ def _active(scope: str) -> list[tuple[int, str]]:
     try:
         db = SessionLocal()
         try:
-            rows = [(r.id, r.key_hash) for r in db.query(ApiKey).filter(ApiKey.scope == scope).all()]
+            rows = [(r.id, r.key_hash, r.expires_at)
+                    for r in db.query(ApiKey).filter(ApiKey.scope == scope).all()]
         finally:
             db.close()
     except Exception:  # noqa: BLE001 — a DB hiccup must fail closed (no keys), never crash the auth path
@@ -113,13 +125,20 @@ def _active(scope: str) -> list[tuple[int, str]]:
     return rows
 
 
+def _live(scope: str) -> list[tuple[int, str]]:
+    """[(id, key_hash)] for keys that are NOT expired — expiry checked against 'now' each call so a key
+    expiring mid-cache-window stops authenticating immediately, without waiting for the cache TTL."""
+    now = utcnow()
+    return [(kid, kh) for (kid, kh, exp) in _active(scope) if as_utc(exp) is None or as_utc(exp) > now]
+
+
 def verify(presented: str, scope: str = "mcp") -> bool:
-    """True if ``presented`` matches an active key for ``scope`` (constant-time). Marks the key used."""
+    """True if ``presented`` matches a live (non-expired) key for ``scope`` (constant-time). Marks used."""
     if not presented:
         return False
     h = _hash(presented)
     matched_id = None
-    for kid, kh in _active(scope):
+    for kid, kh in _live(scope):
         if hmac.compare_digest(h, kh):     # constant-time per comparison
             matched_id = kid
             break
@@ -130,8 +149,8 @@ def verify(presented: str, scope: str = "mcp") -> bool:
 
 
 def any_active(scope: str = "mcp") -> bool:
-    """True if at least one key exists for the scope (so the endpoint counts as configured)."""
-    return bool(_active(scope))
+    """True if at least one live (non-expired) key exists for the scope (endpoint counts as configured)."""
+    return bool(_live(scope))
 
 
 def _touch(key_id: int) -> None:

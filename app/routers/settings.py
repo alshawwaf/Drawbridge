@@ -1,6 +1,8 @@
 """Portal Settings — user-tunable behaviour for how the tool talks to a Check Point management server
 (session reuse + revision-based policy cache). Auth-gated; values persist via ``services.app_settings``
 (DB-backed ``AppState``) so an admin controls the behaviour from the portal, never from code or env."""
+import datetime as dt
+
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy.orm import Session
@@ -20,6 +22,50 @@ def _grouped():
     return groups
 
 
+EXPIRY_PRESETS = [("30", "30 days"), ("90", "90 days"), ("365", "1 year"), ("never", "Never")]
+
+
+def _parse_expiry(form) -> dt.datetime | None:
+    """Compute an expiry datetime from the create form: an explicit date wins, else a preset day-count;
+    'never' / unparseable → None (no expiry). Good hygiene defaults to a preset rather than never."""
+    raw_date = (form.get("expires_date") or "").strip()
+    if raw_date:
+        try:
+            d = dt.datetime.strptime(raw_date, "%Y-%m-%d")
+            return d.replace(hour=23, minute=59, second=59, tzinfo=dt.timezone.utc)
+        except ValueError:
+            pass
+    preset = (form.get("expires") or "90").strip()
+    if preset == "never":
+        return None
+    try:
+        days = int(preset)
+    except (TypeError, ValueError):
+        days = 90
+    return dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=max(1, days))
+
+
+def _key_rows(now: dt.datetime) -> list[dict]:
+    """API keys annotated with a hygiene status for the table (expired / expiring-soon / unused / ok)."""
+    from ..services import api_keys
+    out = []
+    for k in api_keys.list_keys():
+        exp = api_keys.as_utc(k.expires_at)
+        created = api_keys.as_utc(k.created_at)
+        used = api_keys.as_utc(k.last_used_at)
+        if exp and exp <= now:
+            status = "expired"
+        elif exp and (exp - now).days < 7:
+            status = "soon"
+        elif used is None and created and (now - created).days >= 30:
+            status = "unused"
+        else:
+            status = "ok"
+        out.append({"id": k.id, "name": k.name, "scope": k.scope, "hint": k.hint,
+                    "created": created, "last_used": used, "expires": exp, "status": status})
+    return out
+
+
 def _detected_base_url(request: Request) -> str:
     """The public URL this request arrived on, honoring the reverse proxy's X-Forwarded-* headers — so
     the admin can adopt it for base_url with one click instead of typing it blind. Suggestion only."""
@@ -35,12 +81,14 @@ def settings_page(request: Request, db: Session = Depends(get_db)):
     if user is None:
         return RedirectResponse("/login", status_code=303)
     new_key = request.session.pop("new_api_key", None)   # one-time reveal (NOT via _flash → not persisted)
+    now = dt.datetime.now(dt.timezone.utc)
     return templates.TemplateResponse(request, "settings.html",
                                       {"groups": _grouped(), "vals": app_settings.all_values(fresh=True),
                                        "secrets": app_settings.secret_status(),       # {key: is_set} — never the value
                                        "crypto_ok": app_settings.secret_available(),
-                                       "api_keys": api_keys.list_keys(),
+                                       "api_keys": _key_rows(now),
                                        "api_scopes": api_keys.SCOPES,
+                                       "expiry_presets": EXPIRY_PRESETS,
                                        "new_key": new_key,
                                        "detected_base_url": _detected_base_url(request),
                                        "flash": _pop_flash(request)})
@@ -101,9 +149,12 @@ async def api_key_create(request: Request, db: Session = Depends(get_db)):
     form = await request.form()
     name = (form.get("name") or "").strip() or "key"
     scope = form.get("scope") or "mcp"
-    row, secret = api_keys.generate(name, scope, created_by=user.username)
-    request.session["new_api_key"] = {"name": row.name, "scope": row.scope, "key": secret}
-    _flash(request, f"API key '{row.name}' ({row.scope}) created — copy it now, it's shown only once.")
+    expires_at = _parse_expiry(form)
+    row, secret = api_keys.generate(name, scope, created_by=user.username, expires_at=expires_at)
+    exp_txt = expires_at.strftime("%Y-%m-%d") if expires_at else "never"
+    request.session["new_api_key"] = {"name": row.name, "scope": row.scope, "key": secret, "expires": exp_txt}
+    _flash(request, f"API key '{row.name}' ({row.scope}, expires {exp_txt}) created — copy it now, "
+                    "it's shown only once.")
     return RedirectResponse("/settings#grp-api-keys", status_code=303)
 
 
