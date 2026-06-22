@@ -3,7 +3,7 @@ import datetime as dt
 import enum
 import uuid
 
-from sqlalchemy import JSON, Boolean, DateTime, Enum, ForeignKey, Integer, String, Text
+from sqlalchemy import JSON, Boolean, DateTime, Enum, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
@@ -276,6 +276,19 @@ class LoginThrottle(Base):
     fails: Mapped[int] = mapped_column(Integer, default=0)
     first_fail: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     locked_until: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class UserTablePref(Base):
+    """Per-user, per-table view preferences (visible columns; later density/sort) so a chosen table
+    view sticks across sessions/devices and is resolved server-side before first paint."""
+
+    __tablename__ = "user_table_prefs"
+    __table_args__ = (UniqueConstraint("owner_id", "table_id", name="uq_user_table"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    table_id: Mapped[str] = mapped_column(String(64))
+    prefs: Mapped[dict] = mapped_column(JSON, default=dict)
 
 
 class ManagementServer(Base):

@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..security import get_user_or_none
-from ..services import app_settings
+from ..services import app_settings, table_prefs
 from .ui import _flash, _pop_flash, templates
 
 router = APIRouter(include_in_schema=False)
@@ -55,3 +55,22 @@ def settings_reset(request: Request, db: Session = Depends(get_db)):
     app_settings.save(app_settings.defaults())
     _flash(request, "Settings restored to defaults.")
     return RedirectResponse("/settings", status_code=303)
+
+
+@router.post("/prefs/table/{table_id}/columns")
+async def save_table_columns(table_id: str, request: Request, db: Session = Depends(get_db)):
+    """Persist a user's visible-column choice for a table, then return to the page (server re-renders
+    the chosen columns — no flash). Column ids are validated against the table's spec allowlist."""
+    user = get_user_or_none(request, db)
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+    form = await request.form()
+    nxt = str(form.get("next") or "")
+    if not nxt.startswith("/"):
+        nxt = "/"
+    if table_prefs.spec(table_id):                      # ignore unknown table ids (no junk rows)
+        if "reset" in form:
+            table_prefs.reset(db, user.id, table_id)
+        else:
+            table_prefs.save_columns(db, user.id, table_id, form.getlist("cols"))
+    return RedirectResponse(nxt, status_code=303)

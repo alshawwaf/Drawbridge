@@ -57,3 +57,31 @@
   </div>
 </td>
 {% endmacro %}
+
+{# A "Columns" chooser popover (reuses the .msel component). columns = the table's spec (Col objects);
+   visible = the resolved visible id list; next = the relative path to return to after saving. Locked
+   columns render checked+disabled (server forces them in). Posts to /prefs/table/{id}/columns. #}
+{% macro columns_menu(table_id, columns, visible, next) %}
+<div class="msel" id="cols-{{ table_id }}">
+  <button type="button" class="msel-btn">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:5px;"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/><line x1="15" y1="3" x2="15" y2="21"/></svg>
+    Columns <span class="msel-caret">▾</span></button>
+  <div class="msel-panel right">
+    <form method="post" action="/prefs/table/{{ table_id }}/columns">
+      <input type="hidden" name="next" value="{{ next }}">
+      <span class="menu-label">Show columns</span>
+      {% for c in columns %}
+      <label class="msel-opt">
+        <input type="checkbox" name="cols" value="{{ c.id }}"
+               {{ 'checked' if c.id in visible else '' }}{{ ' disabled' if c.locked else '' }}>
+        {{ c.label }}{% if c.locked %} <span class="muted small">(always)</span>{% endif %}
+      </label>
+      {% endfor %}
+      <div class="row" style="gap:8px; margin:9px 6px 3px;">
+        <button type="submit" class="btn" style="padding:6px 13px;">Apply</button>
+        <button type="submit" name="reset" value="1" class="btn secondary" style="padding:6px 13px;">Reset</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endmacro %}

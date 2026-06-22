@@ -15,6 +15,7 @@ from ..services import dc_creds
 from ..services import kubernetes as k8s_svc
 from ..services import nutanix as nutanix_svc
 from ..services import openstack as os_mock
+from ..services import table_prefs
 from .ui import _flash, _pop_flash, templates
 
 router = APIRouter(include_in_schema=False)
@@ -469,7 +470,11 @@ def dc_list(request: Request, db: Session = Depends(get_db)):
                        f"{len(c.get('subnets', []) or [])} subnet(s) · "
                        f"{len(c.get('security_groups', []) or [])} sec group(s)")
         rows.append({"dc": d, "summary": summary})
-    return templates.TemplateResponse(request, "dc_list.html", {"rows": rows, "flash": _pop_flash(request)})
+    return templates.TemplateResponse(request, "dc_list.html", {
+        "rows": rows, "flash": _pop_flash(request),
+        "cols": table_prefs.spec("datacenters"),
+        "vis": table_prefs.visible_columns(db, user.id, "datacenters"),
+    })
 
 
 @router.get("/datacenters/new", response_class=HTMLResponse)

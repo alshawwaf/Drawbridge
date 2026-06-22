@@ -175,19 +175,7 @@
     });
     psSel.addEventListener('change', reload);
 
-    // Multiselect dropdown menus: toggle on the button, stay open while ticking options, close outside.
-    document.addEventListener('click', function (e) {
-      var btn = e.target.closest('.msel-btn');
-      if (btn) {
-        e.preventDefault();
-        var msel = btn.closest('.msel'), wasOpen = msel.classList.contains('open');
-        document.querySelectorAll('.msel.open').forEach(function (m) { m.classList.remove('open'); });
-        if (!wasOpen) msel.classList.add('open');
-        return;
-      }
-      if (e.target.closest('.msel-panel')) return;
-      document.querySelectorAll('.msel.open').forEach(function (m) { m.classList.remove('open'); });
-    });
+    // (.msel open/close + badge paint is handled globally in base.html)
 
     $('reset-filters').addEventListener('click', function () {
       form.querySelectorAll('.kind-cb, .dc-cb, .status-cb').forEach(function (c) { c.checked = false; });
