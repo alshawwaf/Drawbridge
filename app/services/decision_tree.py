@@ -47,8 +47,8 @@ class Edge:
 # (override-deny / ignore-conditions). Keep this in lock-step with access_automation.decide().
 NODES: list[Node] = [
     Node("req", "Access request", "source · destination · service / app", "start", 60, 20),
-    Node("unsup", "Unsupported / malformed?", "IPv6 · no concrete service", "decision", 60, 130),
-    Node("revU", "Review", "unsupported / malformed", "review", 420, 130, 240),
+    Node("unsup", "Malformed request?", "no concrete service / port", "decision", 60, 130),
+    Node("revU", "Review", "no concrete service to reason about", "review", 420, 130, 240),
     Node("resolve", "Resolve each cell to its real extent",
          "exact: host / network / range / group  ·  approx: gateway / cluster / mgmt  ·  opaque → review",
          "process", 60, 240, 250, 84),
@@ -68,18 +68,27 @@ NODES: list[Node] = [
          60, 712, 250, 68),
 
     # --- DETAIL tier 1: inline-layer recursion ("Apply Layer") -----------------------------------
+    # A SELF-CONTAINED branch off "resolve" with its OWN outcome leaves, so the expanded diagram never
+    # draws long edges back across to the core leaves (that was the tangle). The recursion's own outcomes
+    # mirror the top-level ones — said in the node text rather than re-drawn — so only the genuinely-new
+    # inline-cleanup logic gets its own little subtree.
     Node("inline", "In-path rule applies an inline layer?", "action “Apply Layer” — a sub-rulebase",
-         "decision", 760, 230, 260, 68, level=1),
+         "decision", 820, 240, 270, 68, level=1),
+    Node("recurse", "Recurse into the inline layer",
+         "re-runs this whole flow — no-op / widen / create / review, same as above", "process",
+         820, 360, 280, 84, level=1),
+    Node("inlineEnd", "No inner rule covers it → the layer’s implicit cleanup", "", "decision",
+         820, 490, 280, 68, level=1),
+    Node("inNoop", "No-op", "inline cleanup accepts it", "noop", 760, 620, 240, level=1),
+    Node("inCreate", "Create inside the inline layer", "above the layer’s drop cleanup", "create",
+         1050, 620, 250, level=1),
     Node("revI", "Review", "inline: partial match · conditional parent · unknown cleanup", "review",
-         1090, 130, 250, 68, level=1),
-    Node("recurse", "Recurse into the inline layer", "run the same flow on its sub-rulebase",
-         "process", 760, 350, 260, 64, level=1),
-    Node("inlineEnd", "Inline layer’s implicit cleanup", "what a no-match inside the layer does",
-         "decision", 760, 470, 260, 68, level=1),
-    # --- DETAIL tier 1: Settings-driven automation modes -----------------------------------------
+         1160, 240, 250, 84, level=1),
+    # --- DETAIL tier 1: Settings-driven automation modes (own leaf, no cross-edge) ----------------
     Node("opts", "Automation mode (Settings)",
-         "override-deny: create above a blocking drop · ignore-conditions: treat VPN / time / data "
-         "rules as unconditional", "process", 420, 600, 300, 84, level=1),
+         "override-deny · ignore-conditions: treat VPN / time / data rules as unconditional", "process",
+         60, 850, 320, 84, level=1),
+    Node("odCreate", "Create above the deny", "override-deny mode is on", "create", 420, 858, 240, level=1),
 ]
 
 EDGES: list[Edge] = [
@@ -90,19 +99,17 @@ EDGES: list[Edge] = [
     Edge("deny", "revD", "blocked → review"), Edge("deny", "widen", "no"),
     Edge("widen", "doWiden", "yes"), Edge("widen", "create", "no"),
 
-    # inline-layer recursion (detail) — branches off "resolve"; outcomes reuse the core leaves
+    # inline-layer recursion (detail) — a self-contained branch off "resolve" with its OWN leaves
     Edge("resolve", "inline", "applies an inline layer"),
     Edge("inline", "revI", "partial match"),
     Edge("inline", "recurse", "request fully inside → descend"),
-    Edge("recurse", "noop", "inner rule allows it"),
-    Edge("recurse", "doWiden", "inner 2-of-3 → widen"),
     Edge("recurse", "inlineEnd", "no inner rule covers it"),
-    Edge("inlineEnd", "noop", "cleanup accept"),
-    Edge("inlineEnd", "create", "cleanup drop → inside the layer"),
+    Edge("inlineEnd", "inNoop", "cleanup accept"),
+    Edge("inlineEnd", "inCreate", "cleanup drop"),
     Edge("inlineEnd", "revI", "cleanup unknown"),
     # automation modes (detail) — the override-deny path turns a blocking-drop REVIEW into a CREATE
     Edge("deny", "opts", "options"),
-    Edge("opts", "create", "override-deny → above the deny"),
+    Edge("opts", "odCreate", "override-deny on"),
 ]
 
 # The on-page diagram starts collapsed to this tier; deeper nodes expand step-by-step. Downloads/exports

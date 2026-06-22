@@ -31,8 +31,9 @@ VERIFY markers
 Tokens tagged ``# VERIFY`` are exact web_api parameter spellings (e.g.
 ``members.add``, ``source.add``, ``position {above: uid}``). The *capability* is
 confirmed by research; the precise spelling should be checked against a live
-R82.10 management server (the SBT lab) before production use. IPv4 + tcp/udp only;
-IPv6 / complex services fall through to REVIEW.
+R82.10 management server (the SBT lab) before production use. IPv4 + IPv6 are both
+modeled (a dual-band integer space, see _V6_BASE); port-based tcp/udp/sctp and
+named services are handled, while truly unparsable cells fall through to REVIEW.
 """
 from __future__ import annotations
 
@@ -54,8 +55,33 @@ except Exception:  # pragma: no cover
         pass
 
 
+# IPv4 and IPv6 share ONE integer line, in two non-overlapping BANDS: v4 in [0, 2^32) and v6 mapped to
+# [_V6_BASE, _V6_BASE + 2^128). A point/interval lives in exactly one band, so the existing interval math
+# (relation/_covers/_overlaps) treats v4 vs v6 as automatically DISJOINT (different bands) while same-
+# family ranges compare normally — and "Any" (which in Check Point covers BOTH families) spans both bands.
+# This is what lets the engine reason about v6 instead of guarding it out: a v6 request is no longer
+# "disjoint from everything" (which used to make the Any/Any cleanup invisible -> silent CREATE).
 _V4_MAX = (1 << 32) - 1
-ANY_IP: list[tuple[int, int]] = [(0, _V4_MAX)]
+# v6 is offset into a band that starts ABOVE a deliberate gap (2^33, not 2^32) so the v4 and v6 bands are
+# never ADJACENT — otherwise _merge (which fuses intervals touching at +1) would coalesce an all-v4 +
+# all-v6 set into one interval. That fusion is provably lossless (no integer exists between 2^32-1 and
+# 2^32), but the gap makes the separation structural so a v4-all + v6-all GROUP stays two intervals that
+# mirror ANY_IP exactly, and no future change to _merge can ever leak coverage across the families.
+_V6_BASE = 1 << 33
+_V6_MAX = (1 << 128) - 1
+ANY_IP: list[tuple[int, int]] = [(0, _V4_MAX), (_V6_BASE, _V6_BASE + _V6_MAX)]
+
+
+def _addr_point(addr: str) -> int:
+    """An IP (v4 or v6) -> its point on the shared integer line (v6 offset into its band)."""
+    ip = ipaddress.ip_address(addr)
+    return int(ip) if ip.version == 4 else _V6_BASE + int(ip)
+
+
+def _net_interval(net) -> tuple[int, int]:
+    """An ip_network (v4 or v6) -> its (lo, hi) interval on the shared line (v6 offset into its band)."""
+    base = 0 if net.version == 4 else _V6_BASE
+    return (base + int(net.network_address), base + int(net.broadcast_address))
 
 
 # --------------------------------------------------------------------------- #
@@ -308,8 +334,7 @@ def _cidrs_to_iv(cidrs):
     for c in cidrs:
         if _is_any(c):
             return ANY_IP
-        net = ipaddress.ip_network(c, strict=False)
-        iv.append((int(net.network_address), int(net.broadcast_address)))
+        iv.append(_net_interval(ipaddress.ip_network(c, strict=False)))   # v4 or v6 -> its band
     return _merge(iv)
 
 
@@ -366,22 +391,33 @@ def _parse_net(cell, objdict: dict):
             cx = cx or sub_cx or (t == "group-with-exclusion")   # exclusion subtracts -> can't interval it
             approx = approx or sub_ap
             continue
-        sub = o.get("subnet4") or o.get("subnet")
-        ml = o.get("mask-length4", o.get("mask-length"))
-        first, last = o.get("ipv4-address-first"), o.get("ipv4-address-last")
-        addr = o.get("ipv4-address")
-        if o.get("ipv4-mask-wildcard"):              # wildcard: non-contiguous mask -> not an interval
-            cx = True
-        elif sub and ml is not None:                 # network (and anything carrying subnet4 + mask)
-            net = ipaddress.ip_network(f"{sub}/{ml}", strict=False)
-            iv.append((int(net.network_address), int(net.broadcast_address)))
-        elif first and last:                         # address-range / multicast-address-range
-            iv.append((_ip_int(first), _ip_int(last)))
-        elif addr:                                   # host OR an infra object (gateway/cluster/mgmt/...)
-            iv.append((_ip_int(addr), _ip_int(addr)))
+        # Resolve every IPv4 AND IPv6 extent the object exposes (a dual-stack host carries both) -> each
+        # maps to its own band via _net_interval / _addr_point, so v4 and v6 never collide.
+        matched = False
+        if o.get("ipv4-mask-wildcard") or o.get("ipv6-mask-wildcard"):   # non-contiguous mask -> opaque
+            cx = matched = True
+        sub4, ml4 = o.get("subnet4") or o.get("subnet"), o.get("mask-length4", o.get("mask-length"))
+        if sub4 and ml4 is not None:                 # network (and anything carrying subnet4 + mask)
+            iv.append(_net_interval(ipaddress.ip_network(f"{sub4}/{ml4}", strict=False))); matched = True
+        sub6, ml6 = o.get("subnet6"), o.get("mask-length6")
+        if sub6 and ml6 is not None:                 # IPv6 network
+            iv.append(_net_interval(ipaddress.ip_network(f"{sub6}/{ml6}", strict=False))); matched = True
+        f4, l4 = o.get("ipv4-address-first"), o.get("ipv4-address-last")
+        if f4 and l4:                                # address-range / multicast-address-range (v4)
+            iv.append((_addr_point(f4), _addr_point(l4))); matched = True
+        f6, l6 = o.get("ipv6-address-first"), o.get("ipv6-address-last")
+        if f6 and l6:                                # IPv6 address-range
+            iv.append((_addr_point(f6), _addr_point(l6))); matched = True
+        a4, a6 = o.get("ipv4-address"), o.get("ipv6-address")
+        if a4:                                       # host OR an infra object (gateway/cluster/mgmt/...)
+            iv.append((_addr_point(a4), _addr_point(a4))); matched = True
             if t != "host":                          # main IP only; full reach may be larger -> approx
                 approx = True
-        else:                                        # zone / dynamic / updatable / role / domain / v6-only
+        if a6:
+            iv.append((_addr_point(a6), _addr_point(a6))); matched = True
+            if t != "host":
+                approx = True
+        if not matched:                              # zone / dynamic / updatable / role / domain / wildcard
             cx = True
     return _merge(iv), cx, groups, approx
 
@@ -610,18 +646,11 @@ def decide(req: AccessRequest, rules: list[ParsedRule], options: "DecideOptions"
     conservative) lets an admin opt into auto-resolving the judgment-call REVIEWs.
     """
     options = options or DecideOptions()
-    # Guard 1 -- IPv6 is not yet modeled. ANY_IP and every parsed cell live in the IPv4 integer space
-    # (0 .. 2^32-1); a v6 endpoint's intervals sit far above it, so relation() reads every v4/Any cell as
-    # DISJOINT, the engine concludes "nothing is in the path", and silently CREATEs an allow above the
-    # admin's Any->Any cleanup. Until v6 is carried end-to-end, hand any v6 request to a human.
-    for _c in (req.src_cidrs + req.dst_cidrs):
-        if not _is_any(_c) and ipaddress.ip_network(_c, strict=False).version == 6:
-            return Decision(
-                Outcome.REVIEW,
-                "the request involves an IPv6 address, which the engine does not yet model (its address "
-                "algebra is IPv4-only, so it cannot reason about coverage) -- needs human review",
-            )
-
+    # IPv6 is now modeled (the dual-band integer space, see _V6_BASE). v4 and v6 occupy disjoint bands and
+    # the predefined "Any" spans both, so a v6 request relates correctly to v6 cells, is disjoint from
+    # v4-only cells, and is still covered by the Any/Any cleanup -- which is what makes it safe to reason
+    # about rather than guard out. (A v4-only "0.0.0.0/0" network object covers only the v4 band, as it
+    # should.)
     req_src, req_dst, req_svc = req.src_iv(), req.dst_iv(), req.svc()
 
     # Guard 2 -- a request that resolves to no concrete service (empty/garbage port, no application) has
@@ -936,12 +965,24 @@ def load_layer(session, layer_name: str, package: Optional[str] = None,
 
 
 def lookup_host(session, ip: str) -> Optional[str]:
-    """Existing host object name for this exact IP, or None. Read-only (dedup by value)."""
+    """Existing host object name for this exact IP (v4 or v6), or None. Read-only (dedup by value;
+    compared numerically so a differently-formatted v6 literal still matches)."""
     found = session.call("show-objects",
                          {"filter": ip, "ip-only": True, "type": "host", "limit": 5})  # VERIFY
+    try:
+        want = ipaddress.ip_address(ip)
+    except ValueError:
+        want = None
     for o in found.get("objects", []):
-        if o.get("ipv4-address") == ip:
-            return o["name"]
+        for v in (o.get("ipv4-address"), o.get("ipv6-address")):
+            if not v:
+                continue
+            try:
+                if want is not None and ipaddress.ip_address(v) == want:
+                    return o["name"]
+            except ValueError:
+                if v == ip:
+                    return o["name"]
     return None
 
 

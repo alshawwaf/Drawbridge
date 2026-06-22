@@ -346,24 +346,68 @@ def test_execute_any_destination_references_predefined_any(monkeypatch):
     assert not any(c == "add-network" for c, _ in calls)   # Any is predefined, never created
 
 
-# --- audit: IPv6 blindness + empty service ----------------------------------------------------
-def test_decide_ipv6_request_is_review_not_create():
-    # ANY_IP is the v4 integer range; a v6 endpoint is DISJOINT from every Any/v4 cell, so without a
-    # guard the catch-all DROP is invisible and the engine CREATEs an allow above the admin's deny.
-    d = aa.decide(AccessRequest(["2001:db8::1/128"], ["2001:db8::2/128"], "tcp", "443"), [CLEANUP])
-    assert d.outcome is Outcome.REVIEW and "IPv6" in d.reason
+# --- IPv6: now reasoned about (dual-band integer space), not guarded out ----------------------
+_V6_OD = {
+    "any": {"uid": "any", "type": "CpmiAnyObject", "name": "Any"},
+    "h6": {"uid": "h6", "type": "host", "name": "h6", "ipv6-address": "2001:db8::5"},
+    "n6": {"uid": "n6", "type": "network", "name": "n6", "subnet6": "2001:db8::", "mask-length6": 64},
+    "h4": {"uid": "h4", "type": "host", "name": "h4", "ipv4-address": "10.0.0.5"},
+    "t443": {"uid": "t443", "type": "service-tcp", "name": "https", "port": "443"},
+    "acc": {"uid": "acc", "name": "Accept"}, "drp": {"uid": "drp", "name": "Drop"},
+}
 
 
-def test_decide_ipv6_with_any_destination_is_review():
-    d = aa.decide(AccessRequest(["2001:db8::1/128"], ["Any"], "tcp", "443"), [CLEANUP])
-    assert d.outcome is Outcome.REVIEW and "IPv6" in d.reason
+def _r6(src="2001:db8::5/128", dst="2001:db8::9/128"):
+    return AccessRequest(src_cidrs=[src], dst_cidrs=[dst], protocol="tcp", ports="443")
 
 
-def test_build_request_rejects_ipv6():
-    with pytest.raises(ValueError, match="IPv6"):
-        tk.build_request("2001:db8::1", "172.16.5.10", "tcp", "443")
-    with pytest.raises(ValueError, match="IPv6"):
-        tk.build_request("10.1.2.250", "2001:db8::/64", "tcp", "443")
+def test_ipv6_bands_separate_v4_and_v6():
+    v6 = aa._cidrs_to_iv(["2001:db8::5/128"])
+    v4 = aa._cidrs_to_iv(["10.0.0.5/32"])
+    assert v6[0][0] >= aa._V6_BASE                          # v6 sits in its own band
+    assert aa.relation(v6, aa.ANY_IP) is Relation.SUBSET    # Any (both bands) covers v6
+    assert aa.relation(v4, aa.ANY_IP) is Relation.SUBSET    # ...and v4
+    assert aa.relation(v6, v4) is Relation.DISJOINT         # v4 and v6 never overlap
+
+
+def test_ipv6_host_object_resolves_to_v6_band():
+    r = _irule(1, ["h6"], ["any"], ["t443"], "acc", _V6_OD)
+    assert not r.complex and r.src and r.src[0][0] >= aa._V6_BASE   # resolved into the v6 band
+
+
+def test_ipv6_request_no_op_by_v6_rule():
+    rules = [_irule(1, ["n6"], ["any"], ["t443"], "acc", _V6_OD),
+             _irule(2, ["any"], ["any"], ["any"], "drp", _V6_OD)]
+    assert aa.decide(_r6(), rules).outcome is Outcome.NO_OP        # 2001:db8::5 is in 2001:db8::/64
+
+
+def test_ipv6_request_not_covered_by_v4_rule_creates_above_cleanup():
+    # the v4 host Accept is disjoint (different band); only the Any/Any cleanup covers -> CREATE above it
+    rules = [_irule(1, ["h4"], ["any"], ["t443"], "acc", _V6_OD),
+             _irule(2, ["any"], ["any"], ["any"], "drp", _V6_OD)]
+    assert aa.decide(_r6(), rules).outcome is Outcome.CREATE
+
+
+def test_ipv6_request_respects_a_v6_deny():
+    # a specific v6 DROP covering the request must NOT be stepped over (the old blocker was the reverse)
+    rules = [_irule(1, ["n6"], ["any"], ["t443"], "drp", _V6_OD),
+             _irule(2, ["any"], ["any"], ["any"], "drp", _V6_OD)]
+    assert aa.decide(_r6(), rules).outcome is Outcome.REVIEW
+
+
+def test_v4_request_not_covered_by_v6_rule():
+    # symmetry: a v6 Accept must never NO_OP a v4 request
+    rules = [_irule(1, ["n6"], ["any"], ["t443"], "acc", _V6_OD),
+             _irule(2, ["any"], ["any"], ["any"], "drp", _V6_OD)]
+    req = AccessRequest(src_cidrs=["10.0.0.5/32"], dst_cidrs=["10.0.0.9/32"], protocol="tcp", ports="443")
+    assert aa.decide(req, rules).outcome is Outcome.CREATE
+
+
+def test_build_request_accepts_ipv6():
+    r = tk.build_request("2001:db8::1", "2001:db8::2", "tcp", "443")
+    assert r.src_cidrs == ["2001:db8::1/128"] and r.dst_cidrs == ["2001:db8::2/128"]
+    r2 = tk.build_request("10.1.2.250", "2001:db8::/64", "tcp", "443")
+    assert r2.dst_cidrs == ["2001:db8::/64"]
 
 
 def test_decide_empty_service_is_review_not_noop():
@@ -444,7 +488,8 @@ _OBJ_REQ = AccessRequest(["10.1.1.1/32"], ["8.8.8.8/32"], "tcp", "443")
     (["arfin"], ["h8888"], ["s443"]),   # access-role (Identity Awareness) source
     (["zone"],  ["h8888"], ["s443"]),   # security-zone source
     (["uoint"], ["h8888"], ["s443"]),   # updatable-object (Internet / geo)
-    (["hv6"],   ["h8888"], ["s443"]),   # an IPv6 host object inside a v4 rule
+    # (IPv6 host objects are now ENUMERABLE — resolved into the v6 band — so a v6-sourced rule is no
+    #  longer "extent-unknown"; covered by the IPv6 tests above, not here.)
     # (service-other is now a named+opaque service: create-around an ACCEPT, REVIEW only for a possible
     #  DROP — covered by test_service_other_drop_keeps_port_request_in_path)
 ])
@@ -906,7 +951,7 @@ def _dns_layer(group_members):
     return [aa._parse_rule(e, od) for e in raw]
 
 
-_FB_REQ = AccessRequest(src_cidrs=["10.1.1.222/32"], dst_cidrs=["0.0.0.0/0"], application="Facebook")
+_FB_REQ = AccessRequest(src_cidrs=["10.1.1.222/32"], dst_cidrs=["Any"], application="Facebook")
 
 
 def test_unresolved_group_source_routes_to_review():
@@ -967,7 +1012,7 @@ def test_range_resolves_exact_not_approx():
 
 def test_opaque_network_objects_still_review():
     od = _od_infra()
-    req = AccessRequest(src_cidrs=["10.9.9.9/32"], dst_cidrs=["0.0.0.0/0"], application="Facebook")
+    req = AccessRequest(src_cidrs=["10.9.9.9/32"], dst_cidrs=["Any"], application="Facebook")
     for opaque in ("zone", "dyn", "role", "wild"):
         rules = [_irule(1, [opaque], ["any"], ["any"], "acc", od),
                  _irule(2, ["any"], ["any"], ["any"], "drp", od)]
@@ -980,7 +1025,7 @@ def test_approx_accept_is_harmless_request_widens_later_rule():
     rules = [_irule(1, ["gw", "sms"], ["any"], ["any"], "acc", od),    # approx accept, disjoint source
              _irule(2, ["h"], ["any"], ["fb"], "acc", od),             # the real widen target
              _irule(3, ["any"], ["any"], ["any"], "drp", od)]
-    req = AccessRequest(src_cidrs=["10.4.4.4/32"], dst_cidrs=["0.0.0.0/0"], application="Facebook")
+    req = AccessRequest(src_cidrs=["10.4.4.4/32"], dst_cidrs=["Any"], application="Facebook")
     d = aa.decide(req, rules)
     assert d.outcome is Outcome.WIDEN and d.target_rule.number == 2 and d.widen_field == "source"
 
@@ -989,7 +1034,7 @@ def test_approx_drop_never_under_approximates():
     od = _od_infra()
     rules = [_irule(1, ["gw"], ["any"], ["any"], "drp", od),           # deny from a (multi-homable) gateway
              _irule(2, ["any"], ["any"], ["any"], "drp", od)]
-    req = AccessRequest(src_cidrs=["10.7.7.7/32"], dst_cidrs=["0.0.0.0/0"], application="Facebook")
+    req = AccessRequest(src_cidrs=["10.7.7.7/32"], dst_cidrs=["Any"], application="Facebook")
     assert aa.decide(req, rules).outcome is Outcome.REVIEW   # can't prove disjoint from an approx deny
 
 
@@ -999,10 +1044,10 @@ def test_malformed_port_reviews_not_crashes():
     od = {"any": {"uid": "any", "type": "CpmiAnyObject", "name": "Any"}, "drp": {"uid": "drp", "name": "Drop"}}
     rules = [_irule(1, ["any"], ["any"], ["any"], "drp", od)]
     for bad in ("443x", "443-abc", "abc"):          # FULLY unparsable -> empty service -> guard 2 -> REVIEW
-        req = AccessRequest(src_cidrs=["10.1.1.1/32"], dst_cidrs=["0.0.0.0/0"], protocol="tcp", ports=bad)
+        req = AccessRequest(src_cidrs=["10.1.1.1/32"], dst_cidrs=["Any"], protocol="tcp", ports=bad)
         assert aa.decide(req, rules).outcome is Outcome.REVIEW, bad
     # partial ("443,xyz" keeps the valid 443) is a real request -> a normal decision, just never a crash
-    req = AccessRequest(src_cidrs=["10.1.1.1/32"], dst_cidrs=["0.0.0.0/0"], protocol="tcp", ports="443,xyz")
+    req = AccessRequest(src_cidrs=["10.1.1.1/32"], dst_cidrs=["Any"], protocol="tcp", ports="443,xyz")
     assert aa.decide(req, rules).outcome in (Outcome.CREATE, Outcome.NO_OP, Outcome.WIDEN, Outcome.REVIEW)
 
 
@@ -1021,14 +1066,14 @@ def test_icmp_request_disjoint_from_tcp_rule_creates():
     rules = [_irule(1, ["h"], ["any"], ["t443"], "acc", _SVC_OD),
              _irule(2, ["any"], ["any"], ["any"], "drp", _SVC_OD)]
     # different source so there's no exact-two-cell widen candidate; icmp ≠ tcp/443 -> create
-    req = AccessRequest(src_cidrs=["10.9.9.9/32"], dst_cidrs=["0.0.0.0/0"], service="echo-request", service_kind="icmp")
+    req = AccessRequest(src_cidrs=["10.9.9.9/32"], dst_cidrs=["Any"], service="echo-request", service_kind="icmp")
     assert aa.decide(req, rules).outcome is Outcome.CREATE     # icmp not covered by the tcp/443 rule
 
 
 def test_named_service_already_permitted_is_no_op():
     rules = [_irule(1, ["any"], ["any"], ["echo"], "acc", _SVC_OD),
              _irule(2, ["any"], ["any"], ["any"], "drp", _SVC_OD)]
-    req = AccessRequest(src_cidrs=["10.0.0.5/32"], dst_cidrs=["0.0.0.0/0"], service="echo-request", service_kind="icmp")
+    req = AccessRequest(src_cidrs=["10.0.0.5/32"], dst_cidrs=["Any"], service="echo-request", service_kind="icmp")
     assert aa.decide(req, rules).outcome is Outcome.NO_OP
 
 
@@ -1036,7 +1081,7 @@ def test_named_service_widens_exact_two_cells():
     # rule: src h, dst Any, svc echo-request, Accept ; request src 10.0.0.9 -> widen the source
     rules = [_irule(1, ["h"], ["any"], ["echo"], "acc", _SVC_OD),
              _irule(2, ["any"], ["any"], ["any"], "drp", _SVC_OD)]
-    req = AccessRequest(src_cidrs=["10.0.0.9/32"], dst_cidrs=["0.0.0.0/0"], service="echo-request", service_kind="icmp")
+    req = AccessRequest(src_cidrs=["10.0.0.9/32"], dst_cidrs=["Any"], service="echo-request", service_kind="icmp")
     d = aa.decide(req, rules)
     assert d.outcome is Outcome.WIDEN and d.widen_field == "source"
 
@@ -1046,7 +1091,7 @@ def test_service_other_drop_keeps_port_request_in_path():
     # tcp/443 request -> REVIEW (never step over a possible deny).
     rules = [_irule(1, ["any"], ["any"], ["gre"], "drp", _SVC_OD),
              _irule(2, ["any"], ["any"], ["any"], "drp", _SVC_OD)]
-    req = AccessRequest(src_cidrs=["10.0.0.5/32"], dst_cidrs=["0.0.0.0/0"], protocol="tcp", ports="443")
+    req = AccessRequest(src_cidrs=["10.0.0.5/32"], dst_cidrs=["Any"], protocol="tcp", ports="443")
     assert aa.decide(req, rules).outcome is Outcome.REVIEW
 
 
@@ -1068,7 +1113,7 @@ def test_sctp_rule_parses_to_by_proto_not_named():
 def test_sctp_request_no_op_by_port():
     rules = [_irule(1, ["any"], ["any"], ["s9000"], "acc", _SCTP_OD),
              _irule(2, ["any"], ["any"], ["any"], "drp", _SCTP_OD)]
-    req = AccessRequest(src_cidrs=["10.0.0.5/32"], dst_cidrs=["0.0.0.0/0"], protocol="sctp", ports="9000")
+    req = AccessRequest(src_cidrs=["10.0.0.5/32"], dst_cidrs=["Any"], protocol="sctp", ports="9000")
     assert aa.decide(req, rules).outcome is Outcome.NO_OP
 
 
@@ -1076,7 +1121,7 @@ def test_sctp_disjoint_from_same_port_tcp_rule_creates():
     # sctp/9000 must NEVER be read as covered by a tcp/9000 rule (distinct protocols)
     rules = [_irule(1, ["any"], ["any"], ["t9000"], "acc", _SCTP_OD),
              _irule(2, ["any"], ["any"], ["any"], "drp", _SCTP_OD)]
-    req = AccessRequest(src_cidrs=["10.0.0.5/32"], dst_cidrs=["0.0.0.0/0"], protocol="sctp", ports="9000")
+    req = AccessRequest(src_cidrs=["10.0.0.5/32"], dst_cidrs=["Any"], protocol="sctp", ports="9000")
     assert aa.decide(req, rules).outcome is Outcome.CREATE
 
 
@@ -1106,7 +1151,7 @@ def test_named_service_family_not_aliased():
     # rule allows the v6 echo-request; a v4 (icmp) echo-request request must NOT be read as covered
     rules = [_irule(1, ["any"], ["any"], ["echo6"], "acc", od),
              _irule(2, ["any"], ["any"], ["any"], "drp", od)]
-    req = AccessRequest(src_cidrs=["10.0.0.5/32"], dst_cidrs=["0.0.0.0/0"],
+    req = AccessRequest(src_cidrs=["10.0.0.5/32"], dst_cidrs=["Any"],
                         service="echo-request", service_kind="icmp")
     assert aa.decide(req, rules).outcome is Outcome.CREATE     # not NO_OP — different protocol family
 
@@ -1121,7 +1166,7 @@ _DENY_OD = {
 
 
 def _req443():
-    return AccessRequest(src_cidrs=["10.0.0.5/32"], dst_cidrs=["0.0.0.0/0"], protocol="tcp", ports="443")
+    return AccessRequest(src_cidrs=["10.0.0.5/32"], dst_cidrs=["Any"], protocol="tcp", ports="443")
 
 
 def test_override_deny_off_reviews_on_off_creates_above():
