@@ -91,7 +91,9 @@ class MgmtSession:
             payload["read-only"] = True          # no object/rule locks; doesn't consume a write slot
         if self._session_timeout:
             payload["session-timeout"] = int(self._session_timeout)
-        if self._session_description:
+        # session-name / -comments / -description are REJECTED by the API in read-only mode
+        # ("…are unexpected, when login is done in the readonly mode" / HTTP 400) — only send for writes.
+        if self._session_description and not self._read_only:
             payload["session-description"] = self._session_description
         try:
             t = time.perf_counter()
@@ -352,8 +354,7 @@ def read_session(server, secret: str):
         entry = _POOL.get(_pool_key(server))
         if entry is None:
             sess = MgmtSession(server, secret, read_only=True, auto_relogin=True,
-                               session_timeout=app_settings.get("mgmt_session_timeout"),
-                               session_description="DC-Sim portal (read-only)")
+                               session_timeout=app_settings.get("mgmt_session_timeout"))
             sess.login()
             entry = _PooledRead(sess)
             _POOL[_pool_key(server)] = entry
