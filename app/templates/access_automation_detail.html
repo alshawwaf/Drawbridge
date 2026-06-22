@@ -110,10 +110,6 @@ Content-Type: application/json
     #aa-flow-dt:not([data-processed]){font-family:ui-monospace,monospace;font-size:11px;color:var(--muted);white-space:pre-wrap;}
     .dtwrap{overflow:auto;max-height:74vh;border:1px solid var(--line);border-radius:12px;padding:12px;background:var(--surface-2);}
     .dtwrap svg{height:auto;display:block;margin:0 auto;}
-    /* a collapsed node that still hides branches: dashed outline + a ＋ badge, click to expand */
-    g.node.dt-exp{cursor:pointer;}
-    g.node.dt-exp rect, g.node.dt-exp polygon, g.node.dt-exp path, g.node.dt-exp circle{stroke-dasharray:5 4;}
-    text.dt-plus{font:700 16px ui-sans-serif,system-ui,sans-serif;fill:var(--info,#0ea5e9);cursor:pointer;pointer-events:all;}
     .dthint{font-size:11.5px;color:var(--muted);margin:0 0 8px;}
     .dthint b{color:var(--info,#0ea5e9);font-weight:700;}
   </style>
@@ -138,7 +134,7 @@ Content-Type: application/json
       </div>
     </div>
   </div>
-  <p class="dthint" id="dt-hint" hidden><b>Dashed</b> nodes hide deeper branches (inline-layer recursion, automation modes) — click one to expand step by step, or “Expand all”.</p>
+  <p class="dthint" id="dt-hint" hidden>Collapsed to the first levels — click a <b>＋ more</b> stub to reveal the next step, or “Expand all”.</p>
   <div class="dtwrap" id="aa-flow-wrap"><pre class="mermaid" id="aa-flow-dt">{{ decision_mermaid_dark }}</pre></div>
   <pre id="aa-flow-dt-light" hidden>{{ decision_mermaid_light }}</pre>
   <script id="dt-graph-data" type="application/json">{{ decision_graph_json|safe }}</script>
@@ -412,48 +408,46 @@ Content-Type: application/json
     var GRAPH = null;
     try { GRAPH = JSON.parse(document.getElementById('dt-graph-data').textContent); } catch (e) {}
     var visible = new Set();                                  // node ids currently shown (survives re-render)
-    function resetVisible(){ visible = new Set(); if (GRAPH) GRAPH.nodes.forEach(function (n){ if (n.level <= GRAPH.default_level) visible.add(n.id); }); }
+    var CUT = (GRAPH && GRAPH.default_depth != null) ? GRAPH.default_depth : 2;   // collapse cut (BFS depth)
+    function resetVisible(){ visible = new Set(); if (GRAPH) GRAPH.nodes.forEach(function (n){ if (n.depth <= CUT) visible.add(n.id); }); }
     resetVisible();
     function childrenOf(id){ return GRAPH.edges.filter(function (e){ return e.src === id; }).map(function (e){ return e.dst; }); }
     function hiddenChildren(id){ return childrenOf(id).filter(function (c){ return !visible.has(c); }); }
-    function nodeIdOf(g){                                     // map a Mermaid <g id="flowchart-<id>-N"> back to our id
-      var gid = g.id || ''; if (gid.indexOf('flowchart-') !== 0) return null;
-      for (var i = 0; i < GRAPH.nodes.length; i++){ var nid = GRAPH.nodes[i].id; if (gid.indexOf('flowchart-' + nid + '-') === 0) return nid; }
-      return null;
-    }
-    function buildSource(dark){                              // SAME pieces decision_tree.to_mermaid emits — just a subset
-      var T = dark ? GRAPH.themes.dark : GRAPH.themes.light;
+    // map a Mermaid <g id="flowchart-X-N"> back to X; a "＋ more" stub is "stub_<parentId>"
+    function rawId(g){ return (g.id || '').replace(/^flowchart-/, '').replace(/-\d+$/, ''); }
+    function expandTarget(g){ var r = rawId(g); if (!r) return null; return r.indexOf('stub_') === 0 ? r.slice(5) : r; }
+
+    function buildSource(dark){          // the SAME node/edge declarations decision_tree emits, filtered to
+      var T = dark ? GRAPH.themes.dark : GRAPH.themes.light;   // the visible set + a "＋ N more" stub at each cut
       var lines = [T.init, 'flowchart TD'];
       var vnodes = GRAPH.nodes.filter(function (n){ return visible.has(n.id); });
       vnodes.forEach(function (n){ lines.push('  ' + n.mm); });
+      var stubs = [];                                          // a stub wherever a visible node hides children
+      vnodes.forEach(function (n){
+        var h = hiddenChildren(n.id).length;
+        if (h) { var sid = 'stub_' + n.id; stubs.push(sid); lines.push('  ' + sid + '(["＋ ' + h + ' more"])'); }
+      });
       lines.push('');
       GRAPH.edges.forEach(function (e){ if (visible.has(e.src) && visible.has(e.dst)) lines.push('  ' + e.mm); });
+      stubs.forEach(function (sid){ lines.push('  ' + sid.slice(5) + ' -.-> ' + sid); });   // parent -.-> stub
       lines.push('');
       T.classDefs.forEach(function (c){ lines.push('  ' + c); });
+      lines.push('  classDef stub ' + (dark ? 'fill:#16202f,stroke:#3f5170,color:#aebfd6'
+                                            : 'fill:#eef2f9,stroke:#9aa8be,color:#51607a') + ',stroke-dasharray:5 4;');
       var byKind = {};
       vnodes.forEach(function (n){ (byKind[n.kind] = byKind[n.kind] || []).push(n.id); });
       Object.keys(byKind).forEach(function (k){ lines.push('  class ' + byKind[k].join(',') + ' ' + k + ';'); });
+      if (stubs.length) lines.push('  class ' + stubs.join(',') + ' stub;');
       return lines.join('\n');
     }
     function activeSrc(){ return GRAPH ? buildSource(!isLight()) : (isLight() ? lightSrc : darkSrc); }
 
-    function applyAffordances(){                             // dashed outline + ＋ badge on collapsed-with-children
+    function markStubs(){                 // a pointer cursor on whatever can be expanded (stub or its parent)
       if (!GRAPH) return;
       var svg = el.querySelector('svg'); if (!svg) return;
       svg.querySelectorAll('g.node').forEach(function (g){
-        var id = nodeIdOf(g); var old = g.querySelector('.dt-plus'); if (old) old.remove();
-        g.classList.remove('dt-exp');
-        if (!id || !visible.has(id) || hiddenChildren(id).length === 0) return;
-        g.classList.add('dt-exp');
-        try {
-          var b = g.getBBox();
-          var t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-          t.setAttribute('class', 'dt-plus'); t.setAttribute('text-anchor', 'end');
-          t.setAttribute('x', b.x + b.width - 6); t.setAttribute('y', b.y + 17); t.textContent = '＋';
-          var ttl = document.createElementNS('http://www.w3.org/2000/svg', 'title');
-          ttl.textContent = 'Expand ' + hiddenChildren(id).length + ' more';
-          g.appendChild(t); g.appendChild(ttl);
-        } catch (e) {}
+        var t = expandTarget(g);
+        g.style.cursor = (t && hiddenChildren(t).length) ? 'pointer' : '';
       });
     }
     function applyZoom(){
@@ -468,8 +462,8 @@ Content-Type: application/json
       mermaid.initialize({ startOnLoad: false, securityLevel: 'loose' });   // theme + font baked into the source
       try {
         var p = mermaid.run({ nodes: [el] });
-        if (p && p.then) p.then(function (){ applyAffordances(); applyZoom(); });
-        else { applyAffordances(); applyZoom(); }
+        if (p && p.then) p.then(function (){ markStubs(); applyZoom(); });
+        else { markStubs(); applyZoom(); }
       } catch (e) {}
     }
     document.getElementById('dt-zin').addEventListener('click', function () { f = Math.min(3, +(f + 0.25).toFixed(2)); applyZoom(); });
@@ -479,10 +473,11 @@ Content-Type: application/json
     if (GRAPH && GRAPH.nodes.length > visible.size) {        // there IS hidden detail -> show the controls + hint
       var detail = document.getElementById('dt-detail'); if (detail) detail.hidden = false;
       var hint = document.getElementById('dt-hint'); if (hint) hint.hidden = false;
-      el.addEventListener('click', function (ev){            // delegate: click a collapsed node -> reveal its children
+      el.addEventListener('click', function (ev){            // click a "＋ more" stub (or its node) -> next level
         var g = ev.target.closest ? ev.target.closest('g.node') : null; if (!g) return;
-        var id = nodeIdOf(g); if (!id || hiddenChildren(id).length === 0) return;
-        childrenOf(id).forEach(function (c){ visible.add(c); }); render();
+        var id = expandTarget(g); if (!id) return;
+        var hc = hiddenChildren(id); if (!hc.length) return;
+        hc.forEach(function (c){ visible.add(c); }); render();
       });
       var eb = document.getElementById('dt-expand');
       if (eb) eb.addEventListener('click', function (){ GRAPH.nodes.forEach(function (n){ visible.add(n.id); }); render(); });
