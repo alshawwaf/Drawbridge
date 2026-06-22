@@ -7,7 +7,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_prefix="DCSIM_", extra="ignore")
 
-    app_name: str = "Check Point Dynamic-Object Integration Simulator"
+    app_name: str = "Drawbridge"
 
     # Public base URL used to build the feed URLs shown to the SE. Behind Caddy
     # this is the HTTPS domain (e.g. https://dcsim.example.com). Set via env.
