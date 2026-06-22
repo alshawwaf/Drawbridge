@@ -317,8 +317,7 @@
     .cf-hint { flex-basis:100%; font-size:12px; margin:-1px 0 0; }
     /* Sectioned forms */
     .form-sec { font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.6px; color:var(--faint); margin:0 0 6px; }
-    .subpanel { background:var(--surface-3); border:1px solid var(--line); border-radius:11px; padding:15px; transition:opacity .15s; }
-    .subpanel.is-locked { opacity:.4; pointer-events:none; }
+    .subpanel { background:var(--surface-3); border:1px solid var(--line); border-radius:11px; padding:15px; }
 
     /* ============================ Filter chips ============================ */
     .filterbar { display:flex; gap:8px; margin:18px 0 0; flex-wrap:wrap; }
@@ -385,11 +384,28 @@
     .modal p { color:var(--muted); font-size:14px; margin:0; }
     .modal-actions { display:flex; gap:10px; justify-content:flex-end; margin-top:24px; }
     /* Form-in-modal: the modal IS the card, so strip the injected form's own card chrome + size it. */
-    #form-modal .modal { max-width:670px; text-align:left; }
-    #form-modal .fm-title { font-size:18px; font-weight:740; margin:0; }
+    #form-modal .modal { max-width:670px; text-align:left; padding:0; scroll-padding-top:54px; }
+    /* OS-window-style title bar: a full-bleed gradient header that stays put while the body scrolls. */
+    #form-modal .fm-head { position:sticky; top:0; z-index:3; display:flex; align-items:center; gap:12px;
+      margin:0; padding:10px 14px 10px 22px; color:#fff;
+      background:linear-gradient(100deg, var(--accent) 0%, #c026d3 46%, #7b3ff2 100%);
+      border-radius:16px 16px 0 0; box-shadow:0 1px 0 rgba(0,0,0,.14); }
+    #form-modal .fm-title { font-size:15.5px; font-weight:740; margin:0; color:#fff; letter-spacing:.2px;
+      text-shadow:0 1px 2px rgba(0,0,0,.22); }
+    #form-modal #fm-close { margin:0; flex:none; width:30px; height:30px; color:#fff; border-color:transparent; }
+    #form-modal #fm-close:hover { color:#fff; background:rgba(255,255,255,.22); }
+    #form-modal .fm-body { padding:18px 24px 24px; }
     #form-modal .fm-body form.card, #form-modal .fm-body form { border:none; box-shadow:none;
       background:none; padding:0; margin:0; max-width:none; }
     #form-modal .fm-body hr { border:none; border-top:1px solid var(--line); margin:16px 0; }
+    /* Field help: breathing room from the control above; long (>2 line) help collapses with a More/Less toggle. */
+    form p.muted { margin:8px 0 0; line-height:1.5; }
+    form p.muted.clamped { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2;
+      line-clamp:2; overflow:hidden; }
+    button.help-toggle, button.help-toggle:hover { background:none; color:var(--accent); border:none;
+      box-shadow:none; padding:0; margin:5px 0 0; min-height:0; line-height:1.4; font-size:12px;
+      font-weight:650; transform:none; filter:none; }
+    button.help-toggle:hover { text-decoration:underline; }
 
     /* ============================ Toast ============================ */
     .toast { position:fixed; bottom:22px; right:22px; background:var(--surface); color:var(--text);
@@ -590,9 +606,9 @@
 
   <div id="form-modal" class="modal-overlay" hidden>
     <div class="modal" role="dialog" aria-modal="true">
-      <div class="row" style="align-items:flex-start; gap:12px; margin-bottom:14px;">
+      <div class="fm-head">
         <h3 class="fm-title grow"></h3>
-        <button type="button" class="icon-btn" id="fm-close" aria-label="Close" style="margin:-4px -4px 0 0;">
+        <button type="button" class="icon-btn" id="fm-close" aria-label="Close">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
         </button>
       </div>
@@ -616,8 +632,31 @@
           old.replaceWith(s);
         });
       }
+      var fhSeq = 0;
+      function initFieldHelp(root) {            // long help paragraphs (>2 lines) collapse with a More/Less toggle
+        (root || document).querySelectorAll('form p.muted').forEach(function (p) {
+          if (p.dataset.fhInit) return;
+          if (!p.offsetParent) return;          // hidden right now (e.g. a collapsed branch) → leave it for a later pass
+          p.dataset.fhInit = '1';
+          var lh = parseFloat(getComputedStyle(p).lineHeight) || 19;
+          if (p.scrollHeight <= lh * 2 + 4) return;   // 2 lines or fewer: leave it expanded
+          if (!p.id) p.id = 'fh-' + (++fhSeq);
+          p.classList.add('clamped');
+          var btn = document.createElement('button');
+          btn.type = 'button'; btn.className = 'help-toggle'; btn.textContent = 'More';
+          btn.setAttribute('aria-expanded', 'false');
+          btn.setAttribute('aria-controls', p.id);
+          btn.addEventListener('click', function () {
+            var clamped = p.classList.toggle('clamped');
+            btn.textContent = clamped ? 'More' : 'Less';
+            btn.setAttribute('aria-expanded', clamped ? 'false' : 'true');
+          });
+          p.insertAdjacentElement('afterend', btn);
+        });
+      }
       function wire() {
         var form = bodyEl.querySelector('form'); if (!form) return;
+        initFieldHelp(bodyEl);
         form.addEventListener('submit', function (e) {
           e.preventDefault();
           var btn = form.querySelector('[type=submit]'); if (btn) { btn.disabled = true; btn.dataset.t = btn.textContent; btn.textContent = 'Saving…'; }
@@ -670,6 +709,7 @@
       document.getElementById('fm-close').addEventListener('click', close);
       fm.addEventListener('click', function (e) { if (e.target === fm) close(); });
       document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && !fm.hidden) close(); });
+      initFieldHelp(document);                 // standalone form pages (the modal paths call it after injection)
     })();
   </script>
 
