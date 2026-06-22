@@ -137,3 +137,22 @@ def test_pause_drops_received_logs():
         siem.set_paused(db, False)
     assert siem.store_received(db, [("9.9.9.9", "udp", "<134>back")]) == 1        # resumed → stored
     assert siem.is_paused(db, fresh=True) is False
+
+
+def test_pause_drops_then_resume_stores_and_stats_track_arrivals():
+    """Regression for the recurring 'resume shows no logs' report: pause drops, resume stores AGAIN, and
+    rx_stats counts every arrival (even while paused) so a network/firewall problem is distinguishable."""
+    db = _session()
+    siem._pause_cache.update(value=False, at=-1e9)            # isolate from other tests
+    siem._rx.update(received=0, stored=0, dropped=0, last=0.0)
+    item = [("10.0.0.9", "udp", siem.SAMPLE_LINES[0])]
+
+    assert siem.store_received(db, item) == 1                 # not paused -> stored
+    siem.set_paused(db, True)
+    assert siem.store_received(db, item) == 0                 # paused -> dropped, nothing stored
+    siem.set_paused(db, False)
+    assert siem.store_received(db, item) == 1                 # RESUME -> stores again (the reported bug)
+
+    assert db.scalar(select(func.count()).select_from(SiemLog)) == 2   # the two non-paused lines
+    st = siem.rx_stats()
+    assert st["received"] == 3 and st["stored"] == 2 and st["dropped"] == 1 and st["last"] > 0
