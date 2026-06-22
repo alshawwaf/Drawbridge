@@ -25,13 +25,13 @@ _cache: dict = {"at": -1e9, "vals": {}}
 @dataclass(frozen=True)
 class Setting:
     key: str
-    kind: str                       # "bool" | "int"
-    default: Union[bool, int]
+    kind: str                       # "bool" | "int" | "str"
+    default: Union[bool, int, str]
     label: str
     help: str
     group: str = "Management API"
     min: int = 0
-    max: int = 0
+    max: int = 0                    # for "str": max length (0 → default cap)
 
 
 SETTINGS: list[Setting] = [
@@ -99,6 +99,27 @@ SETTINGS: list[Setting] = [
             "Notify when records are trimmed",
             "Post a notification (the header bell) when a housekeeping sweep trims records, so retention "
             "is never silent. Throttled to at most once an hour.", group="Storage & retention"),
+
+    # --- Access automation — naming of auto-created objects ------------------------------------------
+    # When the engine has to CREATE an object for a request, it names it from these templates. Defaults
+    # reproduce the built-in h-/n- scheme; clear a field to fall back to the default.
+    Setting("name_host", "str", "h-{ip_dashed}",
+            "Host object name",
+            "Name for a host object auto-created for a single-address (/32) endpoint. Placeholders: "
+            "{ip} (e.g. 1.2.3.4), {ip_dashed} (1-2-3-4).", group="Access automation", max=100),
+    Setting("name_network", "str", "n-{ip_dashed}-{prefix}",
+            "Network object name",
+            "Name for a network object auto-created for a CIDR endpoint. Placeholders: {ip}, {ip_dashed}, "
+            "{prefix} (the mask length, e.g. 24).", group="Access automation", max=100),
+    Setting("name_service", "str", "{PROTO}-{port}",
+            "Service object name",
+            "Name for a TCP/UDP service auto-created for a requested port. Placeholders: {proto} (tcp), "
+            "{PROTO} (TCP), {port}.", group="Access automation", max=100),
+    Setting("name_rule", "str", "TKT-{ticket}",
+            "New rule name",
+            "Name for a rule the engine creates. Placeholder: {ticket}. With no ticket id (and a "
+            "ticket-based template) the rule is left unnamed and Check Point auto-names it.",
+            group="Access automation", max=120),
 ]
 
 _BY_KEY = {s.key: s for s in SETTINGS}
@@ -108,9 +129,11 @@ def defaults() -> dict:
     return {s.key: s.default for s in SETTINGS}
 
 
-def _coerce(s: Setting, raw: str):
+def _coerce(s: Setting, raw):
     if s.kind == "bool":
         return str(raw) == "1"
+    if s.kind == "str":
+        return ("" if raw is None else str(raw))[: (s.max or 200)]
     try:
         v = int(raw)
     except (TypeError, ValueError):
@@ -122,6 +145,8 @@ def _to_text(s: Setting, value) -> str:
     if s.kind == "bool":
         truthy = value is True or str(value).strip().lower() in ("1", "true", "on", "yes")
         return "1" if truthy else "0"
+    if s.kind == "str":
+        return _coerce(s, value)
     return str(_coerce(s, str(value)))
 
 

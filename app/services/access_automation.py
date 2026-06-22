@@ -741,14 +741,18 @@ def resolve_host(session, ip: str, name_hint: Optional[str] = None) -> str:
     existing = lookup_host(session, ip)
     if existing:
         return existing
-    name = name_hint or f"h-{ip.replace('.', '-')}"
+    from . import naming
+    name = name_hint or naming.host_name(ip)
     session.call("add-host", {"name": name, "ip-address": ip})            # VERIFY
     return name
 
 
 def _endpoint_name(net) -> str:
-    base = str(net.network_address).replace(".", "-").replace(":", "-")
-    return f"h-{base}" if net.prefixlen == net.max_prefixlen else f"n-{base}-{net.prefixlen}"
+    from . import naming                       # admin-customisable templates (defaults = the h-/n- scheme)
+    addr = str(net.network_address)
+    if net.prefixlen == net.max_prefixlen:
+        return naming.host_name(addr)
+    return naming.network_name(addr, net.prefixlen)
 
 
 def lookup_network(session, net) -> Optional[str]:
@@ -811,7 +815,8 @@ def resolve_service(session, protocol: str, port: str, name_hint: Optional[str] 
     existing = lookup_service(session, proto, port)
     if existing:
         return existing
-    name = name_hint or f"{proto.upper()}-{port}"
+    from . import naming
+    name = name_hint or naming.service_name(proto, port)
     session.call(f"add-service-{proto}", {"name": name, "port": str(port)})  # VERIFY
     return name
 
@@ -839,7 +844,8 @@ def _svc_object_preview(session, req: AccessRequest) -> dict:
         return {"name": req.application, "exists": lookup_application(session, req.application),
                 "kind": "application"}
     ex = lookup_service(session, req.protocol, req.ports)
-    return {"name": ex or f"{req.protocol.upper()}-{req.ports}", "exists": bool(ex), "kind": "service"}
+    from . import naming
+    return {"name": ex or naming.service_name(req.protocol, req.ports), "exists": bool(ex), "kind": "service"}
 
 
 def _brief(rule: Optional[ParsedRule]) -> Optional[dict]:
@@ -918,10 +924,11 @@ def _apply(session, decision: Decision, req: AccessRequest, layer: str,
     src_name = resolve_endpoint(session, req.src_cidrs[0])
     dst_name = resolve_endpoint(session, req.dst_cidrs[0])
     svc_name = _resolve_svc_object(session, req)
+    from . import naming
     payload = {
         "layer": layer,
         "position": _position_payload(decision.position or {}),
-        "name": f"TKT-{ticket_id}" if ticket_id else None,
+        "name": naming.rule_name(ticket_id),
         "source": src_name,
         "destination": dst_name,
         "service": svc_name,
