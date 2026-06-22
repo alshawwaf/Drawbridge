@@ -52,26 +52,74 @@ def import_error() -> str:
     return _IMPORT_ERR
 
 
+def resolve_token() -> str:
+    """The current MCP bearer token: the portal Setting (encrypted at rest) takes precedence, with the
+    DCSIM_MCP_TOKEN env var as the fallback. Read PER REQUEST (via _BearerGuard) so an admin can set,
+    rotate, or clear the token from Settings with no redeploy. "" means the endpoint is disabled."""
+    try:
+        from .services import app_settings
+        from .config import get_settings
+        # .strip() so a copy-paste trailing newline/space in the stored token or env var doesn't make
+        # the endpoint require a whitespace-suffixed bearer that no client would send.
+        return (app_settings.get_secret_or_env("mcp_token", get_settings().mcp_token) or "").strip()
+    except Exception:  # noqa: BLE001 — never let a config read break the request path
+        try:
+            from .config import get_settings
+            return (get_settings().mcp_token or "").strip()
+        except Exception:  # noqa: BLE001
+            return ""
+
+
+def token_configured() -> bool:
+    """True when a token is set (Setting or env) — i.e. /mcp is live. For the guide/status page."""
+    return bool(resolve_token())
+
+
+async def _send_json(send, status: int, body: bytes):
+    await send({"type": "http.response.start", "status": status,
+                "headers": [(b"content-type", b"application/json"),
+                            (b"content-length", str(len(body)).encode())]})
+    await send({"type": "http.response.body", "body": body})
+
+
 class _BearerGuard:
-    """Pure-ASGI bearer-token gate wrapping the MCP app (no coupling to the SDK's auth). Non-http scopes
-    (lifespan/websocket) pass straight through so the inner app's startup still runs; http requests get a
-    401 unless they carry ``Authorization: Bearer <token>`` (constant-time compared)."""
-    def __init__(self, app, token: str):
-        self.app, self.token = app, token
+    """Pure-ASGI bearer-token gate wrapping the MCP app (no coupling to the SDK's auth). The token is
+    resolved PER REQUEST from ``token_provider`` (a callable) so it can be set/rotated/cleared at runtime
+    with no redeploy. Non-http scopes (lifespan/websocket) pass straight through so the inner app's
+    startup still runs. When no token is configured → 503 (endpoint disabled); a missing/wrong bearer on
+    a configured endpoint → 401 (constant-time compared)."""
+    def __init__(self, app, token_provider):
+        self.app, self._token = app, token_provider
 
     async def __call__(self, scope, receive, send):
-        if scope.get("type") == "http":
+        stype = scope.get("type")
+        if stype == "http":
+            token = ""
+            try:
+                token = self._token() or ""
+            except Exception:  # noqa: BLE001
+                token = ""
+            if not token:
+                await _send_json(send, 503,
+                                 b'{"error":"MCP disabled - set a bearer token in Settings -> MCP / agent '
+                                 b'(or the DCSIM_MCP_TOKEN env var)"}')
+                return
             headers = dict(scope.get("headers") or [])
             auth = headers.get(b"authorization", b"").decode("latin-1")
-            ok = bool(self.token) and auth.startswith("Bearer ") and hmac.compare_digest(auth[7:], self.token)
+            ok = auth.startswith("Bearer ") and hmac.compare_digest(auth[7:], token)
             if not ok:
-                body = b'{"error":"Unauthorized - send Authorization: Bearer <DCSIM_MCP_TOKEN>"}'
-                await send({"type": "http.response.start", "status": 401,
-                            "headers": [(b"content-type", b"application/json"),
-                                        (b"content-length", str(len(body)).encode())]})
-                await send({"type": "http.response.body", "body": body})
+                await _send_json(send, 401,
+                                 b'{"error":"Unauthorized - send Authorization: Bearer <token>"}')
                 return
-        await self.app(scope, receive, send)
+            await self.app(scope, receive, send)
+            return
+        if stype == "lifespan":
+            await self.app(scope, receive, send)   # let the inner session manager start/stop
+            return
+        if stype == "websocket":                   # no ws transport today; reject rather than pass unauth'd
+            await send({"type": "websocket.close", "code": 1008})
+            return
+        # unknown scope type: do not forward to the inner app unguarded
 
 
 def _new_server():
@@ -100,10 +148,12 @@ def _asgi_app(mcp):
     return None
 
 
-def build_mcp_app(token: str):
-    """A token-guarded ASGI app to mount at /mcp — or None if the SDK isn't installed or no token is set
-    (the caller then just doesn't mount it)."""
-    if not _HAVE_MCP or not token:
+def build_mcp_app(token_provider=resolve_token):
+    """A token-guarded ASGI app to mount at /mcp — or None only if the MCP SDK isn't installed (then the
+    caller just doesn't mount it). It is mounted REGARDLESS of whether a token is set yet: the guard
+    resolves the token per request via ``token_provider`` and returns 503 while none is configured, so a
+    token set later in Settings activates the endpoint with no redeploy."""
+    if not _HAVE_MCP:
         return None
     from .services import mcp_tools as t
     mcp = _new_server()
@@ -116,7 +166,7 @@ def build_mcp_app(token: str):
         return None
     global _INNER
     _INNER = app                          # parent lifespan runs its session manager (see mcp_lifespan)
-    return _BearerGuard(app, token)
+    return _BearerGuard(app, token_provider)
 
 
 @contextlib.asynccontextmanager
@@ -135,14 +185,15 @@ async def mcp_lifespan(app):
 
 def main():
     """Run the MCP server standalone (alternative to mounting in the portal): reads DCSIM_MCP_TOKEN +
-    DCSIM_MCP_HOST/PORT and serves Streamable-HTTP. `python -m app.mcp_server`."""
+    DCSIM_MCP_HOST/PORT and serves Streamable-HTTP. `python -m app.mcp_server`. This out-of-portal path
+    has no DB-backed Settings, so the token is env-only here (the portal Setting governs the mounted /mcp)."""
     import os
     if not _HAVE_MCP:
         raise SystemExit(f"the `mcp` SDK is not installed (install via Artifactory): {_IMPORT_ERR}")
     token = os.environ.get("DCSIM_MCP_TOKEN", "")
     if not token:
         raise SystemExit("set DCSIM_MCP_TOKEN to a strong secret first")
-    app = build_mcp_app(token)
+    app = build_mcp_app(lambda: token)
     if app is None:
         raise SystemExit("could not build the MCP app")
     import uvicorn

@@ -8,9 +8,9 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..config import get_settings
 from ..db import get_db
 from ..models import Datacenter
+from ..services import app_settings
 from ..services import openstack as os_mock
 
 router = APIRouter(tags=["openstack-mock"])
@@ -31,7 +31,7 @@ def _require_token(x_auth_token: str | None) -> None:
 @router.get("/openstack/{token}/v3")
 def keystone_version(token: str, db: Session = Depends(get_db)):
     _dc(db, token)
-    base = get_settings().base_url.rstrip("/")
+    base = app_settings.base_url().rstrip("/")
     return {"version": {"id": "v3.14", "status": "stable",
                         "links": [{"rel": "self", "href": f"{base}/openstack/{token}/v3/"}]}}
 
@@ -46,7 +46,7 @@ def keystone_auth(token: str, body: dict, db: Session = Depends(get_db)):
     if not os_mock.auth_ok(dc, user, password):  # wrong creds -> realistic Keystone 401
         return JSONResponse(os_mock.keystone_error_401(), status_code=401)
     project = os_mock.configured_project(dc)
-    subject, resp = os_mock.keystone_token(dc, get_settings().base_url, user=user, project=project)
+    subject, resp = os_mock.keystone_token(dc, app_settings.base_url(), user=user, project=project)
     return JSONResponse(resp, status_code=201, headers={"X-Subject-Token": subject})
 
 
@@ -56,7 +56,7 @@ def keystone_projects(token: str, db: Session = Depends(get_db),
     """Projects the token can access — CloudGuard enumerates these after authenticating."""
     _require_token(x_auth_token)
     dc = _dc(db, token)
-    return os_mock.keystone_projects(dc, get_settings().base_url, project=os_mock.configured_project(dc))
+    return os_mock.keystone_projects(dc, app_settings.base_url(), project=os_mock.configured_project(dc))
 
 
 @router.get("/openstack/{token}/nova/v2.1/servers/detail")

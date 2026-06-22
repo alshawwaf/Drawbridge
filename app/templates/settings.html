@@ -11,7 +11,7 @@
 
 <form method="post" action="/settings" id="settings-form">
 {% for group, items in groups.items() %}
-  <div class="card">
+  <div class="card" id="grp-{{ group | lower | replace(' / ','-') | replace(' ','-') }}">
     <h2 style="margin-top:0;">{{ group }}</h2>
     {% for s in items %}
       <div class="setrow" style="padding:12px 0;border-top:1px solid var(--line);">
@@ -19,6 +19,27 @@
           <label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-weight:600;">
             <input type="checkbox" name="{{ s.key }}" {% if vals[s.key] %}checked{% endif %}>
             {{ s.label }}
+          </label>
+        {% elif s.kind == 'secret' %}
+          <label style="display:flex;align-items:center;gap:10px;font-weight:600;flex-wrap:wrap;">
+            <span style="min-width:260px;">{{ s.label }}
+              {% if secrets.get(s.key) %}<span class="pill ok" style="font-size:11px;">set</span>
+              {% else %}<span class="pill" style="font-size:11px;background:var(--surface-2);color:var(--muted);">not set</span>{% endif %}
+            </span>
+            {% if crypto_ok %}
+              <input type="password" name="{{ s.key }}" value="" autocomplete="new-password" spellcheck="false"
+                     placeholder="{% if secrets.get(s.key) %}•••• stored — type to replace{% else %}enter a value to set{% endif %}"
+                     style="min-width:240px;font-family:ui-monospace,monospace;">
+              {% if secrets.get(s.key) %}
+                <label style="display:inline-flex;align-items:center;gap:6px;font-weight:500;font-size:12px;color:var(--muted);">
+                  <input type="checkbox" name="{{ s.key }}__clear"> clear
+                </label>
+              {% endif %}
+            {% else %}
+              <span class="small" style="color:var(--warn);max-width:420px;">At-rest encryption unavailable —
+                set DCSIM_ENCRYPTION_KEY or DCSIM_SESSION_SECRET to store this in the portal, or keep using
+                the env var.</span>
+            {% endif %}
           </label>
         {% elif s.kind == 'str' %}
           <label style="display:flex;align-items:center;gap:10px;font-weight:600;flex-wrap:wrap;">

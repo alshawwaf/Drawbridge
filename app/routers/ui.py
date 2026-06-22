@@ -57,13 +57,12 @@ def mcp_guide_page(request: Request, db: Session = Depends(get_db)):
     if get_user_or_none(request, db) is None:
         return RedirectResponse("/login", status_code=303)
     from .. import mcp_server
-    from ..config import get_settings
     from ..services import app_settings
-    s = get_settings()
     return templates.TemplateResponse(request, "mcp_guide.html", {
         "tools": mcp_server.tool_catalog(),
         "sdk_installed": mcp_server.have_mcp(),
-        "token_set": bool(s.mcp_token),
+        "token_set": mcp_server.token_configured(),     # Setting (encrypted) or env var
+        "crypto_ok": app_settings.secret_available(),   # can the token be stored in the portal?
         "allow_publish": bool(app_settings.get("mcp_allow_publish")),
     })
 

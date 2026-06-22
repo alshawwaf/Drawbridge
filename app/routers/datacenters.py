@@ -7,10 +7,10 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Resp
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..config import get_settings
 from ..db import get_db
 from ..models import Datacenter, User
 from ..security import get_user_or_none, new_feed_token
+from ..services import app_settings
 from ..services import dc_creds
 from ..services import kubernetes as k8s_svc
 from ..services import nutanix as nutanix_svc
@@ -365,7 +365,7 @@ def dc_k8s_ca(dc_id: int, request: Request, db: Session = Depends(get_db)):
     dc = _owned(db, dc_id, user)
     if dc.provider != "kubernetes":
         raise HTTPException(status_code=404, detail="Not a Kubernetes datacenter")
-    host = get_settings().base_url.split("://", 1)[-1].split("/")[0].split(":")[0]
+    host = app_settings.base_url().split("://", 1)[-1].split("/")[0].split(":")[0]
     try:
         pem = k8s_svc.portal_tls_chain_pem(host)
     except Exception as exc:
@@ -648,7 +648,7 @@ def dc_detail(dc_id: int, request: Request, db: Session = Depends(get_db)):
     if user is None:
         return RedirectResponse("/login", status_code=303)
     dc = _owned(db, dc_id, user)
-    base = get_settings().base_url.rstrip("/")
+    base = app_settings.base_url().rstrip("/")
     apex_host = base.split("://", 1)[-1]  # bare host SmartConsole enters for vCenter/NSX-T
     # Decrypt the stored secret (if any) so the detail page can show it as a copyable masked field.
     _auth = (dc.content or {}).get("auth") or {}

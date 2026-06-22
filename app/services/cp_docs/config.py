@@ -19,9 +19,11 @@ API_CONFIGS = {
 # Environment variables for server URLs
 CHECKPOINT_SERVER_URL = os.getenv("CHECKPOINT_SERVER_URL", API_CONFIGS['management']['default_server'])
 GAIA_SERVER_URL = os.getenv("GAIA_SERVER_URL", API_CONFIGS['gaia']['default_server'])
-# TLS verification is ON by default (org policy: never disable TLS). The CP doc CDN
-# (sc1.checkpoint.com) presents a valid public certificate, so verification succeeds.
-VERIFY_SSL = os.getenv("VERIFY_SSL", "true").lower() == "true"
+# TLS verification is ALWAYS on (org policy: never disable TLS/SSL verification in any HTTP client).
+# Not env-overridable — the CP doc CDN (sc1.checkpoint.com) presents a valid public certificate, so
+# there is no legitimate need to turn it off. A self-signed internal mirror would pin its cert instead
+# (mirroring app/services/mgmt_api._pinned_ssl_context), never a global skip-verify.
+VERIFY_SSL = True
 CHECKPOINT_API_VERSION = os.getenv("CHECKPOINT_API_VERSION", None)
 
 # Control visibility of undocumented/unpublished API calls

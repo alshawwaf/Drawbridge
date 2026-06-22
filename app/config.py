@@ -17,9 +17,12 @@ class Settings(BaseSettings):
     # If empty, an ephemeral key is generated at startup (dev only — logs out on restart).
     session_secret: str = ""
 
-    # Dedicated key for encrypting secrets at rest (the optional saved gateway password,
-    # AES-256-GCM). Falls back to session_secret. If both are empty, stored passwords cannot
-    # be decrypted after a restart — set DCSIM_ENCRYPTION_KEY (or DCSIM_SESSION_SECRET) in prod.
+    # Dedicated key for encrypting secrets at rest (saved gateway/DC passwords + the portal-set MCP /
+    # webhook / ServiceNow secrets, AES-256-GCM). Falls back to session_secret. If both are empty, stored
+    # secrets cannot be decrypted after a restart — set DCSIM_ENCRYPTION_KEY (or DCSIM_SESSION_SECRET) in
+    # prod. RECOMMENDED: set DCSIM_ENCRYPTION_KEY independently of DCSIM_SESSION_SECRET — otherwise
+    # rotating the session/cookie secret changes the derivation base and ORPHANS every stored secret
+    # (they become undecryptable and silently fall back to env/disabled; you'd re-enter them in Settings).
     encryption_key: str = ""
 
     # Seed portal admin. Never hardcode a password — set DCSIM_ADMIN_PASSWORD via env.
@@ -45,23 +48,25 @@ class Settings(BaseSettings):
 
     # Access automation — generic ticketing webhook (ServiceNow, Jira, Remedy, custom portal …).
     # The inbound webhook (POST /access-automation/webhook) is DISABLED unless a shared secret is set;
-    # the caller must send it as the X-DCSim-Token header. Never hardcode — set via env.
+    # the caller must send it as the X-DCSim-Token header.
     # SECURITY: this token grants policy publish on every ALLOWED management server, so treat it as a
-    # top-tier secret. Optionally scope it to specific servers with DCSIM_WEBHOOK_SERVER_IDS.
+    # top-tier secret. Optionally scope it to specific servers with the webhook_server_ids allowlist.
+    # NOTE: these are now FALLBACKS — Settings → Ticketing webhook (DB-backed, token encrypted at rest)
+    # takes precedence and can be set/rotated from the portal with no redeploy.
     webhook_token: str = ""
     webhook_server_ids: str = ""    # comma-separated server ids the webhook may target; blank = all
 
-    # MCP server (for n8n / LLM agents). The /mcp endpoint is DISABLED until this bearer token is set;
-    # clients send it as `Authorization: Bearer <token>`. Like the webhook token it can drive policy
-    # writes, so treat it as a top-tier secret. Writes are additionally gated by the mcp_allow_publish
-    # setting (default OFF) — an agent can decide/preview/dry-run freely but can't publish to a live SMS
-    # unless an admin turns that on. Requires the `mcp` SDK (install via Artifactory) to activate.
+    # MCP server (for n8n / LLM agents). The /mcp endpoint is mounted whenever the `mcp` SDK is installed
+    # (Artifactory) and is ENABLED once a bearer token is set; clients send it as `Authorization: Bearer
+    # <token>`. Like the webhook token it can drive policy writes, gated by the mcp_allow_publish setting
+    # (default OFF). NOTE: this env var is a FALLBACK — Settings → MCP / agent (DB-backed, encrypted at
+    # rest) takes precedence and lets an admin set/rotate/clear the token from the portal with no redeploy.
     mcp_token: str = ""
 
     # Optional BUILT-IN write-back: post the decision + rule UID to a ServiceNow incident's work notes
     # via the Table API. (Other vendors use the generic per-request `callback_url`, or just read the
-    # synchronous response.) TLS verification is always on; the password is read from env (never
-    # hardcoded), mirroring DCSIM_ADMIN_PASSWORD.
+    # synchronous response.) TLS verification is always on. NOTE: these are FALLBACKS — Settings →
+    # ServiceNow write-back (DB-backed, password encrypted at rest) takes precedence over the env vars.
     servicenow_instance: str = ""   # e.g. https://dev12345.service-now.com
     servicenow_user: str = ""
     servicenow_password: str = ""

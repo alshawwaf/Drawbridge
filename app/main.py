@@ -134,11 +134,13 @@ def create_app() -> FastAPI:
     app.include_router(notifications.router)
     app.include_router(exports.router)
 
-    # MCP server for n8n / LLM agents — mounted at /mcp only when the SDK is installed (Artifactory) AND
-    # DCSIM_MCP_TOKEN is set. Otherwise it's silently absent; the rest of the portal is unaffected.
+    # MCP server for n8n / LLM agents — mounted at /mcp whenever the SDK is installed (Artifactory).
+    # The bearer token is resolved PER REQUEST (Settings → MCP / agent, with the DCSIM_MCP_TOKEN env var
+    # as fallback): while none is set the endpoint returns 503, and setting one in the portal activates it
+    # with no redeploy. If the SDK is absent the endpoint is simply not mounted; the rest is unaffected.
     try:
         from . import mcp_server
-        mcp_app = mcp_server.build_mcp_app(settings.mcp_token)
+        mcp_app = mcp_server.build_mcp_app(mcp_server.resolve_token)
         if mcp_app is not None:
             app.mount("/mcp", mcp_app)
     except Exception:  # noqa: BLE001 — never let the optional MCP mount break app startup

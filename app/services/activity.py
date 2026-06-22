@@ -12,9 +12,19 @@ SENSITIVE_SUBSTRINGS = ("password", "passwd", "pwd", "pass", "secret", "token",
                         "credential", "sid", "auth_header_value", "private")
 
 
+def _secret_setting_keys() -> set:
+    """Exact keys of every registered "secret" Setting — so a secret form field is redacted even if its
+    name doesn't contain one of the substrings above (defense-in-depth against a future rename)."""
+    try:
+        from . import app_settings
+        return {s.key.lower() for s in app_settings.secret_settings()}
+    except Exception:  # noqa: BLE001 — redaction must never crash the log path
+        return set()
+
+
 def _is_sensitive(key: str) -> bool:
     k = str(key).lower()
-    return any(s in k for s in SENSITIVE_SUBSTRINGS)
+    return any(s in k for s in SENSITIVE_SUBSTRINGS) or k in _secret_setting_keys()
 
 
 def redact_headers(headers: dict) -> dict:

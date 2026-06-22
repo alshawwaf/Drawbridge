@@ -869,6 +869,8 @@ def _run(coro):
 
 
 def test_webhook_disabled_without_token(monkeypatch):
+    # the token resolves from Settings (encrypted) with env fallback; stub it transparently here
+    monkeypatch.setattr(aar.app_settings, "get_secret_or_env", lambda k, env: "")
     monkeypatch.setattr(aar, "get_settings", lambda: types.SimpleNamespace(webhook_token=""))
     req = types.SimpleNamespace(headers={})
     resp = _run(aar.aa_webhook(req, db=None))
@@ -876,6 +878,7 @@ def test_webhook_disabled_without_token(monkeypatch):
 
 
 def test_webhook_rejects_bad_token(monkeypatch):
+    monkeypatch.setattr(aar.app_settings, "get_secret_or_env", lambda k, env: "s3cret")
     monkeypatch.setattr(aar, "get_settings", lambda: types.SimpleNamespace(webhook_token="s3cret"))
     req = types.SimpleNamespace(headers={"x-dcsim-token": "wrong"})
     resp = _run(aar.aa_webhook(req, db=None))
@@ -883,6 +886,8 @@ def test_webhook_rejects_bad_token(monkeypatch):
 
 
 def test_webhook_server_allowlist_parsing(monkeypatch):
+    # the allowlist resolves from Settings with env fallback; stub it to pass the env value through
+    monkeypatch.setattr(aar.app_settings, "get_or_env", lambda k, env: env)
     # a clean list parses
     monkeypatch.setattr(aar, "get_settings",
                         lambda: types.SimpleNamespace(webhook_server_ids="1, 3 ,5"))

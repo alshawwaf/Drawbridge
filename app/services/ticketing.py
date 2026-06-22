@@ -22,6 +22,7 @@ from typing import Optional
 import httpx
 
 from ..config import get_settings
+from . import app_settings
 from .access_automation import AccessRequest
 
 _TRUE = {"1", "true", "yes", "y", "on", "apply", "publish"}
@@ -209,22 +210,32 @@ def _post_callback(ticket: TicketRequest, result: dict) -> dict:
 
 
 # --- built-in ServiceNow Table API adapter (optional) ----------------------------------------
-def servicenow_configured() -> bool:
+def _servicenow_cfg() -> tuple[str, str, str, str]:
+    """(instance, user, password, table) resolved from Settings → ServiceNow write-back, with the
+    DCSIM_SERVICENOW_* env vars as fallback. The password is decrypted from its encrypted-at-rest row."""
     s = get_settings()
-    return bool(s.servicenow_instance and s.servicenow_user and s.servicenow_password)
+    instance = app_settings.get_or_env("servicenow_instance", s.servicenow_instance)
+    user = app_settings.get_or_env("servicenow_user", s.servicenow_user)
+    password = app_settings.get_secret_or_env("servicenow_password", s.servicenow_password)
+    table = app_settings.get_or_env("servicenow_table", s.servicenow_table) or "incident"
+    return instance, user, password, table
+
+
+def servicenow_configured() -> bool:
+    instance, user, password, _ = _servicenow_cfg()
+    return bool(instance and user and password)
 
 
 def update_servicenow(ticket_id: str, work_notes: str, fields: Optional[dict] = None) -> dict:
     """Append a work note (and optional fields) to a ServiceNow incident via the Table API. Best-effort
     and config-guarded; returns {skipped} when not configured. TLS verification stays on."""
-    if not servicenow_configured():
+    instance, user, password, table = _servicenow_cfg()
+    if not (instance and user and password):
         return {"skipped": "ServiceNow callback not configured"}
     if not ticket_id:
         return {"skipped": "no ticket id to update"}
-    s = get_settings()
-    base = s.servicenow_instance.rstrip("/")
-    table = s.servicenow_table or "incident"
-    auth = (s.servicenow_user, s.servicenow_password)
+    base = instance.rstrip("/")
+    auth = (user, password)
     headers = {"Accept": "application/json", "Content-Type": "application/json"}
     body = {"work_notes": work_notes, **(fields or {})}
     try:

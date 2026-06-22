@@ -11,7 +11,7 @@ from ..config import get_settings
 from ..db import get_db
 from ..models import SiemLog
 from ..security import get_user_or_none
-from ..services import siem
+from ..services import app_settings, siem
 from .ui import _flash, _pop_flash, templates
 
 router = APIRouter(include_in_schema=False)
@@ -24,7 +24,7 @@ def _clean_page_size(page_size: int) -> int:
 
 
 def _host() -> str:
-    base = get_settings().base_url
+    base = app_settings.base_url()
     return base.split("://", 1)[-1].split("/")[0].split(":")[0]
 
 

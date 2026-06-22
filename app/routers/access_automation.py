@@ -22,7 +22,7 @@ from ..db import get_db
 from ..models import ManagementServer, User
 from ..security import get_user_or_none
 from ..services import access_automation as aa
-from ..services import applications, decision_tree, mgmt_api, mgmt_creds, services, table_prefs, ticketing
+from ..services import app_settings, applications, decision_tree, mgmt_api, mgmt_creds, services, table_prefs, ticketing
 from ..services.gaia_client import ensure_pinned
 from .ui import _pop_flash, templates
 
@@ -211,12 +211,12 @@ def aa_apply(sid: int, body: AccessReqBody, request: Request, db: Session = Depe
 
 # --- Generic ticketing webhook (no portal session; authenticated by a shared token) ----------
 def _allowed_server_ids() -> set:
-    """Optional allowlist (DCSIM_WEBHOOK_SERVER_IDS, comma-separated server ids). UNSET = every saved
-    server. Set-but-unparseable FAILS CLOSED (raises): silently dropping a mistyped entry (e.g.
-    "prod-3") would yield an empty set, which the caller reads as "allow all" — widening the blast radius
-    of the publish token from a couple servers to every tenant. A scoping typo must be an error, not
-    permission."""
-    raw = (get_settings().webhook_server_ids or "").strip()
+    """Optional allowlist (Settings → Ticketing webhook → 'Restrict the webhook to server ids', falling
+    back to DCSIM_WEBHOOK_SERVER_IDS), comma-separated server ids. UNSET = every saved server.
+    Set-but-unparseable FAILS CLOSED (raises): silently dropping a mistyped entry (e.g. "prod-3") would
+    yield an empty set, which the caller reads as "allow all" — widening the blast radius of the publish
+    token from a couple servers to every tenant. A scoping typo must be an error, not permission."""
+    raw = (app_settings.get_or_env("webhook_server_ids", get_settings().webhook_server_ids) or "").strip()
     if not raw:
         return set()                                   # unset -> documented allow-all
     ids, bad = set(), []
@@ -227,7 +227,7 @@ def _allowed_server_ids() -> set:
         elif tok:
             bad.append(tok)
     if bad or not ids:
-        raise ValueError(f"DCSIM_WEBHOOK_SERVER_IDS is malformed (bad entries: {bad or raw!r}); "
+        raise ValueError(f"the webhook server-id allowlist is malformed (bad entries: {bad or raw!r}); "
                          f"expected a comma-separated list of numeric server ids")
     return ids
 
@@ -242,9 +242,10 @@ async def aa_webhook(request: Request, db: Session = Depends(get_db)):
     is unset the webhook is DISABLED (503) — it never runs unauthenticated. The token grants policy
     publish on every allowed management server, so treat it as a top-tier secret; optionally scope it
     with DCSIM_WEBHOOK_SERVER_IDS."""
-    token = get_settings().webhook_token
+    token = app_settings.get_secret_or_env("webhook_token", get_settings().webhook_token)
     if not token:
-        return JSONResponse({"error": "Webhook disabled — set DCSIM_WEBHOOK_TOKEN to enable it."},
+        return JSONResponse({"error": "Webhook disabled — set a token in Settings → Ticketing webhook "
+                                      "(or the DCSIM_WEBHOOK_TOKEN env var) to enable it."},
                             status_code=503)
     if not hmac.compare_digest(request.headers.get("x-dcsim-token", ""), token):
         return JSONResponse({"error": "Invalid or missing X-DCSim-Token."}, status_code=401)
