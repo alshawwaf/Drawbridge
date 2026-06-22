@@ -870,3 +870,48 @@ def test_access_automation_diagram_shows_without_credential():
     html = _render("access_automation_detail.html", ms=ms, has_secret=False, flash=None, request=req)
     # the explainer is educational, so it renders even when policy can't be pulled
     assert 'id="aa-flow"' in html and "How it decides" in html
+
+
+# --- group dereferencing: an unresolved group source must REVIEW; a resolved one must not block -----
+def _dns_layer(group_members):
+    """A DNS-style layer mirroring the live demo: rule 1 has a group source (internal_nets), rule 6 is
+    the Facebook allow (win_server -> Any). `group_members` is the group's resolved member list."""
+    od = {
+        "u-net": {"uid": "u-net", "type": "network", "name": "net_203_0_113_0_24",
+                  "subnet4": "203.0.113.0", "mask-length4": 24},
+        "u-grp": {"uid": "u-grp", "type": "group", "name": "internal_nets", "members": group_members},
+        "u-ws": {"uid": "u-ws", "type": "host", "name": "win_server", "ipv4-address": "10.1.1.50"},
+        "u-any": {"uid": "u-any", "type": "CpmiAnyObject", "name": "Any"},
+        "u-fb": {"uid": "u-fb", "type": "application-site", "name": "Facebook"},
+        "u-acc": {"uid": "u-acc", "name": "Accept"}, "u-drop": {"uid": "u-drop", "name": "Drop"},
+    }
+    raw = [
+        {"uid": "r1", "rule-number": 1, "name": "Internal DNS Server", "enabled": True,
+         "source": ["u-net", "u-grp"], "destination": ["u-ws"], "service": ["u-any"], "action": "u-acc"},
+        {"uid": "r6", "rule-number": 6, "name": "Facebook allow", "enabled": True,
+         "source": ["u-ws"], "destination": ["u-any"], "service": ["u-fb"], "action": "u-acc"},
+        {"uid": "r7", "rule-number": 7, "name": "DNS log and drop", "enabled": True,
+         "source": ["u-any"], "destination": ["u-any"], "service": ["u-any"], "action": "u-drop"},
+    ]
+    return [aa._parse_rule(e, od) for e in raw]
+
+
+_FB_REQ = AccessRequest(src_cidrs=["10.1.1.222/32"], dst_cidrs=["0.0.0.0/0"], application="Facebook")
+
+
+def test_unresolved_group_source_routes_to_review():
+    # group members absent (bare UID) -> source extent unknown -> rule 1 complex -> REVIEW (safety guard)
+    rules = _dns_layer(["u-missing-member"])
+    assert rules[0].complex and rules[0].src_unknown
+    d = aa.decide(_FB_REQ, rules)
+    assert d.outcome is Outcome.REVIEW and d.target_rule.number == 1
+
+
+def test_dereferenced_group_source_lets_engine_widen():
+    # group members nested as full objects (what dereference-group-members returns), and 10.1.1.222 is
+    # NOT among them -> rule 1 resolves + is disjoint -> engine reaches the clean WIDEN on the FB rule.
+    member = {"uid": "u-mem", "type": "host", "name": "an_internal_host", "ipv4-address": "10.1.1.99"}
+    rules = _dns_layer([member])
+    assert not rules[0].complex and not rules[0].src_unknown
+    d = aa.decide(_FB_REQ, rules)
+    assert d.outcome is Outcome.WIDEN and d.target_rule.number == 6 and d.widen_field == "source"

@@ -510,7 +510,10 @@ def _raw_pull(session: "MgmtSession", layer: str, package, max_rules: int) -> di
     total, offset = 0, 0
     while offset < max_rules:
         payload = {"name": layer, "limit": 100, "offset": offset,
-                   "use-object-dictionary": True, "details-level": "full"}
+                   "use-object-dictionary": True, "details-level": "full",
+                   # Expand group members to full objects so the engine can resolve a group cell to IPs
+                   # (an unresolved group reads as "extent unknown" and routes every overlap to REVIEW).
+                   "dereference-group-members": True}
         if package:
             payload["package"] = package
         page = session.call("show-access-rulebase", payload)
