@@ -14,7 +14,8 @@ def test_edges_reference_real_nodes_and_outcomes_present():
 
 def test_mermaid_is_well_formed():
     m = dt.to_mermaid()
-    assert m.startswith("flowchart TD")
+    assert m.startswith("%%{init:") and "flowchart TD" in m and '"theme":"base"' in m   # self-themed
+    assert dt.to_mermaid(dark=True) != m                                       # dark variant differs
     for n in dt.NODES:
         assert f"  {n.id}" in m                      # every node declared
     assert "-->|yes|" in m and "-->|no|" in m         # labelled branches
