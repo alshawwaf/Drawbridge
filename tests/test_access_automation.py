@@ -1022,7 +1022,9 @@ def test_range_resolves_exact_not_approx():
 def test_opaque_network_objects_still_review():
     od = _od_infra()
     req = AccessRequest(src_cidrs=["10.9.9.9/32"], dst_cidrs=["Any"], application="Facebook")
-    for opaque in ("zone", "dyn", "role", "wild"):
+    # NB: wildcard objects are now RESOLVED (reducer #3), so they are no longer opaque — see the
+    # test_wildcard_* tests. The genuinely-unresolvable types stay REVIEW.
+    for opaque in ("zone", "dyn", "role"):
         rules = [_irule(1, [opaque], ["any"], ["any"], "acc", od),
                  _irule(2, ["any"], ["any"], ["any"], "drp", od)]
         assert rules[0].complex, opaque
@@ -1474,3 +1476,56 @@ def test_apply_rejects_multi_cidr():
     req = AccessRequest(["10.0.0.0/24", "10.1.0.0/24"], ["1.1.1.1/32"], "tcp", "443")
     with pytest.raises(aa.MgmtError):
         aa._apply(s, dec, req, "Net", [CLEANUP], "TKT")
+
+
+# ============ reducer #3: resolve dynamic extents — wildcard + group-with-exclusion ============
+def test_wildcard_resolves_to_exact_member_set():
+    od = {"any": {"uid": "any", "type": "CpmiAnyObject", "name": "Any"},
+          "wc": {"uid": "wc", "type": "wildcard", "name": "odd-hosts",
+                 "ipv4-address": "10.0.0.1", "ipv4-mask-wildcard": "0.0.0.6"},   # bits 1,2 free -> .1/.3/.5/.7
+          "acc": {"uid": "acc", "name": "Accept"}, "drp": {"uid": "drp", "name": "Drop"}}
+    r = _irule(1, ["wc"], ["any"], ["any"], "acc", od)
+    assert not r.complex
+    assert {lo for lo, hi in r.src} == {aa._ip_int(x) for x in ("10.0.0.1", "10.0.0.3", "10.0.0.5", "10.0.0.7")}
+    assert all(lo == hi for lo, hi in r.src)
+    rules = [r, _irule(2, ["any"], ["any"], ["any"], "drp", od)]
+    assert aa.decide(AccessRequest(["10.0.0.5/32"], ["Any"], "tcp", "443"), rules).outcome is Outcome.NO_OP
+    assert aa.decide(AccessRequest(["10.0.0.4/32"], ["Any"], "tcp", "443"), rules).outcome is Outcome.CREATE  # not a member
+
+
+def test_wildcard_over_cap_stays_opaque_review():
+    # a mask with many SCATTERED free bits (255.255.0.255 -> 16 disjoint ranges) exceeds the cap -> opaque
+    od = {"any": {"uid": "any", "type": "CpmiAnyObject", "name": "Any"},
+          "wcb": {"uid": "wcb", "type": "wildcard", "name": "big",
+                  "ipv4-address": "10.0.0.0", "ipv4-mask-wildcard": "255.255.0.255"},
+          "drp": {"uid": "drp", "name": "Drop"}}
+    r = _irule(1, ["wcb"], ["any"], ["any"], "drp", od)
+    assert r.complex                                   # over-cap -> kept opaque (never an over-approximation)
+    rules = [r, _irule(2, ["any"], ["any"], ["any"], "drp", od)]
+    assert aa.decide(AccessRequest(["10.0.0.5/32"], ["Any"], "tcp", "443"), rules).outcome is Outcome.REVIEW
+
+
+def test_group_with_exclusion_resolves_include_minus_except():
+    od = {"any": {"uid": "any", "type": "CpmiAnyObject", "name": "Any"},
+          "ninc": {"uid": "ninc", "type": "network", "name": "dmz", "subnet4": "10.0.0.0", "mask-length4": 24},
+          "nexc": {"uid": "nexc", "type": "network", "name": "block", "subnet4": "10.0.0.128", "mask-length4": 25},
+          "gwe": {"uid": "gwe", "type": "group-with-exclusion", "name": "dmz-except", "include": "ninc", "except": "nexc"},
+          "acc": {"uid": "acc", "name": "Accept"}, "drp": {"uid": "drp", "name": "Drop"}}
+    r = _irule(1, ["gwe"], ["any"], ["any"], "acc", od)
+    assert not r.complex
+    assert r.src == [(aa._ip_int("10.0.0.0"), aa._ip_int("10.0.0.127"))]   # include ∖ except, exactly
+    rules = [r, _irule(2, ["any"], ["any"], ["any"], "drp", od)]
+    assert aa.decide(AccessRequest(["10.0.0.5/32"], ["Any"], "tcp", "443"), rules).outcome is Outcome.NO_OP
+    assert aa.decide(AccessRequest(["10.0.0.200/32"], ["Any"], "tcp", "443"), rules).outcome is Outcome.CREATE  # excluded
+
+
+def test_group_with_exclusion_inexact_except_stays_opaque():
+    # an 'except' that's only an under-approximation (a gateway resolved to its main IP) could OVER-state
+    # include∖except -> must stay opaque (REVIEW), never subtract.
+    od = {"any": {"uid": "any", "type": "CpmiAnyObject", "name": "Any"},
+          "ninc": {"uid": "ninc", "type": "network", "name": "dmz", "subnet4": "10.0.0.0", "mask-length4": 24},
+          "gw": {"uid": "gw", "type": "simple-gateway", "name": "gw", "ipv4-address": "10.0.0.130"},  # approx
+          "gwe": {"uid": "gwe", "type": "group-with-exclusion", "name": "x", "include": "ninc", "except": "gw"},
+          "acc": {"uid": "acc", "name": "Accept"}}
+    r = _irule(1, ["gwe"], ["any"], ["any"], "acc", od)
+    assert r.complex
