@@ -1529,3 +1529,31 @@ def test_group_with_exclusion_inexact_except_stays_opaque():
           "acc": {"uid": "acc", "name": "Accept"}}
     r = _irule(1, ["gwe"], ["any"], ["any"], "acc", od)
     assert r.complex
+
+
+# ============ API/webhook: unknown service -> suggestions, never a wrong SMS call ============
+def test_obj_review_surfaces_top_level_suggestions():
+    unresolved = {"term": "echoo", "match": None, "note": "",
+                  "candidates": [{"name": "echo-request"}, {"name": "echo-reply"}]}
+    out = aa._obj_review({"svc_resolution": unresolved}, unresolved, "service", {})
+    assert out["outcome"] == "review" and out["unresolved"] == "service"
+    assert out["suggestions"] == ["echo-request", "echo-reply"]            # top-level, API-friendly
+    assert "did you mean: echo-request, echo-reply?" in out["reason"]
+    assert out["svc_resolution"]["candidates"]                            # nested copy still there (portal chips)
+    # no candidates -> fall back to the note, empty suggestions
+    nc = {"term": "zzz", "match": None, "candidates": [], "note": "No Check Point service matches “zzz”."}
+    out2 = aa._obj_review({"svc_resolution": nc}, nc, "service", {})
+    assert out2["suggestions"] == [] and "No Check Point service" in out2["reason"]
+
+
+def test_execute_unknown_service_reviews_without_writing_to_sms(monkeypatch):
+    calls = []
+    monkeypatch.setattr(aa, "MgmtSession", _fake_session_factory(calls))
+    monkeypatch.setattr(aa, "load_layer", lambda s, layer, package=None: [CLEANUP])
+    res = aa.execute(object(), "secret",
+                     AccessRequest(["10.1.1.222/32"], ["Any"], service="totally-unknown-svc"),
+                     "Net", publish=True)
+    assert res["outcome"] == "review" and res["applied"] is False and res["published"] is False
+    assert "did you mean" in res["reason"] or "No Check Point" in res["reason"]
+    assert "suggestions" in res                                           # always present for the caller
+    assert not any(c[0] in ("add-access-rule", "add-service-tcp", "add-host", "publish") for c in calls)
