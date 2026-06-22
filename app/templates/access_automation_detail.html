@@ -452,9 +452,19 @@ Content-Type: application/json
     }
     function applyZoom(){
       var svg = el.querySelector('svg'); if (!svg) return;
-      // CSS `zoom` scales the element AND its layout box, so f=1 keeps Mermaid's own fit (no clipping)
-      // and f>1 grows the box -> the .dtwrap scrolls to it. (Chromium/Safari/modern Firefox.)
-      svg.style.zoom = f;
+      // Mermaid renders with useMaxWidth -> it stamps a max-width on the SVG that DEFEATS CSS `zoom`
+      // (the box can't grow past the container). So scale by an EXPLICIT width instead: f=1 = fit-to-width
+      // (or the diagram's natural size if it's narrower), f>1 grows it and the .dtwrap (overflow:auto)
+      // scrolls. Height is derived from the viewBox so the aspect ratio is preserved.
+      var vb = svg.viewBox && svg.viewBox.baseVal;
+      var natW = (vb && vb.width) ? vb.width : (svg.getBBox ? svg.getBBox().width : 600);
+      var ratio = (vb && vb.width) ? (vb.height / vb.width) : 0.6;
+      var avail = (((wrap && wrap.clientWidth) || el.clientWidth || 600) - 24);   // minus .dtwrap padding
+      var base = Math.min(natW, avail);                  // fit-to-width, but never upscale a small diagram
+      var w = Math.max(120, base * f);
+      svg.style.maxWidth = 'none';
+      svg.style.width = w + 'px';
+      svg.style.height = (w * ratio) + 'px';
       var lbl = document.getElementById('dt-zreset'); if (lbl) lbl.textContent = Math.round(f * 100) + '%';
     }
     function render(){
