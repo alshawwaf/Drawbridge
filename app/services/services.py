@@ -64,7 +64,7 @@ def resolve(session, term: str) -> dict:
     ``match`` is set ONLY for a confident, UNIQUE exact / normalized-exact hit over a complete page; a
     truncated result is never auto-matched (a wrong service = wrong access)."""
     term = (term or "").strip()
-    out = {"term": term, "match": None, "confidence": "", "candidates": [], "note": ""}
+    out = {"term": term, "match": None, "match_kind": "", "confidence": "", "candidates": [], "note": ""}
     if not term:
         return out
     raw = _query(session, term, _RESOLVE_LIMIT)
@@ -76,10 +76,11 @@ def resolve(session, term: str) -> dict:
         return out
     exacts = [c for (lvl, _), c in scored if lvl == "exact"]
     norms = [c for (lvl, _), c in scored if lvl == "normalized"]
-    if not truncated and len(exacts) == 1:
-        out["match"], out["confidence"] = exacts[0]["name"], "exact"
-    elif not truncated and not exacts and len(norms) == 1:
-        out["match"], out["confidence"] = norms[0]["name"], "normalized"
+    win = exacts[0] if (not truncated and len(exacts) == 1) else \
+        (norms[0] if (not truncated and not exacts and len(norms) == 1) else None)
+    if win is not None:                 # carry the matched object's protocol family (icmp/icmp6/…) so
+        out["match"], out["match_kind"] = win["name"], win["kind"]   # the engine can't alias families
+        out["confidence"] = "exact" if exacts else "normalized"
     out["candidates"] = [{"name": c["name"], "kind": c["kind"], "score": round(sc, 2)}
                          for (lvl, sc), c in scored if sc >= 0.4][:8]
     if not out["match"]:
