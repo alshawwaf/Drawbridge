@@ -140,7 +140,7 @@ def create_app() -> FastAPI:
     # with no redeploy. If the SDK is absent the endpoint is simply not mounted; the rest is unaffected.
     try:
         from . import mcp_server
-        mcp_app = mcp_server.build_mcp_app(mcp_server.resolve_token)
+        mcp_app = mcp_server.build_mcp_app()   # default guard: MCP token (Setting/env) + active API keys
         if mcp_app is not None:
             app.mount("/mcp", mcp_app)
     except Exception:  # noqa: BLE001 — never let the optional MCP mount break app startup

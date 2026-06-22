@@ -19,15 +19,19 @@ no env edit, no redeploy:
 pip install mcp            # via your Artifactory-configured index, then restart Drawbridge
 ```
 
-Then in the portal: **Settings → MCP / agent → "MCP bearer token"** → enter a long random secret → Save.
-That **enables** `/mcp` immediately (the token is stored encrypted at rest, AES-256-GCM). Rotate or clear
-it the same way at any time — the endpoint picks up the change per request, with no restart. The
-**MCP for agents** page (`/mcp-guide`) shows live status and a "set a bearer token in Settings" link.
+Then create a key in the portal: **Settings → API keys → + New key** (scope **mcp**). The key is shown
+**once** — copy it. Clients send it as `Authorization: Bearer <key>`. You can mint multiple named keys
+(e.g. `n8n-prod`, `my-laptop`), see each one's last-used time, and **revoke** any of them individually and
+immediately. Keys are stored **hashed** (SHA-256) — a DB leak exposes no usable key.
 
-`/mcp` is **mounted whenever the SDK is installed**; while no token is configured it returns **503**
-(disabled). A `DCSIM_MCP_TOKEN` env var still works as a **fallback** for headless/automated deploys, but
-the portal Setting takes precedence. (Same pattern for the ticketing webhook token and the ServiceNow
-write-back credential — all set under **Settings**, all stored encrypted.)
+Two simpler alternatives also work and take precedence/cascade automatically:
+- **Single shared token** — Settings → MCP / agent → "MCP bearer token" (stored encrypted, AES-256-GCM).
+- **Env var** `DCSIM_MCP_TOKEN` — a fallback for headless/automated deploys.
+
+`/mcp` is **mounted whenever the SDK is installed**; while nothing is configured (no key, no token) it
+returns **503**. A request is authorized if its bearer matches **any active MCP key** OR the shared token.
+The **MCP for agents** page (`/mcp-guide`) shows live status and links to both. (The ticketing webhook is
+the same: a **webhook**-scope API key sent as `X-DCSim-Token`, or the shared webhook token.)
 
 **Self-serve onboarding page:** the portal has a **MCP for agents** page at **`/mcp-guide`** (under
 *Layers & Gateways*) — live status pills (SDK installed / endpoint enabled / publish gate), a
@@ -70,10 +74,11 @@ whole dimension. Good for an agent to *understand* a policy before proposing a c
 
 ## 4. Safety model
 
-- **Auth:** every call requires `Authorization: Bearer <token>` (constant-time checked). The token is set
-  in **Settings → MCP / agent** (encrypted at rest), with `DCSIM_MCP_TOKEN` as fallback. No token
-  configured → **503** (disabled); wrong/missing token on a configured endpoint → **401**. A DB read
-  failure on the token fails **closed** (the endpoint stays disabled), never open.
+- **Auth:** every call requires `Authorization: Bearer <key-or-token>` (constant-time checked). Valid
+  credentials are any active **MCP API key** (Settings → API keys; hashed at rest, individually revocable)
+  or the shared **MCP token** (Settings → MCP / agent, encrypted at rest; `DCSIM_MCP_TOKEN` env fallback).
+  Nothing configured → **503** (disabled); wrong/missing credential → **401**. A DB read failure fails
+  **closed** (endpoint stays disabled / key set treated as empty), never open.
 - **No accidental writes:** `decide_access` is read-only; `apply_access` with `publish=false` rehearses
   the change in a session and **discards** it (nothing committed).
 - **Publish is opt-in:** `apply_access(publish=true)` only commits when an admin enables **Settings →
