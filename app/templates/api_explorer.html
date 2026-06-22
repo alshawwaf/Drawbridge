@@ -16,6 +16,12 @@
   .ax-bar button { padding:7px 16px; font-weight:600; }
   .ax-note { font-size:12px; color:var(--subtle-fg); margin:2px 0 12px; line-height:1.5; max-width:980px; }
   .ax-note code { font-family:ui-monospace,monospace; }
+  .ax-callout { display:flex; gap:10px; align-items:flex-start; max-width:980px; margin:2px 0 12px;
+    padding:11px 14px; border:1px solid var(--line); border-left:3px solid var(--accent);
+    border-radius:9px; background:var(--surface-2); font-size:12.5px; line-height:1.55; color:var(--text-2); }
+  .ax-callout svg { flex:none; margin-top:1px; stroke:var(--accent); }
+  .ax-callout code { font-family:ui-monospace,monospace; }
+  .ax-callout b { color:var(--text); }
   #ax-status { font-size:12.5px; margin:8px 0; min-height:1.2em; }
   #ax-status.err { color:var(--bad-fg,#c4314b); font-weight:600; }
   /* --- Theme Swagger UI onto the portal's own variables (follows dark/light automatically) --------- */
@@ -102,10 +108,18 @@
   #swagger-ui .responses-inner { background:transparent; }
   #swagger-ui table.responses-table td, #swagger-ui table.responses-table th { background:transparent; }
   #swagger-ui .model-example { background:transparent; border:0; }
+  /* Read-only code blocks (curl, Request URL, request/response body, examples) sit on a fixed DARK
+     surface in both themes — Swagger's syntax-highlight token colors are tuned for dark, so on the
+     portal's light background they washed out. A code-editor look keeps them crisp in light mode. */
   #swagger-ui .microlight, #swagger-ui pre.microlight, #swagger-ui .highlight-code,
-  #swagger-ui .body-param__example, #swagger-ui .example { background:var(--input-bg) !important;
-    border:1px solid var(--line); border-radius:8px; color:var(--text); }
-  #swagger-ui .microlight code, #swagger-ui .renderedMarkdown pre code { color:var(--text); }
+  #swagger-ui .body-param__example, #swagger-ui .example, #swagger-ui .curl-command,
+  #swagger-ui .request-url, #swagger-ui .request-url pre, #swagger-ui .responses-inner pre {
+    background:#0d1117 !important; border:1px solid var(--line); border-radius:8px; }
+  #swagger-ui .microlight, #swagger-ui pre.microlight, #swagger-ui .highlight-code,
+  #swagger-ui .request-url pre, #swagger-ui .curl-command, #swagger-ui .body-param__example,
+  #swagger-ui .microlight code, #swagger-ui .renderedMarkdown pre code { color:#e6edf3 !important; }
+  #swagger-ui .copy-to-clipboard { background:rgba(255,255,255,.12); }
+  #swagger-ui .copy-to-clipboard button { background:transparent; }
   #swagger-ui select, #swagger-ui .content-type, #swagger-ui .examples-select select {
     background:var(--input-bg); color:var(--text); border:1px solid var(--line); }
   /* the "Example Value | Schema" / "Model | Example" sub-tabs */
@@ -166,13 +180,15 @@
           title="Download an OpenAPI 3.0 file — import it into Postman or Bruno">⤓ Export for Postman / Bruno</button>
 </div>
 
-<p class="ax-note">
-  <strong>Try it out</strong> sends requests from your browser directly to the target server.
-  A real Management/Gaia server typically won't return CORS headers, so cross-origin live calls may be
-  blocked by the browser — but the exact request body, headers, and <code>curl</code> are still generated
-  for you to run. For actual policy changes, use the gated editor on the Management Servers page (preview →
-  publish). TLS is always verified server-side; this page never disables it.
-</p>
+<div class="ax-callout">
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+  <div><b>About “Try it out”.</b> It calls the target straight from your browser, so a live call to a
+  real Management/Gaia server will usually show <b>“Failed to fetch — CORS”</b>. That's expected — a
+  Check Point server doesn't send browser CORS headers; it isn't a problem with the portal or your
+  request. Your request is still built correctly: use <b>Copy as cURL</b> or <b>Export for Postman /
+  Bruno</b> below to run it for real, or use the gated editor on <b>Management Servers</b> (preview →
+  publish) to actually change policy. TLS is always verified server-side — this page never disables it.</div>
+</div>
 <p class="ax-note">
   <strong>Export for Postman / Bruno</strong> downloads this version's OpenAPI 3.0 file with your selected
   target server baked in. In <strong>Postman</strong>: <em>Import → File</em> (builds a collection of every
