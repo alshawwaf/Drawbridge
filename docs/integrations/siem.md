@@ -7,26 +7,31 @@ integration in the portal: Check Point connects *out* to us, instead of us servi
 ## What it does
 
 - Listens on **TCP and UDP** on `DCSIM_SYSLOG_PORT` (default `5514`), started in the app lifespan.
-- Parses each line best-effort into structured fields — **CEF**, **LEEF**, **JSON**, or plain
-  **syslog** (strips the `<PRI>` and RFC3164/5424 header) — and keeps the raw line too.
-- Shows everything live at **`/siem`** (nav → **SIEM**): a format filter, a stats strip, and a
-  click-through detail with the parsed fields + raw line. Retains the newest ~2000 lines.
-- **Send test log** injects a sample Check Point CEF/JSON line so the viewer can be demoed before a
-  gateway is pointed at it.
+- **Auto-detects** the wire format per line — no need to tell it which: **CEF**, **LEEF**, **JSON**,
+  **key=value** field lists (Splunk / LogRhythm / RSA / generic), or plain **syslog** (strips the
+  `<PRI>` and RFC3164/5424 header) — and keeps the raw line too.
+- Shows everything live at **`/siem`** (nav → **SIEM**): a format filter, a stats strip, a live
+  receiver indicator (distinguishes "nothing arriving" from paused), and a click-through detail with
+  the parsed fields + raw line. Retains the newest ~2000 lines.
+- **Pause / Resume** stops/starts storing arrivals (the indicator keeps counting what reaches the
+  socket, so you can tell a firewall drop from a pause); **Send test log** injects a sample Check
+  Point CEF/JSON line so the viewer can be demoed before a gateway is pointed at it.
 
 ## Point Log Exporter here
 
 On the Management Server (`cp_log_export`):
 
 ```
-cp_log_export add name dcsim-siem \
+cp_log_export add name dcsim-siem-cef-udp \
   target-server <portal-host> target-port 5514 \
   protocol udp format cef
-cp_log_export restart name dcsim-siem
+cp_log_export restart name dcsim-siem-cef-udp
 ```
 
-`protocol tcp` and `format {syslog|leef|json}` work too. The exact command + host:port are shown on
-the `/siem` page.
+The export **name encodes the format + protocol** (`dcsim-siem-<format>-<protocol>`) so several
+exporters can target the portal at once without name collisions — the `/siem` page rewrites it live
+as you pick. `protocol tcp` and `format {syslog|leef|json|splunk|logrhythm|generic}` all work (the
+receiver auto-detects). The exact command + host:port are shown on the `/siem` page.
 
 ## Deployment
 

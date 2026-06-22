@@ -16,7 +16,7 @@ Like vCenter, the NSX-T **Hostname** field is a **bare host**, so the mock is se
 
 1. Portal → **Data Centers → New → NSX-T**. Add VMs and NS Groups; set credentials (NSX-T needs
    **Auditor**-or-higher). Save.
-2. SmartConsole → **New → More → Server → Data Center → NSX-T**.
+2. SmartConsole → **New → More → Cloud → Data Center → NSX-T**.
    - **Hostname:** the portal's bare host (e.g. `dcsim.ai.alshawwaf.ca`).
    - **Username / Password:** the credentials you set on the portal DC.
 3. **Test Connection** → **Select objects**.
@@ -28,10 +28,13 @@ cookie:
 
 - `POST /api/session/create` — form `j_username`/`j_password` → sets `JSESSIONID` + `X-XSRF-TOKEN`
   (403 on bad creds); `POST /api/session/destroy`
+- `GET /policy/api/v1/infra/domains` — domains
 - `GET /policy/api/v1/infra/domains/default/groups` — NS Groups
 - `GET /policy/api/v1/infra/domains/default/groups/{id}/members/virtual-machines` — group members
+- `GET /policy/api/v1/infra/domains/default/groups/{id}/members/ip-addresses` — group → member IPs (the call CloudGuard makes to resolve a group)
 - `GET /policy/api/v1/infra/realized-state/virtual-machines` — VMs (with tags, no IP)
-- `GET /api/v1/fabric/vifs` — VIFs (IP ↔ VM via `owner_vm_id`)
+- `GET /policy/api/v1/infra/realized-state/enforcement-points/default/vifs` — VIFs, **Policy-mode** path (IP ↔ VM via `owner_vm_id`)
+- `GET /api/v1/fabric/vifs` — VIFs, Manager-API alias (same data)
 - catch-all `GET /policy/api/v1/{path}` and `/api/v1/{path}` → empty `ListResult` (no 404-stall)
 
 Responses use the NSX-T `{"results": […], "result_count": N}` envelope; tags are `{scope, tag}`.

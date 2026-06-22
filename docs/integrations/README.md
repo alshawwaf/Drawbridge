@@ -1,10 +1,17 @@
 # Integrations
 
 Each integration makes the portal **act as the external system Check Point integrates with**, so a
-PoV can be demoed end-to-end without the real thing. Two interaction models:
+PoV can be demoed end-to-end without the real thing. Three interaction models:
 
 - **Pull** — Check Point polls/scans the portal: the **feeds** and the **datacenter** API mocks.
 - **Push** — the portal pushes to the gateway's Gaia API: **Dynamic Layers**.
+- **Manage** — the portal acts as a `web_api` / Gaia **client to a real R82.10 SMS or gateway** (read-only
+  except an explicit, dry-run-first apply): view + export policy as IaC
+  ([Management API export](management-export.md)), export a box's **Gaia OS** config
+  ([Gaia export](gaia-export.md)), and turn a ticket into a rule
+  ([Access Automation](access-automation.md)). Drive it from agents/HTTP clients via the
+  **[MCP server + REST API](../mcp-n8n.md)**; runtime config, secrets, and API keys live in
+  **[Settings](../settings.md)**.
 
 To *drive* the pull model live during a demo, see **[Scenarios](scenarios.md)** — mutate a DC's
 inventory (flip a tag, scale out, run a timed preset) and the next ~30s scan re-resolves policy.

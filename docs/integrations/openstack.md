@@ -15,7 +15,7 @@ OpenStack's **Hostname** field accepts a **full URL with a path**, so this mock 
 1. Portal → **Data Centers → New → OpenStack**. Add Instances (`name = ip | secgroup1, secgroup2`),
    Subnets (`name = cidr`), and any extra Security Groups. Set username / password / project. Save —
    the portal shows the Keystone URL to paste.
-2. SmartConsole → **New → More → Server → Data Center → OpenStack**.
+2. SmartConsole → **New → More → Cloud → Data Center → OpenStack**.
    - **Hostname / URL:** `https://<portal>/openstack/<token>/v3`
    - **Username / Password / Project (tenant):** the credentials you set on the portal DC.
 3. **Test Connection**, then **Select objects** — Projects → Instances / Security Groups / Subnets.

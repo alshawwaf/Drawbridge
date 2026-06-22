@@ -103,9 +103,19 @@ Traefik, so it doesn't need this.)
   it must match the public domain, or the URLs you hand out will be wrong.
 - The container runs uvicorn with `--proxy-headers`, so the **live poll log shows the real
   gateway IP** (from Traefik's `X-Forwarded-For`), not Traefik's address.
+- **Run a single uvicorn worker** — the `Dockerfile` already does; **do not add `--workers N`** (in a
+  Dokploy build/run override or a custom command). The SIEM syslog listener binds `DCSIM_SYSLOG_PORT`
+  *once per process* and the retention/housekeeping loop runs *per process*, so multiple workers would
+  fight over the port (only one binds — the rest log a bind warning and the SIEM demo silently breaks)
+  and run duplicate loops against the single SQLite file. One worker is correct here; scale by running
+  more instances behind the load balancer if ever needed, not more workers.
 - **`DCSIM_ENCRYPTION_KEY`** encrypts saved gateway and datacenter credentials at rest (AES-256-GCM).
   Optional — it falls back to `DCSIM_SESSION_SECRET`; set a dedicated key so rotating the session
   secret doesn't make stored credentials unreadable.
+- **Integration secrets are better set from the UI than baked into the deploy.** The MCP token,
+  ticketing webhook secret, and ServiceNow credentials can be set in **Settings** (encrypted at rest,
+  no redeploy) and take precedence over any `DCSIM_MCP_TOKEN` / `DCSIM_WEBHOOK_TOKEN` /
+  `DCSIM_SERVICENOW_*` env vars — those env vars are just fallbacks. See [docs/settings.md](docs/settings.md).
 - A Docker `HEALTHCHECK` hits `/healthz`, so Dokploy reports container health.
 
 ## Updating
