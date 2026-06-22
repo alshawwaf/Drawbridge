@@ -1,6 +1,6 @@
 """Build the public feed URL/path the SE pastes into SmartConsole."""
-from .config import get_settings
 from .models import Feed, FeedType
+from .services import app_settings
 
 _PATHS = {
     FeedType.generic_dc: "/gdc/{token}.json",
@@ -21,4 +21,4 @@ def public_path(feed: Feed) -> str:
 
 
 def public_url(feed: Feed) -> str:
-    return get_settings().base_url.rstrip("/") + public_path(feed)
+    return app_settings.base_url().rstrip("/") + public_path(feed)

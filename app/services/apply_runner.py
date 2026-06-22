@@ -14,7 +14,6 @@ import uuid
 import httpx
 from sqlalchemy import select
 
-from ..config import get_settings
 from ..db import SessionLocal
 from ..models import DynamicLayer, GatewayLayerSnapshot, LayerTask
 from ..schemas.dynamic_layer import (
@@ -22,6 +21,7 @@ from ..schemas.dynamic_layer import (
     evaluate_dynamic_content,
     referenced_object_names,
 )
+from . import app_settings
 from .activity import write_activity
 
 GAIA_VERSION = "v1.9"
@@ -141,7 +141,7 @@ def start_apply(*, layer_id: int, target: str, dry_run: bool, gateway_host: str 
 
 def _run_mock(pid, payload, dry_run):
     """In-process mock: step the stages and synthesize a realistic request/response trace."""
-    base = get_settings().base_url.rstrip("/") + f"/gaia_api/{GAIA_VERSION}"
+    base = app_settings.base_url().rstrip("/") + f"/gaia_api/{GAIA_VERSION}"
     trace = []
     _advance(pid, "connecting"); time.sleep(0.3)
     _advance(pid, "logging_in"); time.sleep(0.3)
@@ -369,7 +369,7 @@ def _layer_view(d: dict, queried_name: str = "") -> dict:
 
 def _fetch_mock(db, owner_id: int) -> dict:
     """The built-in mock gateway reflects the dynamic layers authored in the portal."""
-    base = get_settings().base_url.rstrip("/") + f"/gaia_api/{GAIA_VERSION}"
+    base = app_settings.base_url().rstrip("/") + f"/gaia_api/{GAIA_VERSION}"
     rows = db.scalars(
         select(DynamicLayer).where(DynamicLayer.owner_id == owner_id).order_by(DynamicLayer.name)
     ).all()

@@ -10,22 +10,35 @@ Stored in the ``AppState`` key/value table so a change from any worker/replica i
 in-process cache keeps these off the hot path (mirrors the SIEM pause toggle)."""
 from __future__ import annotations
 
+import logging
 import time
 from dataclasses import dataclass
 from typing import Union
 
 from ..db import SessionLocal
 from ..models import AppState
+from . import crypto
 
+_log = logging.getLogger("dcsim.settings")
 _PREFIX = "set:"            # AppState key namespace, so settings never collide with other state
 _CACHE_TTL = 2.0
 _cache: dict = {"at": -1e9, "vals": {}}
+
+# Secrets ("secret" kind) are stored ENCRYPTED at rest (AES-256-GCM, org policy) and never enter the
+# general value map / settings render path — they're read out-of-band via get_secret(). A short cache
+# keeps the auth hot-path (e.g. the MCP bearer check) off the DB without making rotation feel laggy.
+_SECRET_TTL = 5.0
+_secret_cache: dict = {}    # key -> (monotonic_at, plaintext)
+
+
+def _secret_info(key: str) -> bytes:
+    return b"dcsim-setting:" + key.encode()
 
 
 @dataclass(frozen=True)
 class Setting:
     key: str
-    kind: str                       # "bool" | "int" | "str"
+    kind: str                       # "bool" | "int" | "str" | "secret"
     default: Union[bool, int, str]
     label: str
     help: str
@@ -140,19 +153,81 @@ SETTINGS: list[Setting] = [
     # may actually PUBLISH a change to a live SMS. OFF (default): the agent can decide/preview/correlate
     # and even dry-run-apply (validate then discard), but apply_access(publish=true) is REFUSED — letting
     # an LLM commit to live policy is high-stakes, so it's an explicit admin opt-in.
+    Setting("mcp_token", "secret", "",
+            "MCP bearer token",
+            "The secret an MCP client sends as `Authorization: Bearer <token>` to reach /mcp. Setting it "
+            "here ENABLES the endpoint with no redeploy; clearing it falls back to the DCSIM_MCP_TOKEN env "
+            "var (so /mcp is disabled only when BOTH are unset). Stored encrypted at rest (AES-256-GCM). "
+            "Like the webhook token it can drive policy writes (when publish is on below), so use a long "
+            "random value and rotate it here whenever you need.",
+            group="MCP / agent"),
     Setting("mcp_allow_publish", "bool", False,
             "Let the MCP agent publish to live policy",
             "Allow an MCP/LLM agent (authenticated with the MCP token) to commit + publish rules to a live "
             "management server. Leave OFF unless you intend agentic changes to reach production — with it "
             "off, agents can still decide, preview, and dry-run (validate-and-discard).",
             group="MCP / agent"),
+
+    # --- Ticketing webhook ---------------------------------------------------------------------------
+    # The inbound POST /access-automation/webhook (ServiceNow / Jira / custom portal). Setting the token
+    # here ENABLES it with no redeploy; clearing it disables it. The token grants policy publish on every
+    # ALLOWED server, so it's stored encrypted and treated as top-tier.
+    Setting("webhook_token", "secret", "",
+            "Inbound webhook token (X-DCSim-Token)",
+            "Shared secret a ticketing system sends as the `X-DCSim-Token` header to POST an access "
+            "request. Setting it here enables POST /access-automation/webhook with no redeploy; clearing "
+            "it falls back to the DCSIM_WEBHOOK_TOKEN env var (the endpoint is disabled only when BOTH are "
+            "unset). Stored encrypted at rest.",
+            group="Ticketing webhook"),
+    Setting("webhook_server_ids", "str", "",
+            "Restrict the webhook to server ids",
+            "Comma-separated management-server ids the webhook may target (e.g. 1,3). LEAVE BLANK to allow "
+            "all allowed servers. A malformed value is rejected (the webhook fails closed — it never "
+            "silently widens to all). Falls back to DCSIM_WEBHOOK_SERVER_IDS when blank.",
+            group="Ticketing webhook", max=200),
+
+    # --- ServiceNow write-back -----------------------------------------------------------------------
+    # Optional built-in: PATCH the decision + rule UID into a ServiceNow incident's work notes via the
+    # Table API (TLS verification always on). The password is encrypted at rest; the rest are plain.
+    Setting("servicenow_instance", "str", "",
+            "ServiceNow instance URL",
+            "Base URL of your ServiceNow instance, e.g. https://dev12345.service-now.com. The write-back "
+            "is active only when instance + user + password are all set. Falls back to "
+            "DCSIM_SERVICENOW_INSTANCE when blank.",
+            group="ServiceNow write-back", max=200),
+    Setting("servicenow_user", "str", "",
+            "ServiceNow user",
+            "Table API username for the write-back. Falls back to DCSIM_SERVICENOW_USER when blank.",
+            group="ServiceNow write-back", max=100),
+    Setting("servicenow_password", "secret", "",
+            "ServiceNow password",
+            "Table API password for the write-back. Stored encrypted at rest. Falls back to "
+            "DCSIM_SERVICENOW_PASSWORD when empty.",
+            group="ServiceNow write-back"),
+    Setting("servicenow_table", "str", "",
+            "ServiceNow table",
+            "Table the decision is written to. Leave blank for 'incident'. Falls back to "
+            "DCSIM_SERVICENOW_TABLE when blank.",
+            group="ServiceNow write-back", max=60),
+
+    # --- Portal --------------------------------------------------------------------------------------
+    Setting("base_url", "str", "",
+            "Public base URL",
+            "The public URL this portal is reached at (e.g. https://dcsim.example.com), stamped into the "
+            "feed / GDC / Keystone / gaia_api URLs shown to the SE and the MCP/webhook endpoints on the "
+            "guide pages. Set it here to change the displayed URLs with no redeploy. Leave blank to use "
+            "DCSIM_BASE_URL (or http://localhost:8000 in dev). NOTE: the session-cookie 'Secure' flag is "
+            "still decided at startup from DCSIM_BASE_URL's scheme, so for HTTPS cookie hardening set the "
+            "env var too.",
+            group="Portal", max=200),
 ]
 
 _BY_KEY = {s.key: s for s in SETTINGS}
 
 
 def defaults() -> dict:
-    return {s.key: s.default for s in SETTINGS}
+    # Secrets are handled out-of-band (get_secret) and never enter the general value map / render path.
+    return {s.key: s.default for s in SETTINGS if s.kind != "secret"}
 
 
 def _coerce(s: Setting, raw):
@@ -182,14 +257,20 @@ def all_values(fresh: bool = False) -> dict:
     if not fresh and (now - _cache["at"]) <= _CACHE_TTL and _cache["vals"]:
         return dict(_cache["vals"])
     vals = defaults()
-    db = SessionLocal()
     try:
-        for s in SETTINGS:
-            row = db.get(AppState, _PREFIX + s.key)
-            if row is not None:
-                vals[s.key] = _coerce(s, row.value)
-    finally:
-        db.close()
+        db = SessionLocal()
+        try:
+            for s in SETTINGS:
+                if s.kind == "secret":        # never read/return a secret here (would leak into render)
+                    continue
+                row = db.get(AppState, _PREFIX + s.key)
+                if row is not None:
+                    vals[s.key] = _coerce(s, row.value)
+        finally:
+            db.close()
+    except Exception:  # noqa: BLE001 — a DB read failure degrades to defaults (callers add env fallback), never 500
+        _log.warning("app_settings.all_values: DB read failed; serving defaults")
+        return defaults()
     _cache.update(at=now, vals=vals)
     return dict(vals)
 
@@ -205,8 +286,8 @@ def save(values: dict) -> dict:
     db = SessionLocal()
     try:
         for s in SETTINGS:
-            if s.key not in values:
-                continue
+            if s.kind == "secret" or s.key not in values:
+                continue                      # secrets go through set_secret/clear_secret, never here
             text = _to_text(s, values[s.key])
             row = db.get(AppState, _PREFIX + s.key)
             if row is None:
@@ -218,3 +299,108 @@ def save(values: dict) -> dict:
         db.close()
     _cache["at"] = -1e9
     return all_values(fresh=True)
+
+
+# --- Secrets (encrypted at rest) ---------------------------------------------------------------------
+
+def secret_settings() -> list[Setting]:
+    return [s for s in SETTINGS if s.kind == "secret"]
+
+
+def secret_available() -> bool:
+    """True when secrets can actually be stored (AES-256 key material is configured). When False the UI
+    must tell the admin to set DCSIM_ENCRYPTION_KEY / DCSIM_SESSION_SECRET and fall back to env vars."""
+    return crypto.available()
+
+
+def get_secret(key: str) -> str:
+    """The decrypted plaintext of a stored secret, or "" if unset/undecryptable. Short-TTL cached so an
+    auth hot-path (the MCP bearer check) doesn't hit the DB per request, while rotation still lands fast."""
+    now = time.monotonic()
+    hit = _secret_cache.get(key)
+    if hit is not None and (now - hit[0]) <= _SECRET_TTL:
+        return hit[1]
+    plain = ""
+    try:
+        db = SessionLocal()
+        try:
+            row = db.get(AppState, _PREFIX + key)
+            if row is not None and row.value:
+                plain = crypto.decrypt(row.value, _secret_info(key)) or ""
+                if not plain:
+                    # a row exists but won't decrypt — wrong/rotated key, not "unset". Surface it (key
+                    # name only, never the value) so a key/session-secret change doesn't silently orphan
+                    # the secret and revert auth to the env fallback with no signal.
+                    _log.warning("app_settings.get_secret(%s): stored value did not decrypt "
+                                 "(encryption key changed?); falling back to env/disabled", key)
+        finally:
+            db.close()
+    except Exception:  # noqa: BLE001 — a DB hiccup on the auth path must fail safe (env fallback), not 500
+        _log.warning("app_settings.get_secret(%s): read failed; falling back to env/disabled", key)
+        return ""
+    _secret_cache[key] = (now, plain)
+    return plain
+
+
+def secret_is_set(key: str) -> bool:
+    """True when a usable (decryptable, non-empty) secret is stored for this key."""
+    return bool(get_secret(key))
+
+
+def secret_status() -> dict:
+    """{key: bool is_set} for every secret setting — for the UI status pills (never the value)."""
+    return {s.key: secret_is_set(s.key) for s in secret_settings()}
+
+
+def set_secret(key: str, plaintext: str) -> None:
+    """Encrypt + store a secret. Empty plaintext is a no-op (the UI submits blank to mean 'keep current').
+    Raises RuntimeError when encryption is unavailable — we never store a credential in cleartext."""
+    if not plaintext:
+        return
+    token = crypto.encrypt(plaintext, _secret_info(key))    # raises if crypto unavailable
+    db = SessionLocal()
+    try:
+        row = db.get(AppState, _PREFIX + key)
+        if row is None:
+            db.add(AppState(key=_PREFIX + key, value=token))
+        else:
+            row.value = token
+        db.commit()
+    finally:
+        db.close()
+    _secret_cache.pop(key, None)
+
+
+def clear_secret(key: str) -> None:
+    """Remove a stored secret (the endpoint/integration falls back to its env var, or off)."""
+    db = SessionLocal()
+    try:
+        row = db.get(AppState, _PREFIX + key)
+        if row is not None:
+            db.delete(row)
+            db.commit()
+    finally:
+        db.close()
+    _secret_cache.pop(key, None)
+
+
+# --- Runtime resolution with env fallback ------------------------------------------------------------
+# A portal Setting takes precedence; a matching DCSIM_ env var is the fallback (so existing env-based
+# deployments keep working and a value can be set/rotated from the UI without a redeploy).
+
+def get_or_env(key: str, env_value) -> str:
+    """A non-secret string setting if set, else the supplied env value (e.g. get_settings().webhook_server_ids)."""
+    v = get(key)
+    return v if v not in (None, "") else (env_value or "")
+
+
+def get_secret_or_env(key: str, env_value) -> str:
+    """A stored secret if set, else the supplied env value (the env var is the fallback)."""
+    return get_secret(key) or (env_value or "")
+
+
+def base_url() -> str:
+    """The portal's public base URL: the 'base_url' Setting if set, else DCSIM_BASE_URL (default
+    http://localhost:8000). Single resolution point for every emitted feed/endpoint URL."""
+    from ..config import get_settings
+    return get_or_env("base_url", get_settings().base_url) or "http://localhost:8000"

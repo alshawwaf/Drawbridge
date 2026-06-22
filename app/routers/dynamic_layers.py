@@ -7,7 +7,6 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Resp
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
-from ..config import get_settings
 from ..db import get_db
 from ..models import DynamicLayer, Gateway, LayerTask, User
 from ..schemas.dynamic_layer import (
@@ -21,7 +20,7 @@ from ..schemas.dynamic_layer import (
     validate_layer_content,
 )
 from ..security import get_user_or_none, new_feed_token
-from ..services import gateway_creds, table_prefs
+from ..services import app_settings, gateway_creds, table_prefs
 from ..services.apply_runner import STAGES, fetch_dynamic_content, get_progress, start_apply
 from ..services.gaia_client import ensure_pinned, fetch_gateway_cert
 from .ui import _flash, _pop_flash, templates
@@ -318,7 +317,7 @@ def layer_detail(layer_id: int, request: Request, db: Session = Depends(get_db))
         return RedirectResponse("/login", status_code=303)
     layer = _owned(db, layer_id, user)
     payload_json = json.dumps(build_set_dynamic_content(layer), indent=2)
-    base = get_settings().base_url.rstrip("/")
+    base = app_settings.base_url().rstrip("/")
     # Only the latest apply is shown inline (merged into the Rulebase card); the full history
     # lives on its own page (/layers/{id}/history), where records can be pruned.
     task_total = db.scalar(

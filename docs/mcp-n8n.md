@@ -11,18 +11,23 @@ unaffected.
 
 ## 1. Activate
 
+Install the MCP SDK once (it's mounted automatically when present), then set the token from the portal —
+no env edit, no redeploy:
+
 ```bash
-# 1) install the MCP SDK from your Check Point Artifactory (NOT plain PyPI)
-pip install mcp            # via your Artifactory-configured index
-
-# 2) set the bearer token that enables + protects /mcp (treat as a top-tier secret)
-export DCSIM_MCP_TOKEN="<a long random secret>"
-
-# 3) restart Drawbridge
+# one-time: install the MCP SDK from your Check Point Artifactory (NOT plain PyPI)
+pip install mcp            # via your Artifactory-configured index, then restart Drawbridge
 ```
 
-On restart, `/mcp` mounts inside the portal (Streamable-HTTP, stateless). With no token set, or the SDK
-absent, it stays unmounted.
+Then in the portal: **Settings → MCP / agent → "MCP bearer token"** → enter a long random secret → Save.
+That **enables** `/mcp` immediately (the token is stored encrypted at rest, AES-256-GCM). Rotate or clear
+it the same way at any time — the endpoint picks up the change per request, with no restart. The
+**MCP for agents** page (`/mcp-guide`) shows live status and a "set a bearer token in Settings" link.
+
+`/mcp` is **mounted whenever the SDK is installed**; while no token is configured it returns **503**
+(disabled). A `DCSIM_MCP_TOKEN` env var still works as a **fallback** for headless/automated deploys, but
+the portal Setting takes precedence. (Same pattern for the ticketing webhook token and the ServiceNow
+write-back credential — all set under **Settings**, all stored encrypted.)
 
 **Self-serve onboarding page:** the portal has a **MCP for agents** page at **`/mcp-guide`** (under
 *Layers & Gateways*) — live status pills (SDK installed / endpoint enabled / publish gate), a
@@ -65,8 +70,10 @@ whole dimension. Good for an agent to *understand* a policy before proposing a c
 
 ## 4. Safety model
 
-- **Auth:** every call requires `Authorization: Bearer <DCSIM_MCP_TOKEN>` (constant-time checked). No
-  token → 401; no token configured → endpoint not mounted at all.
+- **Auth:** every call requires `Authorization: Bearer <token>` (constant-time checked). The token is set
+  in **Settings → MCP / agent** (encrypted at rest), with `DCSIM_MCP_TOKEN` as fallback. No token
+  configured → **503** (disabled); wrong/missing token on a configured endpoint → **401**. A DB read
+  failure on the token fails **closed** (the endpoint stays disabled), never open.
 - **No accidental writes:** `decide_access` is read-only; `apply_access` with `publish=false` rehearses
   the change in a session and **discards** it (nothing committed).
 - **Publish is opt-in:** `apply_access(publish=true)` only commits when an admin enables **Settings →

@@ -92,7 +92,7 @@ def test_bearer_guard_rejects_without_token():
 
     async def inner(scope, receive, send):
         inner_called["hit"] = True
-    guard = mcp_server._BearerGuard(inner, "s3cret")
+    guard = mcp_server._BearerGuard(inner, lambda: "s3cret")    # token resolved per request (callable)
     status, body = _drive(guard, [(b"authorization", b"Bearer wrong")])
     assert status == 401 and b"Unauthorized" in body and inner_called["hit"] is False
     status2, _ = _drive(guard, [])                  # no header at all
@@ -106,17 +106,77 @@ def test_bearer_guard_allows_with_token():
         passed["hit"] = True
         await send({"type": "http.response.start", "status": 200, "headers": []})
         await send({"type": "http.response.body", "body": b"ok"})
-    guard = mcp_server._BearerGuard(inner, "s3cret")
+    guard = mcp_server._BearerGuard(inner, lambda: "s3cret")
     status, body = _drive(guard, [(b"authorization", b"Bearer s3cret")])
     assert status == 200 and body == b"ok" and passed["hit"] is True
 
 
-# --- build_mcp_app degrades when the SDK isn't installed ------------------------------------------
-def test_build_mcp_app_none_without_sdk_or_token():
-    # the SDK isn't installed in CI -> build returns None (the portal just doesn't mount /mcp)
-    if not mcp_server.have_mcp():
-        assert mcp_server.build_mcp_app("tok") is None
-    assert mcp_server.build_mcp_app("") is None      # no token -> never mount, regardless of SDK
+def test_bearer_guard_503_when_no_token_configured():
+    inner_called = {"hit": False}
+
+    async def inner(scope, receive, send):
+        inner_called["hit"] = True
+    guard = mcp_server._BearerGuard(inner, lambda: "")          # endpoint mounted but token not set
+    status, body = _drive(guard, [(b"authorization", b"Bearer anything")])
+    assert status == 503 and b"disabled" in body and inner_called["hit"] is False
+
+
+def test_bearer_guard_reflects_token_rotation_per_request():
+    # the same mounted guard picks up a rotated/cleared token with no remount
+    tok = {"v": "first"}
+
+    async def inner(scope, receive, send):
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"ok"})
+    guard = mcp_server._BearerGuard(inner, lambda: tok["v"])
+    assert _drive(guard, [(b"authorization", b"Bearer first")])[0] == 200
+    tok["v"] = "second"                                         # rotated in Settings
+    assert _drive(guard, [(b"authorization", b"Bearer first")])[0] == 401
+    assert _drive(guard, [(b"authorization", b"Bearer second")])[0] == 200
+    tok["v"] = ""                                              # cleared
+    assert _drive(guard, [(b"authorization", b"Bearer second")])[0] == 503
+
+
+# --- resolve_token precedence: Setting (encrypted) takes priority --------------------------------
+def test_resolve_token_prefers_setting(monkeypatch):
+    from app.services import app_settings
+    monkeypatch.setattr(app_settings, "get_secret", lambda k: "from-setting")
+    assert mcp_server.resolve_token() == "from-setting" and mcp_server.token_configured() is True
+    monkeypatch.setattr(app_settings, "get_secret", lambda k: "")     # unset -> falls back to env (str)
+    assert isinstance(mcp_server.resolve_token(), str)
+
+
+def test_resolve_token_strips_whitespace(monkeypatch):
+    from app.services import app_settings
+    monkeypatch.setattr(app_settings, "get_secret", lambda k: "  tok-with-newline\n")
+    assert mcp_server.resolve_token() == "tok-with-newline"     # copy-paste artifact stripped
+
+
+def test_bearer_guard_rejects_websocket_scope():
+    forwarded = {"hit": False}
+
+    async def inner(scope, receive, send):
+        forwarded["hit"] = True
+    guard = mcp_server._BearerGuard(inner, lambda: "s3cret")
+    sent = []
+
+    async def send(msg):
+        sent.append(msg)
+
+    async def receive():
+        return {"type": "websocket.connect"}
+    asyncio.run(guard({"type": "websocket"}, receive, send))
+    assert forwarded["hit"] is False                            # never reaches the inner app unauth'd
+    assert any(m.get("type") == "websocket.close" for m in sent)
+
+
+# --- build_mcp_app: mounts whenever the SDK is present (token resolved per request) --------------
+def test_build_mcp_app_mounts_when_sdk_present():
+    built = mcp_server.build_mcp_app(lambda: "tok")
+    if mcp_server.have_mcp():
+        assert built is not None                     # mounted regardless of token; guard gates per request
+    else:
+        assert built is None                         # SDK absent -> not mounted
     assert set(mcp_server._TOOLS) <= set(dir(mcp_tools))   # every advertised tool exists
 
 

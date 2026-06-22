@@ -27,6 +27,8 @@ def settings_page(request: Request, db: Session = Depends(get_db)):
         return RedirectResponse("/login", status_code=303)
     return templates.TemplateResponse(request, "settings.html",
                                       {"groups": _grouped(), "vals": app_settings.all_values(fresh=True),
+                                       "secrets": app_settings.secret_status(),       # {key: is_set} — never the value
+                                       "crypto_ok": app_settings.secret_available(),
                                        "flash": _pop_flash(request)})
 
 
@@ -38,12 +40,30 @@ async def settings_save(request: Request, db: Session = Depends(get_db)):
     form = await request.form()
     new: dict = {}
     for s in app_settings.SETTINGS:
+        if s.kind == "secret":
+            continue                            # secrets handled write-only below, never echoed/round-tripped
         if s.kind == "bool":
             new[s.key] = s.key in form          # an unchecked checkbox is simply absent from the form
         elif s.key in form:
             new[s.key] = form[s.key]            # validated + clamped in app_settings.save()
     app_settings.save(new)
-    _flash(request, "Settings saved — they take effect immediately.")
+
+    # Secrets are write-only: a blank field means "keep current"; a "<key>__clear" checkbox removes it;
+    # a non-empty value sets/rotates it (encrypted at rest). Refuse cleartext storage if crypto is off.
+    secret_err = None
+    for s in app_settings.secret_settings():
+        if form.get(s.key + "__clear"):
+            app_settings.clear_secret(s.key)
+            continue
+        value = (form.get(s.key) or "").strip()
+        if value:
+            try:
+                app_settings.set_secret(s.key, value)
+            except RuntimeError:
+                secret_err = ("Can't store secrets: at-rest encryption is unavailable. Set "
+                              "DCSIM_ENCRYPTION_KEY (or DCSIM_SESSION_SECRET) and restart, or keep using "
+                              "the DCSIM_* env vars.")
+    _flash(request, secret_err or "Settings saved — they take effect immediately.")
     return RedirectResponse("/settings", status_code=303)
 
 
