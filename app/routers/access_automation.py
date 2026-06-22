@@ -22,7 +22,7 @@ from ..db import get_db
 from ..models import ManagementServer, User
 from ..security import get_user_or_none
 from ..services import access_automation as aa
-from ..services import mgmt_creds, ticketing
+from ..services import mgmt_creds, table_prefs, ticketing
 from ..services.gaia_client import ensure_pinned
 from .ui import _pop_flash, templates
 
@@ -73,7 +73,9 @@ def aa_list(request: Request, db: Session = Depends(get_db)):
     ).all()
     rows = [{"ms": m, "has_secret": mgmt_creds.has_secret(db, m)} for m in servers]
     return templates.TemplateResponse(request, "access_automation_list.html",
-                                      {"rows": rows, "flash": _pop_flash(request)})
+                                      {"rows": rows, "flash": _pop_flash(request),
+                                       "cols": table_prefs.spec("access-servers"),
+                                       "vis": table_prefs.visible_columns(db, user.id, "access-servers")})
 
 
 @router.get("/access-automation/{sid}", response_class=HTMLResponse)

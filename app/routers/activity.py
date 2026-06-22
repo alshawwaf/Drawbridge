@@ -2,7 +2,7 @@
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, Form, Query, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from sqlalchemy import and_, case, delete, func, or_, select
 from sqlalchemy.orm import Session
 
@@ -180,14 +180,18 @@ def activity_detail(log_id: int, request: Request, db: Session = Depends(get_db)
 def activity_delete(request: Request, ids: list[int] = Form(default=[]),
                     kinds: list[str] = Form(default=[]), page_size: int = Form(DEFAULT_PAGE_SIZE),
                     q: str = Form(""), dc: list[str] = Form(default=[]),
-                    status: list[str] = Form(default=[]), db: Session = Depends(get_db)):
-    """Delete the selected record(s) — one or many."""
+                    status: list[str] = Form(default=[]), ajax: str = Form(""),
+                    db: Session = Depends(get_db)):
+    """Delete the selected record(s) — one or many. ``ajax`` is set by the per-row hover delete, which
+    deletes one record in place and reloads the rows itself (no flash, no full-page redirect)."""
     if get_user_or_none(request, db) is None:
-        return RedirectResponse("/login", status_code=303)
+        return Response(status_code=401) if ajax else RedirectResponse("/login", status_code=303)
     n = 0
     if ids:
         n = db.execute(delete(ActivityLog).where(ActivityLog.id.in_(ids))).rowcount or 0
         db.commit()
+    if ajax:
+        return Response(status_code=204)
     _flash(request, f"Deleted {n} log entr{'y' if n == 1 else 'ies'}." if n else "No records selected.",
            "success" if n else "error")
     return RedirectResponse(_activity_url(kinds, page_size, q, dc, status), status_code=303)

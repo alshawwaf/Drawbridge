@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Access automation{% endblock %}
 {% block content %}
-{% from "_macros.html" import row_actions %}
+{% from "_macros.html" import row_actions, columns_menu %}
 <div class="page-head">
   <span class="icon-chip lg"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></span>
   <div class="ph-main">
@@ -22,14 +22,14 @@
 <div class="card" style="padding:6px 6px 2px;">
 <div class="tablewrap">
 <table data-paginate="10">
-  <thead><tr><th>Name</th><th class="nowrap">Address</th><th class="nowrap">Domain</th><th class="nowrap">Secret</th><th></th></tr></thead>
+  <thead><tr><th>Name</th>{% if 'address' in vis %}<th class="nowrap">Address</th>{% endif %}{% if 'domain' in vis %}<th class="nowrap">Domain</th>{% endif %}{% if 'secret' in vis %}<th class="nowrap">Secret</th>{% endif %}<th style="text-align:right; padding-top:6px; padding-bottom:6px;">{{ columns_menu('access-servers', cols, vis, '/access-automation', compact=true) }}</th></tr></thead>
   <tbody>
   {% for r in rows %}
     <tr>
       <td><a class="feedname cellclip" href="/access-automation/{{ r.ms.id }}" title="{{ r.ms.name }}">{{ r.ms.name }}</a></td>
-      <td><code class="cellclip mono" title="{{ r.ms.host }}:{{ r.ms.port }}">{{ r.ms.host }}:{{ r.ms.port }}</code></td>
-      <td class="nowrap">{{ r.ms.domain or '—' }}</td>
-      <td class="nowrap">{% if r.has_secret %}<span class="pill ok">saved</span>{% else %}<span class="pill faint">none</span>{% endif %}</td>
+      {% if 'address' in vis %}<td><code class="cellclip mono" title="{{ r.ms.host }}:{{ r.ms.port }}">{{ r.ms.host }}:{{ r.ms.port }}</code></td>{% endif %}
+      {% if 'domain' in vis %}<td class="nowrap">{{ r.ms.domain or '—' }}</td>{% endif %}
+      {% if 'secret' in vis %}<td class="nowrap">{% if r.has_secret %}<span class="pill ok">saved</span>{% else %}<span class="pill faint">none</span>{% endif %}</td>{% endif %}
       {{ row_actions(links=[{'label':'Request access','url':'/access-automation/' ~ r.ms.id}]) }}
     </tr>
   {% endfor %}

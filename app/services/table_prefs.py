@@ -29,6 +29,48 @@ TABLE_SPECS: dict[str, list[Col]] = {
         Col("inventory", "Inventory"),
         Col("created", "Created", default=False),
     ],
+    # All currently-shown columns stay default-on (the view doesn't change); "created" is a new opt-in.
+    "feeds": [
+        Col("name", "Name", locked=True),
+        Col("type", "Type"),
+        Col("items", "Items"),
+        Col("interval", "Interval"),
+        Col("auth", "Auth"),
+        Col("url", "Feed URL"),
+        Col("created", "Created", default=False),
+    ],
+    "gateways": [
+        Col("name", "Name", locked=True),
+        Col("address", "Address"),
+        Col("tls", "TLS"),
+        Col("layers", "Layers"),
+        Col("username", "Username"),
+        Col("created", "Created", default=False),
+    ],
+    "management": [
+        Col("name", "Name", locked=True),
+        Col("address", "Address"),
+        Col("domain", "Domain"),
+        Col("username", "Username"),
+        Col("tls", "TLS"),
+        Col("secret", "Secret"),
+        Col("created", "Created", default=False),
+    ],
+    "layers": [
+        Col("name", "Name", locked=True),
+        Col("gateway", "Gateway"),
+        Col("gwlayer", "Gateway layer"),
+        Col("objects", "Objects"),
+        Col("rules", "Rules"),
+        Col("lastapply", "Last apply"),
+        Col("created", "Created", default=False),
+    ],
+    "access-servers": [
+        Col("name", "Name", locked=True),
+        Col("address", "Address"),
+        Col("domain", "Domain"),
+        Col("secret", "Secret"),
+    ],
 }
 
 

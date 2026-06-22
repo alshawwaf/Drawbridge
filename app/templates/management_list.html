@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Management Servers{% endblock %}
 {% block content %}
-{% from "_macros.html" import row_actions %}
+{% from "_macros.html" import row_actions, columns_menu %}
 <div class="page-head">
   <span class="icon-chip lg"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 5v14c0 1.66-4 3-9 3s-9-1.34-9-3V5"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/></svg></span>
   <div class="ph-main">
@@ -22,16 +22,17 @@
 <div class="card" style="padding:6px 6px 2px;">
 <div class="tablewrap">
 <table data-paginate="10">
-  <thead><tr><th>Name</th><th class="nowrap">Address</th><th class="nowrap">Domain</th><th class="nowrap">Username</th><th class="nowrap">TLS</th><th class="nowrap">Secret</th><th></th></tr></thead>
+  <thead><tr><th>Name</th>{% if 'address' in vis %}<th class="nowrap">Address</th>{% endif %}{% if 'domain' in vis %}<th class="nowrap">Domain</th>{% endif %}{% if 'username' in vis %}<th class="nowrap">Username</th>{% endif %}{% if 'tls' in vis %}<th class="nowrap">TLS</th>{% endif %}{% if 'secret' in vis %}<th class="nowrap">Secret</th>{% endif %}{% if 'created' in vis %}<th class="nowrap">Created</th>{% endif %}<th style="text-align:right; padding-top:6px; padding-bottom:6px;">{{ columns_menu('management', cols, vis, '/management', compact=true) }}</th></tr></thead>
   <tbody>
   {% for r in rows %}
     <tr>
       <td><a class="feedname cellclip" href="/management/{{ r.ms.id }}" title="{{ r.ms.name }}">{{ r.ms.name }}</a></td>
-      <td><code class="cellclip mono" title="{{ r.ms.host }}:{{ r.ms.port }}">{{ r.ms.host }}:{{ r.ms.port }}</code></td>
-      <td class="nowrap">{{ r.ms.domain or '—' }}</td>
-      <td class="nowrap">{{ r.ms.username or '—' }}</td>
-      <td class="nowrap">{% if r.ms.cert_pem %}<span class="pill ok">pinned cert</span>{% elif r.ms.auto_trust %}<span class="pill faint">auto-trust</span>{% else %}<span class="pill faint">system trust</span>{% endif %}</td>
-      <td class="nowrap">{% if r.has_secret %}<span class="pill ok">saved</span>{% else %}<span class="pill faint">none</span>{% endif %}</td>
+      {% if 'address' in vis %}<td><code class="cellclip mono" title="{{ r.ms.host }}:{{ r.ms.port }}">{{ r.ms.host }}:{{ r.ms.port }}</code></td>{% endif %}
+      {% if 'domain' in vis %}<td class="nowrap">{{ r.ms.domain or '—' }}</td>{% endif %}
+      {% if 'username' in vis %}<td class="nowrap">{{ r.ms.username or '—' }}</td>{% endif %}
+      {% if 'tls' in vis %}<td class="nowrap">{% if r.ms.cert_pem %}<span class="pill ok">pinned cert</span>{% elif r.ms.auto_trust %}<span class="pill faint">auto-trust</span>{% else %}<span class="pill faint">system trust</span>{% endif %}</td>{% endif %}
+      {% if 'secret' in vis %}<td class="nowrap">{% if r.has_secret %}<span class="pill ok">saved</span>{% else %}<span class="pill faint">none</span>{% endif %}</td>{% endif %}
+      {% if 'created' in vis %}<td class="nowrap"><time class="ts mono" data-ts="{{ r.ms.created_at.isoformat() }}">{{ r.ms.created_at.strftime('%Y-%m-%d') }}</time></td>{% endif %}
       {{ row_actions(
            links=[{'label':'Edit','url':'/management/' ~ r.ms.id ~ '/edit'}],
            menu=[{'label':'Test connection','attrs':'data-test="/management/'|safe ~ r.ms.id ~ '/test" data-name="'|safe ~ (r.ms.name | e) ~ '"'|safe}],

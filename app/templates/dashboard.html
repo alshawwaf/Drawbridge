@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Dashboard{% endblock %}
 {% block content %}
-{% from "_macros.html" import row_actions %}
+{% from "_macros.html" import row_actions, columns_menu %}
 <div class="page-head">
   <span class="icon-chip lg"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11a9 9 0 0 1 9 9"/><path d="M4 4a16 16 0 0 1 16 16"/><circle cx="5" cy="19" r="1"/></svg></span>
   <div class="ph-main">
@@ -59,25 +59,26 @@
 <div class="tablewrap">
 <table id="feedtable" data-paginate="10">
   <thead><tr>
-    <th>Name</th><th>Type</th><th class="nowrap num">Items</th><th class="nowrap num">Interval</th><th>Auth</th><th>Feed URL</th><th></th>
+    <th>Name</th>{% if 'type' in vis %}<th>Type</th>{% endif %}{% if 'items' in vis %}<th class="nowrap num">Items</th>{% endif %}{% if 'interval' in vis %}<th class="nowrap num">Interval</th>{% endif %}{% if 'auth' in vis %}<th>Auth</th>{% endif %}{% if 'url' in vis %}<th>Feed URL</th>{% endif %}{% if 'created' in vis %}<th class="nowrap">Created</th>{% endif %}<th style="text-align:right; padding-top:6px; padding-bottom:6px;">{{ columns_menu('feeds', cols, vis, '/feeds', compact=true) }}</th>
   </tr></thead>
   <tbody>
   {% for r in rows %}
     <tr data-feedtype="{{ r.feed.type.value }}">
       <td><a class="feedname" href="/feeds/{{ r.feed.id }}">{{ r.feed.name }}</a></td>
-      <td>
+      {% if 'type' in vis %}<td>
         <span class="pill">{{ r.feed.type.value }}</span>
         {% if r.selections %}<div class="subsel">{{ r.selections }}</div>{% endif %}
-      </td>
-      <td class="nowrap num">{{ r.count }}</td>
-      <td class="nowrap num">{{ r.feed.interval_seconds }}s</td>
-      <td>{% if r.feed.auth_header_key %}<span class="pill">{{ 'header' if r.feed.type.value == 'generic_dc' else 'basic' }}</span>{% else %}<span class="pill faint">open</span>{% endif %}</td>
-      <td>
+      </td>{% endif %}
+      {% if 'items' in vis %}<td class="nowrap num">{{ r.count }}</td>{% endif %}
+      {% if 'interval' in vis %}<td class="nowrap num">{{ r.feed.interval_seconds }}s</td>{% endif %}
+      {% if 'auth' in vis %}<td>{% if r.feed.auth_header_key %}<span class="pill">{{ 'header' if r.feed.type.value == 'generic_dc' else 'basic' }}</span>{% else %}<span class="pill faint">open</span>{% endif %}</td>{% endif %}
+      {% if 'url' in vis %}<td>
         <div class="urlcell">
           <span class="urltext mono" title="{{ r.url }}">{{ r.url }}</span>
           <button class="copybtn" type="button" data-copy="{{ r.url }}">Copy</button>
         </div>
-      </td>
+      </td>{% endif %}
+      {% if 'created' in vis %}<td class="nowrap"><time class="ts mono" data-ts="{{ r.feed.created_at.isoformat() }}">{{ r.feed.created_at.strftime('%Y-%m-%d') }}</time></td>{% endif %}
       {{ row_actions(links=[{'label':'Edit','url':'/feeds/' ~ r.feed.id ~ '/edit'}], delete={'url':'/feeds/' ~ r.feed.id ~ '/delete', 'name': r.feed.name}) }}
     </tr>
   {% endfor %}
