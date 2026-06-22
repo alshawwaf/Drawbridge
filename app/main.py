@@ -132,6 +132,16 @@ def create_app() -> FastAPI:
     app.include_router(notifications.router)
     app.include_router(exports.router)
 
+    # MCP server for n8n / LLM agents — mounted at /mcp only when the SDK is installed (Artifactory) AND
+    # DCSIM_MCP_TOKEN is set. Otherwise it's silently absent; the rest of the portal is unaffected.
+    try:
+        from . import mcp_server
+        mcp_app = mcp_server.build_mcp_app(settings.mcp_token)
+        if mcp_app is not None:
+            app.mount("/mcp", mcp_app)
+    except Exception:  # noqa: BLE001 — never let the optional MCP mount break app startup
+        pass
+
     @app.get("/healthz", include_in_schema=False)
     def healthz() -> dict:
         return {"status": "ok"}

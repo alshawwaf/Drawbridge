@@ -134,6 +134,18 @@ SETTINGS: list[Setting] = [
             "data/content, install-on) as if that condition weren't there — so a conditional Accept can "
             "count as covering and a conditional Drop as blocking, instead of routing to review.",
             group="Access automation"),
+
+    # --- MCP / agent ---------------------------------------------------------------------------------
+    # The /mcp endpoint (for n8n / LLM agents) is enabled by DCSIM_MCP_TOKEN. This gates whether an agent
+    # may actually PUBLISH a change to a live SMS. OFF (default): the agent can decide/preview/correlate
+    # and even dry-run-apply (validate then discard), but apply_access(publish=true) is REFUSED — letting
+    # an LLM commit to live policy is high-stakes, so it's an explicit admin opt-in.
+    Setting("mcp_allow_publish", "bool", False,
+            "Let the MCP agent publish to live policy",
+            "Allow an MCP/LLM agent (authenticated with the MCP token) to commit + publish rules to a live "
+            "management server. Leave OFF unless you intend agentic changes to reach production — with it "
+            "off, agents can still decide, preview, and dry-run (validate-and-discard).",
+            group="MCP / agent"),
 ]
 
 _BY_KEY = {s.key: s for s in SETTINGS}
