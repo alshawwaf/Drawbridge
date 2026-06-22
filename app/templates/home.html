@@ -12,7 +12,9 @@
   .hero .sub { color:var(--muted); font-size:14px; max-width:560px; }
   .hero-actions { margin-top:18px; display:flex; gap:10px; flex-wrap:wrap; }
   .hero-stats { display:flex; gap:26px; margin-top:22px; flex-wrap:wrap; }
-  .hstat .n { font-size:24px; font-weight:800; line-height:1; color:var(--text); }
+  .hstat .n { font-size:24px; font-weight:800; line-height:1;
+    background:var(--accent-grad); -webkit-background-clip:text; background-clip:text;
+    -webkit-text-fill-color:transparent; color:transparent; }
   .hstat .l { display:block; margin-top:5px; font-size:11px; font-weight:700; letter-spacing:.4px;
     text-transform:uppercase; color:var(--faint); }
 
@@ -26,10 +28,12 @@
   a.hcard:hover { transform:translateY(-3px); border-color:var(--accent); box-shadow:var(--shadow-lg); }
   .hcard-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:13px; }
   .hcard-ic { display:inline-flex; align-items:center; justify-content:center; width:44px; height:44px;
-    border-radius:13px; background:var(--accent-soft); color:var(--accent);
-    transition:background .14s ease, color .14s ease; }
-  a.hcard:hover .hcard-ic { background:linear-gradient(135deg, var(--accent), #7c3aed); color:#fff; }
-  .hcard-count { font-size:22px; font-weight:800; color:var(--text); line-height:1; }
+    border-radius:13px; background:var(--accent-grad); color:#fff;
+    box-shadow:0 3px 12px rgba(123,63,242,.22); transition:transform .14s ease, box-shadow .14s ease; }
+  a.hcard:hover .hcard-ic { transform:scale(1.06); box-shadow:0 6px 18px rgba(123,63,242,.36); }
+  .hcard-count { font-size:22px; font-weight:800; line-height:1;
+    background:var(--accent-grad); -webkit-background-clip:text; background-clip:text;
+    -webkit-text-fill-color:transparent; color:transparent; }
   .hcard-go { color:var(--faint); font-size:17px; transition:transform .14s ease, color .14s ease; }
   a.hcard:hover .hcard-go { color:var(--accent); transform:translateX(3px); }
   .hcard-title { font-size:15.5px; font-weight:700; color:var(--text); }

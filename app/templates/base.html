@@ -170,9 +170,21 @@
       color:var(--faint); margin:24px 2px 13px; }
     /* Gradient stat tiles for list/overview headers */
     .statrow { display:flex; gap:28px; flex-wrap:wrap; }
-    .stat .n { font-size:22px; font-weight:800; line-height:1; color:var(--text); }
+    /* Gradient-filled numerals — the signature accent on key metrics. */
+    .gnum, .stat .n { background:var(--accent-grad); -webkit-background-clip:text; background-clip:text;
+      -webkit-text-fill-color:transparent; color:transparent; }
+    .stat .n { font-size:22px; font-weight:800; line-height:1; }
     .stat .l { display:block; margin-top:5px; font-size:10.5px; font-weight:700; letter-spacing:.4px;
       text-transform:uppercase; color:var(--faint); }
+
+    /* Empty state — a centred block with a gradient icon chip + a primary CTA (see empty_state macro). */
+    .empty-state { display:flex; flex-direction:column; align-items:center; text-align:center; gap:11px;
+      padding:46px 24px 40px; }
+    .empty-state .empty-ic { width:56px; height:56px; border-radius:16px; }
+    .empty-state .empty-ic svg { width:27px; height:27px; }
+    .empty-state .empty-title { margin:3px 0 0; font-size:17px; font-weight:740; color:var(--text); }
+    .empty-state .empty-hint { margin:0; max-width:440px; color:var(--muted); font-size:13.5px; line-height:1.55; }
+    .empty-state .btn { margin-top:6px; }
 
     /* ============================ Table ============================ */
     .tablewrap { overflow-x:auto; }
@@ -357,12 +369,17 @@
     #form-modal .fm-body hr { border:none; border-top:1px solid var(--line); margin:16px 0; }
 
     /* ============================ Toast ============================ */
-    .toast { position:fixed; bottom:22px; right:22px; background:var(--surface-2); color:var(--text);
-      border:1px solid var(--line); border-left:3px solid var(--accent); padding:14px 18px; border-radius:11px;
-      box-shadow:var(--shadow-lg); z-index:1100; font-size:14px; max-width:380px; pointer-events:none;
-      transition:opacity .35s, transform .35s; animation:pop .2s ease; }
-    .toast.error { border-left-color:var(--danger); }
-    .toast.hide { opacity:0; transform:translateY(10px); }
+    .toast { position:fixed; bottom:22px; right:22px; background:var(--surface); color:var(--text);
+      border:1px solid var(--line); padding:14px 18px 15px 20px; border-radius:12px; overflow:hidden;
+      box-shadow:var(--shadow-lg); z-index:1100; font-size:14px; max-width:400px; pointer-events:none;
+      transition:opacity .35s, transform .35s; animation:toast-in .32s cubic-bezier(.2,.8,.2,1); }
+    .toast::before { content:""; position:absolute; left:0; top:0; bottom:0; width:4px; background:var(--accent-grad); }
+    .toast::after { content:""; position:absolute; left:0; bottom:0; height:3px; width:100%;
+      background:var(--accent-grad); transform-origin:left; animation:toast-bar 3.5s linear forwards; }
+    .toast.error::before, .toast.error::after { background:var(--danger); }
+    .toast.hide { opacity:0; transform:translateX(24px); }
+    @keyframes toast-in { from { opacity:0; transform:translateX(26px); } to { opacity:1; transform:translateX(0); } }
+    @keyframes toast-bar { from { transform:scaleX(1); } to { transform:scaleX(0); } }
 
     /* ============================ Builder rows ============================ */
     .itemrow { display:flex; align-items:center; gap:8px; padding:10px 2px; border-bottom:1px solid var(--line-soft); font-size:13px; flex-wrap:wrap; }

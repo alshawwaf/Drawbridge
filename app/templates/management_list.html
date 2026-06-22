@@ -2,7 +2,7 @@
 {% from "_macros.html" import export_menu %}
 {% block title %}Management Servers{% endblock %}
 {% block content %}
-{% from "_macros.html" import row_actions, columns_menu %}
+{% from "_macros.html" import row_actions, columns_menu, empty_state %}
 <div class="page-head">
   <span class="icon-chip lg"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 5v14c0 1.66-4 3-9 3s-9-1.34-9-3V5"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/></svg></span>
   <div class="ph-main">
@@ -16,7 +16,9 @@
 </div>
 
 {% if not rows %}
-<div class="card"><p class="muted">No management servers yet. Add one to pull a layer's rulebase and objects, then view/edit or export them as Terraform/Ansible.</p></div>
+<div class="card">{{ empty_state('No management servers yet',
+   "Add one to pull a layer's rulebase + objects, then view, edit or export them as Terraform / Ansible.",
+   '+ New management server', '/management/new', 'New management server') }}</div>
 {% else %}
 <div class="card" style="padding:6px 6px 2px;">
 <div class="tablewrap">
