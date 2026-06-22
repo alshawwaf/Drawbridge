@@ -73,10 +73,10 @@ PALETTE: dict[str, tuple[str, str, str]] = {
     "start":    ("#f3f6fb", "#cdd7e6", "#334155"),
     "process":  ("#eef2f9", "#cdd7e6", "#334155"),
     "decision": ("#e7eef7", "#9aa8be", "#1e293b"),
-    "review":   ("#ffe1e6", "#f43f5e", "#9f1239"),
-    "noop":     ("#d6f5e3", "#10b981", "#065f46"),
-    "widen":    ("#dbeafe", "#3b82f6", "#1e40af"),
-    "create":   ("#fdeecb", "#f59e0b", "#92400e"),
+    "review":   ("#fde7e7", "#e5484d", "#b01e22"),   # clean crimson
+    "noop":     ("#dcf3e4", "#16a34a", "#0c6b34"),   # green
+    "widen":    ("#dceffb", "#0ea5e9", "#0b6a96"),   # sky
+    "create":   ("#fbeecb", "#f59e0b", "#92610a"),   # amber
 }
 
 # DARK palette — for the on-page render on the portal's dark canvas: nodes sit IN the dark (deep tinted
@@ -85,10 +85,10 @@ PALETTE_DARK: dict[str, tuple[str, str, str]] = {
     "start":    ("#1b2536", "#33415c", "#cdd9ea"),
     "process":  ("#1b2536", "#33415c", "#cdd9ea"),
     "decision": ("#212e46", "#3f5170", "#dbe6f5"),
-    "review":   ("#3a1b25", "#fb7185", "#fecdd3"),
-    "noop":     ("#0e2c22", "#34d399", "#a7f3d0"),
-    "widen":    ("#15233f", "#60a5fa", "#bfdbfe"),
-    "create":   ("#33270f", "#fbbf24", "#fde3a7"),
+    "review":   ("#3a1a1d", "#ef5d62", "#ffc7c5"),   # crimson (brighter border for dark)
+    "noop":     ("#11302a", "#22c55e", "#a9efca"),   # green
+    "widen":    ("#0f2738", "#38bdf8", "#bce3f7"),   # sky
+    "create":   ("#33270f", "#fbbf24", "#f7d99a"),   # amber
 }
 
 # Per-theme Mermaid look (fed via the %%{init}%% directive baked into the source, so the downloaded
