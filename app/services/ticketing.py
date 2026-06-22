@@ -63,30 +63,34 @@ def _validate_port(port) -> str:
     """One service per request: a single numeric port, or a single lo-hi range. Rejects comma lists,
     named services and out-of-range values up front so the request never reaches the engine malformed
     (a bad port here becomes a clean 400, not an HTTP 500 deep in resolve_service)."""
-    port = str(port or "").strip()
+    port = str(port if port is not None else "").strip()   # don't let integer 0 be swallowed by truthiness
     if not port:
         raise ValueError("port is required.")
     if "," in port:
         raise ValueError("port must be a single value or a single lo-hi range, not a comma list.")
-    parts = port.split("-")
+    parts = [p.strip() for p in port.split("-")]
     if len(parts) > 2:
         raise ValueError("port range must be 'lo-hi'.")
-    try:
-        nums = [int(p) for p in parts]
-    except ValueError:
+    # Each part must be a CLEAN ascii-digit literal — reject '+443', ' 443 ', unicode digits, etc., which
+    # int() would accept but the Check Point API rejects (the very 500 this guard exists to prevent).
+    if not all(p.isascii() and p.isdigit() for p in parts):
         raise ValueError(f"port must be numeric (got {port!r}).")
-    if any(n < 0 or n > 65535 for n in nums):
-        raise ValueError("port must be between 0 and 65535.")
+    nums = [int(p) for p in parts]
+    if any(n < 1 or n > 65535 for n in nums):       # 0 is not a usable destination port
+        raise ValueError("port must be between 1 and 65535.")
     if len(nums) == 2 and nums[0] > nums[1]:
         raise ValueError("port range must have lo <= hi.")
-    return port
+    return str(nums[0]) if len(nums) == 1 else f"{nums[0]}-{nums[1]}"   # canonical form for apply + reuse
 
 
 def _norm_endpoint(value) -> str:
-    """A request endpoint is an IP / CIDR, or the literal Any (also accepts *, all, 0.0.0.0/0, ::/0)
-    which maps to Check Point's predefined Any object."""
+    """A request endpoint is an IP / CIDR, or a family-agnostic literal Any (any / all / *) which maps to
+    Check Point's predefined Any object (covers v4 AND v6). NOTE: 0.0.0.0/0 and ::/0 are NOT treated as
+    Any — they are real, single-family networks (all-v4 / all-v6 respectively), so they resolve into one
+    band only and materialise a family-correct network object; collapsing them to predefined Any would
+    silently grant the OTHER family on apply."""
     v = str(value).strip()
-    if v.lower() in ("any", "all", "*", "0.0.0.0/0", "::/0"):
+    if v.lower() in ("any", "all", "*"):
         return "Any"
     return _norm_cidr(v)
 

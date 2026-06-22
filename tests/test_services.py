@@ -80,3 +80,27 @@ def test_kind_is_part_of_the_cache_key():
     s = _Sess(objs)
     assert len(sv.search(s, "ec", kind="icmp")) == 1          # icmp only
     assert "GRE" in {c["name"] for c in sv.search(s, "ec", kind="")}   # different key -> not the cached icmp result
+
+
+def test_resolve_truncation_derived_from_server_total_not_post_filter():
+    # server returns few service objects but reports a larger total (more hidden past the page) ->
+    # truncated, so a wrong/ambiguous name is NEVER auto-matched (audit finding #8)
+    sv._cache.clear()
+    class _S:
+        def __init__(self): self.server = types.SimpleNamespace(host="h", port=443, domain="")
+        def call(self, cmd, payload=None):
+            return {"objects": [_svc("echo-request", typ="service-icmp")], "total": 500}
+    assert sv.resolve(_S(), "echo-request")["match"] is None      # truncated -> no auto-match
+
+
+def test_resolve_truncation_via_full_page_even_after_type_filter():
+    # the server page is full of NON-service objects (filtered out client-side); the page is still
+    # truncated and must not auto-match a lone surviving service
+    sv._cache.clear()
+    page = [{"name": f"host{i}", "uid": f"h{i}", "type": "host"} for i in range(sv._RESOLVE_LIMIT)]
+    page.append(_svc("echo-request", typ="service-icmp"))
+    class _S:
+        def __init__(self): self.server = types.SimpleNamespace(host="h", port=443, domain="")
+        def call(self, cmd, payload=None):
+            return {"objects": page[: sv._RESOLVE_LIMIT]}          # server caps at the limit -> truncated
+    assert sv.resolve(_S(), "echo-request")["match"] is None

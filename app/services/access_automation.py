@@ -386,37 +386,52 @@ def _parse_net(cell, objdict: dict):
             return ANY_IP, False, groups, False
         if t in ("group", "group-with-exclusion"):
             groups.append(o.get("uid", ""))
-            sub_iv, sub_cx, _, sub_ap = _parse_net(o.get("members", []), objdict)
+            mem = o.get("members")
+            if mem is None:
+                # Membership not in the dictionary (a nested group not inlined, a paging/details-level
+                # gap, a thin object copy). We CANNOT enumerate the extent, so it is unknown -> REVIEW.
+                # An explicitly-empty group (members: []) is different: a real empty set, kept disjoint.
+                cx = True
+                continue
+            sub_iv, sub_cx, _, sub_ap = _parse_net(mem, objdict)
             iv.extend(sub_iv)
             cx = cx or sub_cx or (t == "group-with-exclusion")   # exclusion subtracts -> can't interval it
             approx = approx or sub_ap
+            if mem and not sub_iv and not sub_cx and t != "group-with-exclusion":
+                cx = True   # a non-empty member list that resolved to nothing (all unresolvable) -> unknown
             continue
         # Resolve every IPv4 AND IPv6 extent the object exposes (a dual-stack host carries both) -> each
         # maps to its own band via _net_interval / _addr_point, so v4 and v6 never collide.
         matched = False
         if o.get("ipv4-mask-wildcard") or o.get("ipv6-mask-wildcard"):   # non-contiguous mask -> opaque
             cx = matched = True
-        sub4, ml4 = o.get("subnet4") or o.get("subnet"), o.get("mask-length4", o.get("mask-length"))
-        if sub4 and ml4 is not None:                 # network (and anything carrying subnet4 + mask)
-            iv.append(_net_interval(ipaddress.ip_network(f"{sub4}/{ml4}", strict=False))); matched = True
-        sub6, ml6 = o.get("subnet6"), o.get("mask-length6")
-        if sub6 and ml6 is not None:                 # IPv6 network
-            iv.append(_net_interval(ipaddress.ip_network(f"{sub6}/{ml6}", strict=False))); matched = True
-        f4, l4 = o.get("ipv4-address-first"), o.get("ipv4-address-last")
-        if f4 and l4:                                # address-range / multicast-address-range (v4)
-            iv.append((_addr_point(f4), _addr_point(l4))); matched = True
-        f6, l6 = o.get("ipv6-address-first"), o.get("ipv6-address-last")
-        if f6 and l6:                                # IPv6 address-range
-            iv.append((_addr_point(f6), _addr_point(l6))); matched = True
-        a4, a6 = o.get("ipv4-address"), o.get("ipv6-address")
-        if a4:                                       # host OR an infra object (gateway/cluster/mgmt/...)
-            iv.append((_addr_point(a4), _addr_point(a4))); matched = True
-            if t != "host":                          # main IP only; full reach may be larger -> approx
-                approx = True
-        if a6:
-            iv.append((_addr_point(a6), _addr_point(a6))); matched = True
-            if t != "host":
-                approx = True
+        try:
+            sub4, ml4 = o.get("subnet4") or o.get("subnet"), o.get("mask-length4", o.get("mask-length"))
+            if sub4 and ml4 is not None:             # network (and anything carrying subnet4 + mask)
+                iv.append(_net_interval(ipaddress.ip_network(f"{sub4}/{ml4}", strict=False))); matched = True
+            sub6, ml6 = o.get("subnet6"), o.get("mask-length6")
+            if sub6 and ml6 is not None:             # IPv6 network
+                iv.append(_net_interval(ipaddress.ip_network(f"{sub6}/{ml6}", strict=False))); matched = True
+            f4, l4 = o.get("ipv4-address-first"), o.get("ipv4-address-last")
+            if f4 and l4:                            # address-range / multicast-address-range (v4)
+                iv.append((_addr_point(f4), _addr_point(l4))); matched = True
+            f6, l6 = o.get("ipv6-address-first"), o.get("ipv6-address-last")
+            if f6 and l6:                            # IPv6 address-range
+                iv.append((_addr_point(f6), _addr_point(l6))); matched = True
+            a4, a6 = o.get("ipv4-address"), o.get("ipv6-address")
+            if a4:                                   # host OR an infra object (gateway/cluster/mgmt/...)
+                iv.append((_addr_point(a4), _addr_point(a4))); matched = True
+                if t != "host":                      # main IP only; full reach may be larger -> approx
+                    approx = True
+            if a6:
+                iv.append((_addr_point(a6), _addr_point(a6))); matched = True
+                if t != "host":
+                    approx = True
+        except ValueError:
+            # A malformed address/subnet in the object dictionary degrades THIS cell to extent-unknown
+            # (-> REVIEW) instead of crashing the whole layer pull. Mirrors _ports_to_iv / lookup_host
+            # tolerance; fail closed (the rule stays in the path), never silently disjoint.
+            cx = matched = True
         if not matched:                              # zone / dynamic / updatable / role / domain / wildcard
             cx = True
     return _merge(iv), cx, groups, approx
@@ -479,7 +494,11 @@ def _parse_svc(cell, objdict: dict) -> ServiceSet:
             s.opaque = True
         elif t == "service-group":
             s.group_uids.append(o.get("uid", ""))
-            sub = _parse_svc(o.get("members", []), objdict)
+            mem = o.get("members")
+            if mem is None:                     # membership not enumerable -> unknown extent -> REVIEW
+                s.complex = True
+                continue
+            sub = _parse_svc(mem, objdict)
             if sub.any:
                 return ServiceSet(any=True)
             for proto, iv in sub.by_proto.items():
@@ -721,6 +740,18 @@ def decide(req: AccessRequest, rules: list[ParsedRule], options: "DecideOptions"
             if sub.outcome is Outcome.REVIEW:
                 return sub
             if sub.outcome is Outcome.CREATE:
+                # A CREATE from the recursion is overloaded: it either anchored on an EXPLICIT covering
+                # DROP inside the layer (target_rule.is_drop -> a real block, first-match consults it
+                # BEFORE the implicit cleanup) or it fell through with no covering rule (target_rule is a
+                # non-drop anchor or None -> the implicit cleanup decides). Discriminate, so an explicit
+                # bottom Any/Any/Drop in the layer is never silently converted to a NO_OP by an
+                # implicit-cleanup=accept (that would step over a covering deny).
+                if sub.target_rule is not None and sub.target_rule.is_drop:
+                    sub.reason = (f"inline layer “{name}” (rule {r.number}) blocks the request with an "
+                                  f"explicit rule {sub.target_rule.number}; create a least-privilege rule "
+                                  f"above it, inside the layer")
+                    sub.layer = sub.layer or name
+                    return sub
                 # No explicit rule in the inline layer covers it -> its implicit cleanup is the verdict.
                 if r.inline_cleanup == "accept":
                     return Decision(
@@ -834,7 +865,13 @@ def decide(req: AccessRequest, rules: list[ParsedRule], options: "DecideOptions"
         # adding to the cell, never to a shared group) means we grant precisely src x dst x svc.
         if (widen_target is None and r.is_accept and not r.complex and not svc_indeterminate
                 and not r.conditional and covering_drop is None):
-            eq = {"source": rel_src == Relation.EQUAL, "destination": rel_dst == Relation.EQUAL,
+            # A non-differing dimension may serve as the "must be EQUAL" guard ONLY if it is a real,
+            # exact extent. An approx cell (an infra object resolved to its main IP — true reach may be
+            # wider) that reads EQUAL is an UNDER-approximation: widening the third dimension would grant
+            # it combined with the cell's unseen extra addresses -> over-grant. Exclude approx from eq so
+            # such a rule falls through to CREATE/REVIEW instead of widening.
+            eq = {"source": rel_src == Relation.EQUAL and not r.src_approx,
+                  "destination": rel_dst == Relation.EQUAL and not r.dst_approx,
                   "service": rel_svc == Relation.EQUAL}
             cov = {"source": _dim_covered(rel_src), "destination": _dim_covered(rel_dst),
                    "service": _dim_covered(rel_svc)}
@@ -912,6 +949,11 @@ def _pull_items(session, layer_name: str, package: Optional[str], max_rules: int
         if not batch or to >= total or to <= offset:
             break
         offset = to
+    # FAIL LOUD on truncation: a partial rulebase (cleanup + denies past the cap missing) would make
+    # decide() under-deny (step over a covering DROP it never loaded). Never decide on a truncated view.
+    if total and total > len(items):
+        raise MgmtError(f"access layer “{layer_name}” has {total} rules, over the {max_rules} cap; "
+                        f"refusing to decide on a truncated rulebase — raise the cap or split the layer")
     return items, objdict
 
 
@@ -1118,6 +1160,16 @@ def _position_payload(hint: dict):
     return "bottom"                       # no explicit cleanup -> bottom (above the implicit drop)
 
 
+def _rules_for_layer(decision: Decision, rules: list[ParsedRule]) -> list[ParsedRule]:
+    """The rulebase the decision's position uids belong to: when the change lands inside an inline layer
+    (decision.layer set), that layer's sub-rules (so the anchor rule renders), else the top-level rules."""
+    if decision.layer:
+        for r in rules:
+            if r.inline_rules is not None and (r.inline_layer_name or r.name) == decision.layer:
+                return r.inline_rules
+    return rules
+
+
 def _position_human(hint: Optional[dict], rules: list[ParsedRule]) -> str:
     hint = hint or {}
     if hint.get("_above_cleanup") or (not hint.get("above") and not hint.get("below")):
@@ -1153,7 +1205,7 @@ def build_preview(session, decision: Decision, req: AccessRequest, rules: list[P
         out["source"] = _obj(req.src_cidrs[0])
         out["destination"] = _obj(req.dst_cidrs[0])
         out["service"] = _svc_object_preview(session, req)
-        out["position"] = _position_human(decision.position, rules)
+        out["position"] = _position_human(decision.position, _rules_for_layer(decision, rules))
         if (decision.position or {}).get("_anomaly"):
             out["anomaly"] = True
     return out
@@ -1162,6 +1214,13 @@ def build_preview(session, decision: Decision, req: AccessRequest, rules: list[P
 def _apply(session, decision: Decision, req: AccessRequest, layer: str,
            rules: list[ParsedRule], ticket_id: str) -> dict:
     out: dict = {"ops": []}
+    # decide() reasons over the FULL request (all of src_cidrs/dst_cidrs, merged), but the materialization
+    # below writes one object per endpoint. The public build_request() always yields single-element lists;
+    # a directly-built multi-CIDR request would otherwise silently apply LESS than was reasoned (only the
+    # first CIDR). Fail loud instead — split into one request per CIDR. (Caught as a clean error.)
+    if len(req.src_cidrs) != 1 or len(req.dst_cidrs) != 1:
+        raise MgmtError("multi-CIDR source/destination is not supported on apply — "
+                        "submit one request per source and destination CIDR")
     # The change targets the inline layer when the decision landed inside one (decision.layer); otherwise
     # the caller's top-level layer. The position uids in decision.position belong to that same layer.
     target_layer = decision.layer or layer
@@ -1201,7 +1260,7 @@ def _apply(session, decision: Decision, req: AccessRequest, layer: str,
     }
     session.call("add-access-rule", {k: v for k, v in payload.items() if v is not None})  # VERIFY
     out.update(source_object=src_name, destination_object=dst_name, service_object=svc_name,
-               position=_position_human(decision.position, rules))
+               position=_position_human(decision.position, _rules_for_layer(decision, rules)))
     out["ops"].append("add-access-rule")
     return out
 
@@ -1326,12 +1385,23 @@ def execute(server, secret, req: AccessRequest, layer: str, *, package: Optional
                     invalidate_cache(server)   # our change advanced the revision -> drop the read cache
                 else:
                     s.discard()
-            except MgmtError:
+            except Exception as exc:   # noqa: BLE001 — ANY failure mid-apply (incl. a non-MgmtError from
+                # resolve_endpoint / naming) must release the write session's pending changes + locks. The
+                # session's __exit__ only logs out, and on Check Point a read-WRITE logout does NOT discard
+                # — so without this the half-applied object + its locks linger until the session times out.
                 try:
                     s.discard()
                 except MgmtError:
-                    pass
-                raise
+                    sessions = []
+                    try:
+                        sessions = locking_sessions(server, secret)
+                    except Exception:  # noqa: BLE001
+                        pass
+                    return {"ok": False, "lock_conflict": True, "sessions": sessions, "trace": s.trace,
+                            "error": f"the change could not be discarded after a failed apply: {exc}"}
+                if isinstance(exc, MgmtError):
+                    raise                      # let the outer handler classify (lock vs generic)
+                return {"ok": False, "error": f"apply failed: {exc}", "trace": s.trace}
             return {"ok": True, "applied": True, "published": publish,
                     "validated": not publish, **base, **applied, "trace": s.trace}
     except MgmtError as exc:

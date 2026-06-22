@@ -28,17 +28,24 @@ _KIND_TYPES: dict = {
 }
 
 
-def _query(session, term: str, limit: int, kind: str = "") -> list[dict]:
-    """Service-* objects matching ``term`` (one show-objects call, filtered client-side by type). When
-    ``kind`` is a known Service type, restrict to that object type so the suggestions match the protocol
-    the user picked (e.g. icmp -> only service-icmp / service-icmp6)."""
+def _query(session, term: str, limit: int, kind: str = "") -> tuple:
+    """(service objects matching ``term``, truncated?) from one show-objects call. ``kind`` restricts to a
+    Service type client-side. CRUCIALLY ``truncated`` is derived from the SERVER's PRE-filter response
+    (the server applies ``limit`` before our type/kind filter), so a page that's full of non-service
+    objects still counts as truncated — otherwise resolve() could auto-match a name that's actually
+    ambiguous past the cutoff (wrong service = wrong access)."""
     keep = _KIND_TYPES.get((kind or "").lower())
     try:
         r = session.call("show-objects", {"filter": term, "limit": limit, "details-level": "standard"})
-        objs = [o for o in (r.get("objects") or []) if (o.get("type") or "").startswith("service-")]
-        return [o for o in objs if o.get("type") in keep] if keep else objs
+        raw = r.get("objects") or []
+        total = r.get("total")
+        truncated = len(raw) >= limit or (total is not None and total > len(raw))
+        objs = [o for o in raw if (o.get("type") or "").startswith("service-")]
+        if keep:
+            objs = [o for o in objs if o.get("type") in keep]
+        return objs, truncated
     except Exception:  # noqa: BLE001 — best-effort; a failure just yields no candidates
-        return []
+        return [], False
 
 
 def _candidates(objects: list[dict]) -> list[dict]:
@@ -70,7 +77,8 @@ def search(session, term: str, limit: int = 40, kind: str = "") -> list[dict]:
     hit = _cache.get(key)
     if hit and hit[0] > now:
         return hit[1]
-    cands = _candidates(_query(session, term, limit, kind))
+    objs, _ = _query(session, term, limit, kind)
+    cands = _candidates(objs)
     _cache[key] = (now + _TTL, cands)
     return cands
 
@@ -83,8 +91,7 @@ def resolve(session, term: str) -> dict:
     out = {"term": term, "match": None, "match_kind": "", "confidence": "", "candidates": [], "note": ""}
     if not term:
         return out
-    raw = _query(session, term, _RESOLVE_LIMIT)
-    truncated = len(raw) >= _RESOLVE_LIMIT
+    raw, truncated = _query(session, term, _RESOLVE_LIMIT)
     scored = sorted(((_score(term, c["name"]), c) for c in _candidates(raw)),
                     key=lambda x: x[0][1], reverse=True)
     if not scored:

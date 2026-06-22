@@ -211,9 +211,25 @@ def aa_apply(sid: int, body: AccessReqBody, request: Request, db: Session = Depe
 
 # --- Generic ticketing webhook (no portal session; authenticated by a shared token) ----------
 def _allowed_server_ids() -> set:
-    """Optional allowlist (DCSIM_WEBHOOK_SERVER_IDS, comma-separated). Empty = every saved server."""
-    raw = (get_settings().webhook_server_ids or "").replace(" ", "")
-    return {int(p) for p in raw.split(",") if p.isdigit()}
+    """Optional allowlist (DCSIM_WEBHOOK_SERVER_IDS, comma-separated server ids). UNSET = every saved
+    server. Set-but-unparseable FAILS CLOSED (raises): silently dropping a mistyped entry (e.g.
+    "prod-3") would yield an empty set, which the caller reads as "allow all" — widening the blast radius
+    of the publish token from a couple servers to every tenant. A scoping typo must be an error, not
+    permission."""
+    raw = (get_settings().webhook_server_ids or "").strip()
+    if not raw:
+        return set()                                   # unset -> documented allow-all
+    ids, bad = set(), []
+    for tok in raw.split(","):
+        tok = tok.strip()
+        if tok.isdigit():
+            ids.add(int(tok))
+        elif tok:
+            bad.append(tok)
+    if bad or not ids:
+        raise ValueError(f"DCSIM_WEBHOOK_SERVER_IDS is malformed (bad entries: {bad or raw!r}); "
+                         f"expected a comma-separated list of numeric server ids")
+    return ids
 
 
 @router.post("/access-automation/webhook")
@@ -242,7 +258,11 @@ async def aa_webhook(request: Request, db: Session = Depends(get_db)):
     except ValueError as exc:
         return JSONResponse({"error": str(exc)}, status_code=400)
 
-    allow = _allowed_server_ids()
+    try:
+        allow = _allowed_server_ids()
+    except ValueError as exc:                          # misconfigured allowlist -> fail closed, never allow-all
+        return JSONResponse({"error": "Webhook server allowlist is misconfigured; contact the admin.",
+                             "detail": str(exc)}, status_code=500)
     if allow and ticket.server_id not in allow:
         return JSONResponse({"error": f"server_id {ticket.server_id} is not in the webhook allowlist."},
                             status_code=403)
