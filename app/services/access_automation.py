@@ -97,6 +97,55 @@ def _merge(iv):
     return out
 
 
+def _subtract(base, exclude):
+    """Interval-set difference base ∖ exclude (both lists of (lo,hi)). Exact: used to resolve a
+    group-with-exclusion (include minus except) to its real extent."""
+    result = []
+    for lo, hi in _merge(base):
+        segs = [(lo, hi)]
+        for elo, ehi in _merge(exclude):
+            nxt = []
+            for slo, shi in segs:
+                if ehi < slo or elo > shi:        # no overlap -> keep the segment
+                    nxt.append((slo, shi))
+                    continue
+                if slo < elo:                     # piece left of the exclusion
+                    nxt.append((slo, elo - 1))
+                if ehi < shi:                     # piece right of the exclusion
+                    nxt.append((ehi + 1, shi))
+            segs = nxt
+        result.extend(segs)
+    return _merge(result)
+
+
+_WILDCARD_CAP = 256        # max intervals a wildcard may expand to before we keep it opaque (REVIEW)
+
+
+def _wildcard_to_intervals(addr: str, mask: str, base: int, bits: int):
+    """Expand a Check Point wildcard (address + WILDCARD mask, where a 1-bit means 'don't care') into the
+    EXACT set of (lo,hi) intervals it matches, mapped into the given band. The low contiguous run of
+    don't-care bits is one range; each combination of the higher scattered don't-care bits is a separate
+    range. Returns None if it would explode past the cap (-> caller keeps it opaque, REVIEW) or on a parse
+    error — never an over-approximation."""
+    a, m = int(ipaddress.ip_address(addr)), int(ipaddress.ip_address(mask))
+    fixed = a & ~m & ((1 << bits) - 1)            # base with every don't-care bit zeroed
+    low = 0
+    while low < bits and (m >> low) & 1:          # contiguous low don't-care run -> a 2^low block
+        low += 1
+    block = 1 << low
+    scattered = [i for i in range(low, bits) if (m >> i) & 1]
+    if len(scattered) > 16 or (1 << len(scattered)) > _WILDCARD_CAP:
+        return None                               # too many disjoint ranges -> opaque
+    intervals = []
+    for combo in range(1 << len(scattered)):
+        off = 0
+        for j, pos in enumerate(scattered):
+            if (combo >> j) & 1:
+                off |= (1 << pos)
+        intervals.append((base + fixed + off, base + fixed + off + block - 1))
+    return _merge(intervals)
+
+
 def _covers(big, small) -> bool:
     """True if every interval in ``small`` is fully contained in ``big``."""
     for lo, hi in small:
@@ -369,9 +418,11 @@ def _parse_net(cell, objdict: dict):
     Resolution is by FIELD, not just type, so any object that exposes a concrete IPv4 extent resolves
     (hosts AND infrastructure objects — gateways, clusters, management/checkpoint-hosts, interoperable
     devices — which carry an ``ipv4-address`` but are not type ``host``).
+    Wildcard objects expand to their EXACT interval set (capped — a pathological mask stays opaque), and a
+    group-with-exclusion resolves to include∖except when both are exact.
     - ``complex`` = the cell held something with NO computable IPv4 extent (security-zone, dynamic-object,
-      updatable-object, access-role, dns-domain, a wildcard's non-contiguous mask, a v6-only object, a
-      group-with-exclusion, or a negated cell upstream) -> the rule's reach is unknown -> REVIEW.
+      updatable-object, access-role, dns-domain, an over-cap wildcard, a group-with-exclusion whose
+      'except' isn't provably exact, or a negated cell upstream) -> the rule's reach is unknown -> REVIEW.
     - ``approx`` = we resolved an object to its main ``ipv4-address`` but its TRUE reach may exceed that
       single IP (a gateway/cluster can be multi-homed). It is an under-approximation, never an over-
       approximation, so it's safe to drop an ACCEPT out of the path; but decide() never treats an approx
@@ -384,7 +435,7 @@ def _parse_net(cell, objdict: dict):
         name = (o.get("name") or "").lower()
         if t == "cpmianyobject" or name == "any":
             return ANY_IP, False, groups, False
-        if t in ("group", "group-with-exclusion"):
+        if t == "group":
             groups.append(o.get("uid", ""))
             mem = o.get("members")
             if mem is None:
@@ -395,38 +446,66 @@ def _parse_net(cell, objdict: dict):
                 continue
             sub_iv, sub_cx, _, sub_ap = _parse_net(mem, objdict)
             iv.extend(sub_iv)
-            cx = cx or sub_cx or (t == "group-with-exclusion")   # exclusion subtracts -> can't interval it
+            cx = cx or sub_cx
             approx = approx or sub_ap
-            if mem and not sub_iv and not sub_cx and t != "group-with-exclusion":
+            if mem and not sub_iv and not sub_cx:
                 cx = True   # a non-empty member list that resolved to nothing (all unresolvable) -> unknown
+            continue
+        if t == "group-with-exclusion":
+            groups.append(o.get("uid", ""))
+            inc, exc = o.get("include"), o.get("except")
+            if not inc or not exc:
+                cx = True                            # can't see both halves -> unknown extent -> REVIEW
+                continue
+            b_iv, b_cx, _, b_ap = _parse_net([inc], objdict)   # the included set
+            e_iv, e_cx, _, e_ap = _parse_net([exc], objdict)   # the excluded set
+            # Subtract EXACTLY only when the excluded set is provably exact: an under-stated 'except'
+            # (approx/unknown) would OVER-state include∖except -> over-grant. The base may be approx (an
+            # under-approximation stays an under-approximation after subtraction -> safe).
+            if b_cx or e_cx or e_ap:
+                cx = True
+            else:
+                iv.extend(_subtract(b_iv, e_iv))
+                approx = approx or b_ap
             continue
         # Resolve every IPv4 AND IPv6 extent the object exposes (a dual-stack host carries both) -> each
         # maps to its own band via _net_interval / _addr_point, so v4 and v6 never collide.
         matched = False
-        if o.get("ipv4-mask-wildcard") or o.get("ipv6-mask-wildcard"):   # non-contiguous mask -> opaque
-            cx = matched = True
         try:
-            sub4, ml4 = o.get("subnet4") or o.get("subnet"), o.get("mask-length4", o.get("mask-length"))
-            if sub4 and ml4 is not None:             # network (and anything carrying subnet4 + mask)
-                iv.append(_net_interval(ipaddress.ip_network(f"{sub4}/{ml4}", strict=False))); matched = True
-            sub6, ml6 = o.get("subnet6"), o.get("mask-length6")
-            if sub6 and ml6 is not None:             # IPv6 network
-                iv.append(_net_interval(ipaddress.ip_network(f"{sub6}/{ml6}", strict=False))); matched = True
-            f4, l4 = o.get("ipv4-address-first"), o.get("ipv4-address-last")
-            if f4 and l4:                            # address-range / multicast-address-range (v4)
-                iv.append((_addr_point(f4), _addr_point(l4))); matched = True
-            f6, l6 = o.get("ipv6-address-first"), o.get("ipv6-address-last")
-            if f6 and l6:                            # IPv6 address-range
-                iv.append((_addr_point(f6), _addr_point(l6))); matched = True
-            a4, a6 = o.get("ipv4-address"), o.get("ipv6-address")
-            if a4:                                   # host OR an infra object (gateway/cluster/mgmt/...)
-                iv.append((_addr_point(a4), _addr_point(a4))); matched = True
-                if t != "host":                      # main IP only; full reach may be larger -> approx
-                    approx = True
-            if a6:
-                iv.append((_addr_point(a6), _addr_point(a6))); matched = True
-                if t != "host":
-                    approx = True
+            w4m, w6m = o.get("ipv4-mask-wildcard"), o.get("ipv6-mask-wildcard")
+            if w4m or w6m:               # a wildcard object — expand its (non-contiguous) mask EXACTLY, capped
+                matched = True           # (wildcard fields are exclusive of subnet/range/host fields)
+                for waddr, wmask, base, bits in ((o.get("ipv4-address"), w4m, 0, 32),
+                                                 (o.get("ipv6-address"), w6m, _V6_BASE, 128)):
+                    if not wmask:
+                        continue
+                    exp = _wildcard_to_intervals(waddr, wmask, base, bits) if waddr else None
+                    if exp is None:
+                        cx = True        # no address, or too many disjoint ranges -> keep opaque (REVIEW)
+                    else:
+                        iv.extend(exp)
+            else:
+                sub4, ml4 = o.get("subnet4") or o.get("subnet"), o.get("mask-length4", o.get("mask-length"))
+                if sub4 and ml4 is not None:         # network (and anything carrying subnet4 + mask)
+                    iv.append(_net_interval(ipaddress.ip_network(f"{sub4}/{ml4}", strict=False))); matched = True
+                sub6, ml6 = o.get("subnet6"), o.get("mask-length6")
+                if sub6 and ml6 is not None:         # IPv6 network
+                    iv.append(_net_interval(ipaddress.ip_network(f"{sub6}/{ml6}", strict=False))); matched = True
+                f4, l4 = o.get("ipv4-address-first"), o.get("ipv4-address-last")
+                if f4 and l4:                        # address-range / multicast-address-range (v4)
+                    iv.append((_addr_point(f4), _addr_point(l4))); matched = True
+                f6, l6 = o.get("ipv6-address-first"), o.get("ipv6-address-last")
+                if f6 and l6:                        # IPv6 address-range
+                    iv.append((_addr_point(f6), _addr_point(l6))); matched = True
+                a4, a6 = o.get("ipv4-address"), o.get("ipv6-address")
+                if a4:                               # host OR an infra object (gateway/cluster/mgmt/...)
+                    iv.append((_addr_point(a4), _addr_point(a4))); matched = True
+                    if t != "host":                  # main IP only; full reach may be larger -> approx
+                        approx = True
+                if a6:
+                    iv.append((_addr_point(a6), _addr_point(a6))); matched = True
+                    if t != "host":
+                        approx = True
         except ValueError:
             # A malformed address/subnet in the object dictionary degrades THIS cell to extent-unknown
             # (-> REVIEW) instead of crashing the whole layer pull. Mirrors _ports_to_iv / lookup_host
