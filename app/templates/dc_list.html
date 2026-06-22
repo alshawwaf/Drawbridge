@@ -9,7 +9,6 @@
     <p class="ph-sub">Mock cloud/datacenter providers Check Point connects to. Point a SmartConsole Data Center object at the portal — it serves the inventory in the provider's own API.</p>
   </div>
   <div class="ph-actions">
-    {{ columns_menu('datacenters', cols, vis, '/datacenters') }}
     <div class="menu">
       <a href="#" class="btn menu-trigger">+ New Data Center ▾</a>
       <div class="menu-items">
@@ -40,7 +39,7 @@
     {% if 'provider' in vis %}<th>Provider</th>{% endif %}
     {% if 'inventory' in vis %}<th>Inventory</th>{% endif %}
     {% if 'created' in vis %}<th class="nowrap">Created</th>{% endif %}
-    <th></th>
+    <th style="text-align:right; padding-top:6px; padding-bottom:6px;">{{ columns_menu('datacenters', cols, vis, '/datacenters', compact=true) }}</th>
   </tr></thead>
   <tbody>
   {% for r in rows %}
