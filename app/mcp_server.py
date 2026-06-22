@@ -9,6 +9,7 @@ agent authenticates with `Authorization: Bearer <DCSIM_MCP_TOKEN>`. Writes are f
 `mcp_allow_publish` Setting (default OFF). See docs/mcp-n8n.md."""
 from __future__ import annotations
 
+import contextlib
 import hmac
 
 try:
@@ -17,6 +18,10 @@ try:
 except Exception as exc:  # noqa: BLE001 — SDK absent (Artifactory-only) -> feature stays dormant
     FastMCP = None
     _HAVE_MCP, _IMPORT_ERR = False, str(exc)
+
+# The inner Streamable-HTTP ASGI app, kept so the parent app can run ITS lifespan (the session manager's
+# task group). A mounted sub-app's own lifespan never fires, so without this the manager is uninitialized.
+_INNER = None
 
 # The tools an agent can call (logic in services.mcp_tools; registered by name + docstring + type hints).
 _TOOLS = ("list_management_servers", "list_access_layers", "decide_access", "apply_access",
@@ -56,11 +61,16 @@ class _BearerGuard:
 
 def _new_server():
     # stateless_http=True makes each tool call independent -> no persistent session-manager lifespan, which
-    # is what lets the app mount cleanly inside FastAPI. Fall back if the SDK version lacks the kwarg.
-    try:
-        return FastMCP("Drawbridge", stateless_http=True)
-    except TypeError:
-        return FastMCP("Drawbridge")
+    # is what lets the app mount cleanly inside FastAPI. streamable_http_path="/" puts the handler at the
+    # mount root so the endpoint is /mcp (not /mcp/mcp — FastMCP defaults its own path to /mcp). Degrade
+    # gracefully if an SDK version doesn't accept one of these kwargs.
+    for kwargs in ({"stateless_http": True, "streamable_http_path": "/"},
+                   {"stateless_http": True}, {}):
+        try:
+            return FastMCP("Drawbridge", **kwargs)
+        except TypeError:
+            continue
+    return FastMCP("Drawbridge")
 
 
 def _asgi_app(mcp):
@@ -87,7 +97,25 @@ def build_mcp_app(token: str):
         if fn is not None:
             mcp.tool()(fn)              # name = fn.__name__, description = docstring, schema from hints
     app = _asgi_app(mcp)
-    return _BearerGuard(app, token) if app is not None else None
+    if app is None:
+        return None
+    global _INNER
+    _INNER = app                          # parent lifespan runs its session manager (see mcp_lifespan)
+    return _BearerGuard(app, token)
+
+
+@contextlib.asynccontextmanager
+async def mcp_lifespan(app):
+    """Run the mounted MCP app's lifespan (its Streamable-HTTP session-manager task group) from the
+    PARENT app's lifespan — a mounted sub-app's own lifespan doesn't fire, so without this a tool call
+    fails with 'Task group is not initialized'. No-op when MCP isn't mounted."""
+    inner = _INNER
+    ctx = getattr(getattr(inner, "router", None), "lifespan_context", None)
+    if inner is None or ctx is None:
+        yield
+        return
+    async with ctx(inner):
+        yield
 
 
 def main():

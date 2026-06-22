@@ -12,3 +12,6 @@ httpx>=0.27
 # AES-256-GCM at-rest encryption for the optional saved gateway password (Apache-2.0/BSD).
 # Optional at runtime: if absent, the app boots and falls back to a per-apply password.
 cryptography>=43.0
+# MCP server for n8n / LLM agents (MIT). Optional at runtime: if absent, the app boots and /mcp is simply
+# not mounted (import-guarded in app/mcp_server.py). Install via Artifactory.
+mcp>=1.10
