@@ -11,7 +11,7 @@ from ..models import DynamicLayer, Gateway, GatewayLayerSnapshot, User
 from ..security import get_user_or_none, new_feed_token
 from ..services import gateway_creds, gaia_export, table_prefs
 from ..services.apply_runner import fetch_dynamic_content
-from ..services.gaia_client import ensure_pinned, fetch_gateway_cert
+from ..services.gaia_client import ensure_pinned, fetch_gateway_cert, pin_now
 from .ui import _flash, _pop_flash, templates
 
 router = APIRouter(include_in_schema=False)
@@ -29,6 +29,18 @@ def _port(value: str) -> int:
         return int(value or 443)
     except ValueError:
         return 443
+
+
+def _autotrust_note(db: Session, gw) -> str:
+    """When auto-trust is on and nothing is pinned yet, pin the cert NOW (behind the scenes) and report
+    the fingerprint — so the user never has to uncheck the box and fetch manually. Falls back gracefully
+    if the gateway isn't reachable at save time (the lazy first-connect pin still covers it)."""
+    if not (getattr(gw, "auto_trust", False) and not (gw.cert_pem or "").strip()):
+        return ""
+    pinned, fp = pin_now(db, gw)
+    if pinned:
+        return f" Its certificate was trusted automatically (SHA-256 {fp})."
+    return " It’ll be pinned automatically on first connect (the gateway wasn’t reachable just now)."
 
 
 @router.get("/gateways", response_class=HTMLResponse)
@@ -83,12 +95,7 @@ def gateways_create(request: Request, name: str = Form(...), host: str = Form(..
         _flash(request, f"Gateway “{name}” saved, but the password was not stored — "
                         "encryption is unavailable in this environment.", "error")
     else:
-        msg = f"Gateway “{name}” saved."
-        if gw.auto_trust and not gw.cert_pem:
-            # Trust-on-first-use: the cert is pinned on the first apply/fetch (ensure_pinned), so the
-            # save stays instant even if the gateway isn't reachable yet.
-            msg += " Its certificate will be pinned automatically on first connect."
-        _flash(request, msg)
+        _flash(request, f"Gateway “{name}” saved." + _autotrust_note(db, gw))
     return RedirectResponse("/gateways", status_code=303)
 
 
@@ -224,9 +231,7 @@ def gateways_update(gid: int, request: Request, name: str = Form(...), host: str
         else:
             note = " (the new password was not stored — encryption is unavailable in this environment)"
     db.commit()
-    msg = f"Gateway “{name}” updated.{note}"
-    if gw.auto_trust and not gw.cert_pem:
-        msg += " Its certificate will be pinned automatically on first connect."
+    msg = f"Gateway “{name}” updated.{note}{_autotrust_note(db, gw)}"
     _flash(request, msg, "error" if note else "success")
     return RedirectResponse("/gateways", status_code=303)
 
