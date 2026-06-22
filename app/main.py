@@ -82,8 +82,10 @@ async def lifespan(app: FastAPI):
     _seed_admin(settings)
     receiver = await _start_siem_receiver(settings)
     retention_task = asyncio.create_task(_retention_loop())
-    try:
-        yield
+    from . import mcp_server                          # run the mounted /mcp app's session manager (no-op
+    try:                                              # if MCP isn't mounted)
+        async with mcp_server.mcp_lifespan(app):
+            yield
     finally:
         retention_task.cancel()
         if receiver is not None:

@@ -73,10 +73,12 @@ n8n discovers the tools automatically (`tools/list`). The agent can then call th
 3. (if approved) `apply_access(..., publish=false)` to dry-run, then `publish=true` once the admin toggle
    is on.
 
-## 6. Verify after install
+## 6. Status — validated live
 
-This module was built with the SDK uninstallable in the dev sandbox (Artifactory-gated), so the FastMCP
-wiring (`app/mcp_server.py`) is verified by reasoning, not a live run. After `pip install mcp`, confirm:
-`GET/POST /mcp` returns 401 without the bearer header; the n8n MCP node lists the 7 tools; `decide_access`
-returns a decision. If the SDK version exposes a different ASGI accessor than
-`streamable_http_app`/`sse_app`, `app/mcp_server.py:_asgi_app` already falls back across the known names.
+Validated end-to-end against `mcp` SDK 1.28.0 (Streamable-HTTP): a request with no / wrong bearer → 401;
+`initialize` → 200 (serverInfo "Drawbridge"); `tools/list` → all 7 tools; `tools/call coverage_lookup`
+returns real data; `decide_access` with a bad server id returns its error inside the tool result (no
+crash). The endpoint serves at **`/mcp`** (a bare `/mcp` 307-redirects to `/mcp/`; MCP clients, incl.
+n8n, follow it preserving the POST). The mounted app's session-manager lifespan is run from the portal's
+own lifespan (so you won't see "Task group is not initialized"). The SDK is declared in
+`requirements.txt` (install resolves from Artifactory).
