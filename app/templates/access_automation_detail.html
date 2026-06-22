@@ -80,13 +80,21 @@ Content-Type: application/json
   <h2 style="margin-top:0;">How it decides — behind the scenes</h2>
   <p class="muted" style="margin-top:4px;">Every request runs the same first-match decision tree the market leaders use. It reuses a rule that already permits the traffic; widens a rule only when it matches the request exactly in the other two columns (so it never grants access nobody asked for); creates a least-privilege rule when nothing fits; and refuses to touch policy it can’t safely reason about.</p>
   <style>
-    #aa-flow-dt{background:transparent;border:0;margin:6px 0 0;padding:0;text-align:center;line-height:1.3;}
-    #aa-flow-dt:not([data-processed]){font-family:ui-monospace,monospace;font-size:11px;color:var(--muted);white-space:pre-wrap;text-align:left;}
-    .dtwrap{overflow-x:auto;}
-    .dtwrap svg{max-width:100%;height:auto;}
+    .dtbar{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin:4px 0 8px;}
+    .dtzoom{display:inline-flex;align-items:center;gap:4px;}
+    .dtzoom .copybtn{padding:5px 11px;}
+    #dt-zreset{min-width:52px;text-align:center;font-variant-numeric:tabular-nums;}
+    #aa-flow-dt{background:transparent;border:0;margin:0;padding:0;line-height:1.3;}
+    #aa-flow-dt:not([data-processed]){font-family:ui-monospace,monospace;font-size:11px;color:var(--muted);white-space:pre-wrap;}
+    .dtwrap{overflow:auto;max-height:74vh;border:1px solid var(--line);border-radius:12px;padding:12px;background:var(--surface-2);}
+    .dtwrap svg{height:auto;display:block;margin:0 auto;}
   </style>
-  <div class="row" style="justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin:4px 0 8px;">
-    <span class="muted" style="font-size:12px;">Generated from the engine — open or edit it in your own diagram tool.</span>
+  <div class="dtbar">
+    <span class="dtzoom" role="group" aria-label="Diagram zoom">
+      <button type="button" class="copybtn" id="dt-zout" title="Zoom out" aria-label="Zoom out">−</button>
+      <button type="button" class="copybtn" id="dt-zreset" title="Reset to original size">100%</button>
+      <button type="button" class="copybtn" id="dt-zin" title="Zoom in" aria-label="Zoom in">+</button>
+    </span>
     <div class="menu" style="display:inline-block;">
       <button type="button" class="copybtn menu-trigger" aria-haspopup="true" aria-expanded="false" title="Export this diagram">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:5px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Export diagram <span class="msel-caret" style="margin-left:3px;">&#9662;</span></button>
@@ -98,7 +106,8 @@ Content-Type: application/json
       </div>
     </div>
   </div>
-  <div class="dtwrap"><pre class="mermaid" id="aa-flow-dt">{{ decision_mermaid }}</pre></div>
+  <div class="dtwrap" id="aa-flow-wrap"><pre class="mermaid" id="aa-flow-dt">{{ decision_mermaid_dark }}</pre></div>
+  <pre id="aa-flow-dt-light" hidden>{{ decision_mermaid_light }}</pre>
   <div class="row" style="gap:8px;margin-top:14px;flex-wrap:wrap;justify-content:center;">
     <span class="pill ok">No-op · already allowed</span>
     <span class="pill" style="background:var(--info-bg);color:var(--info);">Widen · extend a rule</span>
@@ -121,6 +130,9 @@ Content-Type: application/json
     var lastActionable = false;
 
     function esc(s) { var d = document.createElement('div'); d.textContent = (s == null ? '' : s); return d.innerHTML; }
+    // esc() escapes < > & for TEXT; attribute values also need the quotes escaped (a CP app name can
+    // contain "), else it breaks out of value="..." / data-app="..." -> XSS.
+    function escAttr(s) { return esc(s).replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
     function lockHelp(sessions) {
       var h = '<div class="card" style="margin-top:10px; border-color:var(--danger-line);">' +
         '<b>Object locked by another session.</b> <span class="muted">This is not a read-only issue — the publish runs read-write. A different open session (commonly your own SmartConsole, or a previous unpublished change) holds a lock on this object. Publish or discard that session, release it below, or wait for it to auto-expire.</span>';
@@ -227,7 +239,7 @@ Content-Type: application/json
         h += '<div class="row" style="gap:6px; flex-wrap:wrap; margin-top:8px;">';
         c.forEach(function (x) {
           if (res.match && x.name === res.match) return;     // don't repeat the matched one
-          h += '<button type="button" class="copybtn" data-app="' + esc(x.name) + '" title="pick this application">' +
+          h += '<button type="button" class="copybtn" data-app="' + escAttr(x.name) + '" title="pick this application">' +
                esc(x.name) + (x.category ? ' <span class="muted">· ' + esc(x.category) + '</span>' : '') + '</button>';
         });
         h += '</div>';
@@ -297,7 +309,7 @@ Content-Type: application/json
             .then(function (r) { return r.json(); })
             .then(function (d) {
               appList.innerHTML = (d.candidates || []).slice(0, 12).map(function (c) {
-                return '<option value="' + esc(c.name) + '">' + esc(c.category || c.kind || '') + '</option>';
+                return '<option value="' + escAttr(c.name) + '">' + esc(c.category || c.kind || '') + '</option>';
               }).join('');
             }).catch(function () {});
         }, 250);
@@ -319,14 +331,30 @@ Content-Type: application/json
   (function () {
     var el = document.getElementById('aa-flow-dt');
     if (!el || !window.mermaid) return;            // CDN blocked -> the Mermaid source stays visible (graceful)
-    var raw = el.textContent;
-    function theme(){ return document.documentElement.getAttribute('data-theme') === 'light' ? 'default' : 'dark'; }
-    function render(){
-      el.removeAttribute('data-processed'); el.innerHTML = ''; el.textContent = raw;
-      mermaid.initialize({ startOnLoad:false, securityLevel:'loose', theme:theme(),
-                           flowchart:{ htmlLabels:true, useMaxWidth:true, curve:'basis' } });
-      try { mermaid.run({ nodes:[el] }); } catch (e) {}
+    var wrap = document.getElementById('aa-flow-wrap');
+    var darkSrc = el.textContent;
+    var lightEl = document.getElementById('aa-flow-dt-light');
+    var lightSrc = lightEl ? lightEl.textContent : darkSrc;   // theme styling is baked into each source
+    var f = 1;                                                // zoom factor; 1 = fit-to-width (original)
+    function isLight(){ return document.documentElement.getAttribute('data-theme') === 'light'; }
+    function applyZoom(){
+      var svg = el.querySelector('svg'); if (!svg) return;
+      // CSS `zoom` scales the element AND its layout box, so f=1 keeps Mermaid's own fit (no clipping)
+      // and f>1 grows the box -> the .dtwrap scrolls to it. (Chromium/Safari/modern Firefox.)
+      svg.style.zoom = f;
+      var lbl = document.getElementById('dt-zreset'); if (lbl) lbl.textContent = Math.round(f * 100) + '%';
     }
+    function render(){
+      el.removeAttribute('data-processed'); el.innerHTML = ''; el.textContent = isLight() ? lightSrc : darkSrc;
+      mermaid.initialize({ startOnLoad: false, securityLevel: 'loose' });   // theme + font baked into the source
+      try {
+        var p = mermaid.run({ nodes: [el] });
+        if (p && p.then) p.then(applyZoom); else applyZoom();
+      } catch (e) {}
+    }
+    document.getElementById('dt-zin').addEventListener('click', function () { f = Math.min(3, +(f + 0.25).toFixed(2)); applyZoom(); });
+    document.getElementById('dt-zout').addEventListener('click', function () { f = Math.max(0.4, +(f - 0.25).toFixed(2)); applyZoom(); });
+    document.getElementById('dt-zreset').addEventListener('click', function () { f = 1; applyZoom(); });   // back to fit
     render();
     var t; new MutationObserver(function (m){
       if (m.some(function (x){ return x.attributeName === 'data-theme'; })) { clearTimeout(t); t = setTimeout(render, 60); }

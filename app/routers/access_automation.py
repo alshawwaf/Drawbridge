@@ -101,7 +101,8 @@ def aa_detail(sid: int, request: Request, db: Session = Depends(get_db)):
     ms = _owned(db, sid, user)
     return templates.TemplateResponse(request, "access_automation_detail.html",
                                       {"ms": ms, "has_secret": mgmt_creds.has_secret(db, ms),
-                                       "decision_mermaid": decision_tree.to_mermaid(),
+                                       "decision_mermaid_dark": decision_tree.to_mermaid(dark=True),
+                                       "decision_mermaid_light": decision_tree.to_mermaid(dark=False),
                                        "flash": _pop_flash(request)})
 
 

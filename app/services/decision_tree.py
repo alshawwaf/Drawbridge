@@ -12,6 +12,7 @@ The on-page view renders this same Mermaid source client-side, so editing the tr
 one file. Keep the NODES/EDGES below in lock-step with decide()."""
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from xml.sax.saxutils import escape as _xescape
 
@@ -52,7 +53,7 @@ NODES: list[Node] = [
     Node("revD", "Review", "a deny, or scope we can't verify", "review", 420, 486, 240),
     Node("widen", "Two cells equal the request?", "widen the third — add to that cell", "decision",
          60, 598, 250, 68),
-    Node("doWiden", "Widen the rule", "add the differing source / destination / service", "widen",
+    Node("doWiden", "Widen the rule", "add the differing source / dest / service", "widen",
          420, 600, 240),
     Node("create", "Create least-privilege rule", "above the cleanup / a blocking drop", "create", 60, 712),
 ]
@@ -66,18 +67,44 @@ EDGES: list[Edge] = [
     Edge("widen", "doWiden", "yes"), Edge("widen", "create", "no"),
 ]
 
-# kind -> (fill, stroke, font) — one palette every renderer shares, so .mmd/.drawio/.dot look the same.
-# Hierarchy: the process/decision steps are quiet (light slate, dark text); the four OUTCOMES are bold
-# solid badges (white text) so the eye lands on what the engine actually does — and the colours map to
-# the legend: green = no-op, blue = widen, amber = create, rose = review.
+# kind -> (fill, stroke, font). LIGHT palette — refined for a WHITE canvas (diagrams.net / Visio /
+# Graphviz / GitHub-rendered .mmd): soft tinted fills, a saturated border, dark-tinted text.
 PALETTE: dict[str, tuple[str, str, str]] = {
-    "start":    ("#f1f5fb", "#cbd5e6", "#243244"),   # quiet entry
-    "process":  ("#eef2f9", "#cbd5e6", "#243244"),   # quiet step
-    "decision": ("#e2e8f2", "#94a3b8", "#1e293b"),   # slightly stronger outline — reads as a gate
-    "review":   ("#e11d48", "#be123c", "#ffffff"),   # rose-600  — human decides
-    "noop":     ("#0f9d6e", "#0b7d58", "#ffffff"),   # emerald   — already allowed
-    "widen":    ("#2563eb", "#1d4ed8", "#ffffff"),   # blue      — extend a rule
-    "create":   ("#e08600", "#b45309", "#ffffff"),   # amber     — new rule
+    "start":    ("#f3f6fb", "#cdd7e6", "#334155"),
+    "process":  ("#eef2f9", "#cdd7e6", "#334155"),
+    "decision": ("#e7eef7", "#9aa8be", "#1e293b"),
+    "review":   ("#ffe1e6", "#f43f5e", "#9f1239"),
+    "noop":     ("#d6f5e3", "#10b981", "#065f46"),
+    "widen":    ("#dbeafe", "#3b82f6", "#1e40af"),
+    "create":   ("#fdeecb", "#f59e0b", "#92400e"),
+}
+
+# DARK palette — for the on-page render on the portal's dark canvas: nodes sit IN the dark (deep tinted
+# fills) with a bright border + light tinted text, so they feel designed rather than pasted on.
+PALETTE_DARK: dict[str, tuple[str, str, str]] = {
+    "start":    ("#1b2536", "#33415c", "#cdd9ea"),
+    "process":  ("#1b2536", "#33415c", "#cdd9ea"),
+    "decision": ("#212e46", "#3f5170", "#dbe6f5"),
+    "review":   ("#3a1b25", "#fb7185", "#fecdd3"),
+    "noop":     ("#0e2c22", "#34d399", "#a7f3d0"),
+    "widen":    ("#15233f", "#60a5fa", "#bfdbfe"),
+    "create":   ("#33270f", "#fbbf24", "#fde3a7"),
+}
+
+# Per-theme Mermaid look (fed via the %%{init}%% directive baked into the source, so the downloaded
+# .mmd renders the same in GitHub / mermaid.live). classDef (above) still drives per-node colour.
+# NB: we deliberately do NOT override fontFamily/fontSize — Mermaid measures label box widths with one
+# font and would render with another, overflowing the box (clipped text). Mermaid's default font sizes
+# the boxes correctly; we only theme the lines/labels/defaults (which don't affect text measurement).
+_MM_THEME = {
+    False: {  # light
+        "lineColor": "#94a3b8", "edgeLabelBackground": "#ffffff",
+        "primaryColor": "#f1f5f9", "primaryBorderColor": "#cbd5e1", "primaryTextColor": "#334155",
+    },
+    True: {   # dark
+        "lineColor": "#5b6b86", "edgeLabelBackground": "#111a2b",
+        "primaryColor": "#1b2536", "primaryBorderColor": "#33415c", "primaryTextColor": "#cdd9ea",
+    },
 }
 
 
@@ -88,12 +115,25 @@ _MM_SHAPE = {"start": ('(["', '"])'), "process": ('["', '"]'), "decision": ('{{"
 
 
 def _mm_text(n: Node) -> str:
-    txt = n.label + (f"<br/>{n.sub}" if n.sub else "")
+    # Wrap a long subtitle onto its own lines (at the '·' separators) so the node stays narrow and the
+    # auto-layout doesn't overlap siblings. On-page Mermaid only — the .drawio/.dot exports keep the
+    # single-line sub and wrap via their own canvases.
+    sub = n.sub
+    if len(sub) > 46 and "·" in sub:
+        sub = "<br/>".join(p.strip() for p in sub.split("·"))
+    txt = n.label + (f"<br/>{sub}" if sub else "")
     return txt.replace('"', "&quot;")
 
 
-def to_mermaid() -> str:
-    out = ["flowchart TD"]
+def to_mermaid(dark: bool = False) -> str:
+    """Mermaid flowchart with a baked-in %%{init}%% directive (theme + Inter font + spacing) so it looks
+    the same wherever it renders. ``dark`` picks the on-page (dark-canvas) palette; default light is for
+    the .mmd download / GitHub / diagrams.net import."""
+    pal = PALETTE_DARK if dark else PALETTE
+    cfg = {"theme": "base", "themeVariables": _MM_THEME[dark],
+           "flowchart": {"curve": "basis", "nodeSpacing": 46, "rankSpacing": 52, "padding": 12,
+                         "htmlLabels": True, "useMaxWidth": True}}
+    out = ["%%{init: " + json.dumps(cfg, separators=(",", ":")) + "}%%", "flowchart TD"]
     for n in NODES:
         o, c = _MM_SHAPE[n.kind]
         out.append(f"  {n.id}{o}{_mm_text(n)}{c}")
@@ -102,8 +142,8 @@ def to_mermaid() -> str:
         arrow = f" -->|{e.label}| " if e.label else " --> "
         out.append(f"  {e.src}{arrow}{e.dst}")
     out.append("")
-    for kind, (fill, stroke, font) in PALETTE.items():
-        out.append(f"  classDef {kind} fill:{fill},stroke:{stroke},color:{font},stroke-width:1px;")
+    for kind, (fill, stroke, font) in pal.items():
+        out.append(f"  classDef {kind} fill:{fill},stroke:{stroke},color:{font},stroke-width:1.5px;")
     grouped: dict[str, list[str]] = {}
     for n in NODES:
         grouped.setdefault(n.kind, []).append(n.id)

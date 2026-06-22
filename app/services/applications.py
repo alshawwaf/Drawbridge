@@ -41,31 +41,42 @@ def _query(session, term: str, obj_type: str, limit: int) -> list[dict]:
         return []
 
 
+def _candidates(objects: list[dict]) -> list[dict]:
+    """Normalise raw show-objects results to candidate dicts, deduped. The dedup key is the object uid;
+    for the (rare) uid-less object it falls back to (raw name, type) — NOT the normalized name — so two
+    distinct names that merely normalize alike (e.g. 'ABC News' vs 'abc-news') stay SEPARATE and remain
+    visible as an ambiguity (collapsing them would fake a unique match)."""
+    seen: set = set()
+    out: list[dict] = []
+    for o in objects:
+        name = o.get("name")
+        if not name:
+            continue
+        key = o.get("uid") or (name, o.get("type") or "")
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append({
+            "name": name, "uid": o.get("uid"),
+            "kind": "category" if "categor" in (o.get("type") or "") else "application",
+            "category": o.get("primary-category") or "",
+        })
+    return out
+
+
 def search(session, term: str, limit: int = 40) -> list[dict]:
-    """Candidate Check Point applications/categories matching ``term`` (server-side filter, deduped).
-    Returns [{name, uid, kind, category}]; cached ~60s per (server, term)."""
+    """Candidate applications/categories matching ``term`` (server-side filter, deduped) — for the UI
+    type-ahead. Cached ~60s per (server, term)."""
     term = (term or "").strip()
     if len(term) < 2:
         return []
-    key = (_server_key(session), term.lower())
+    key = (_server_key(session), term.lower(), limit)
     now = time.monotonic()
     hit = _cache.get(key)
     if hit and hit[0] > now:
         return hit[1]
-    raw = _query(session, term, "application-site", limit) + \
-        _query(session, term, "application-site-category", max(8, limit // 4))
-    seen: set = set()
-    cands: list[dict] = []
-    for o in raw:
-        uid, name = o.get("uid"), o.get("name")
-        if not name or uid in seen:
-            continue
-        seen.add(uid)
-        cands.append({
-            "name": name, "uid": uid,
-            "kind": "category" if "categor" in (o.get("type") or "") else "application",
-            "category": o.get("primary-category") or "",
-        })
+    cands = _candidates(_query(session, term, "application-site", limit) +
+                        _query(session, term, "application-site-category", max(8, limit // 4)))
     _cache[key] = (now + _TTL, cands)
     return cands
 
@@ -86,15 +97,23 @@ def _score(term: str, name: str) -> tuple[str, float]:
     return ("fuzzy", max(base, difflib.SequenceMatcher(None, nt, nn).ratio()))
 
 
+_RESOLVE_LIMIT = 200      # the safety-critical query pulls a deep page so a duplicate can't hide past it
+
+
 def resolve(session, term: str) -> dict:
     """Map ``term`` to a Check Point application. Returns {term, match, confidence, candidates, note}.
-    ``match`` is set ONLY for a confident, unique exact / normalized-exact hit; otherwise it's None and
-    ``candidates`` holds the ranked alternatives for a human to pick."""
+    ``match`` is set ONLY for a confident, UNIQUE exact / normalized-exact hit proven over a COMPLETE
+    result page; otherwise it's None and ``candidates`` holds the ranked alternatives for a human to
+    pick. A truncated (== limit) result is never auto-matched — if there could be a hidden twin, we
+    refuse to guess and route to a human (a wrong app = wrong access)."""
     term = (term or "").strip()
     out = {"term": term, "match": None, "confidence": "", "candidates": [], "note": ""}
     if not term:
         return out
-    scored = sorted(((_score(term, c["name"]), c) for c in search(session, term)),
+    apps = _query(session, term, "application-site", _RESOLVE_LIMIT)
+    cats = _query(session, term, "application-site-category", 40)
+    truncated = len(apps) >= _RESOLVE_LIMIT or len(cats) >= 40   # page may be cut -> not provably complete
+    scored = sorted(((_score(term, c["name"]), c) for c in _candidates(apps + cats)),
                     key=lambda x: x[0][1], reverse=True)
     if not scored:
         out["note"] = f"No Check Point application matches “{term}”."
@@ -102,17 +121,18 @@ def resolve(session, term: str) -> dict:
 
     exacts = [c for (lvl, _), c in scored if lvl == "exact"]
     norms = [c for (lvl, _), c in scored if lvl == "normalized"]
-    if len(exacts) == 1:
+    if not truncated and len(exacts) == 1:
         out["match"], out["confidence"] = exacts[0]["name"], "exact"
-    elif not exacts and len(norms) == 1:
+    elif not truncated and not exacts and len(norms) == 1:
         out["match"], out["confidence"] = norms[0]["name"], "normalized"
 
     out["candidates"] = [{"name": c["name"], "kind": c["kind"], "category": c["category"],
                           "score": round(sc, 2)}
                          for (lvl, sc), c in scored if sc >= 0.4][:8]
     if not out["match"]:
-        out["note"] = (f"“{term}” is ambiguous — choose the exact Check Point application."
-                       if out["candidates"] else f"No close match for “{term}”.")
+        out["note"] = (f"Too many matches for “{term}” — refine the name." if truncated
+                       else (f"“{term}” is ambiguous — choose the exact Check Point application."
+                             if out["candidates"] else f"No close match for “{term}”."))
     return out
 
 
