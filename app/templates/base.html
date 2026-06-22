@@ -384,24 +384,31 @@
     .modal p { color:var(--muted); font-size:14px; margin:0; }
     .modal-actions { display:flex; gap:10px; justify-content:flex-end; margin-top:24px; }
     /* Form-in-modal: the modal IS the card, so strip the injected form's own card chrome + size it. */
-    #form-modal .modal { max-width:670px; text-align:left; padding:0; scroll-padding-top:54px; }
+    #form-modal .modal { max-width:670px; text-align:left; padding:0; scroll-padding-top:46px; }
     /* OS-window-style title bar: a full-bleed gradient header that stays put while the body scrolls. */
     #form-modal .fm-head { position:sticky; top:0; z-index:3; display:flex; align-items:center; gap:12px;
-      margin:0; padding:10px 14px 10px 22px; color:#fff;
+      margin:0; padding:8px 14px 8px 22px; color:#fff;
       background:linear-gradient(100deg, var(--accent) 0%, #c026d3 46%, #7b3ff2 100%);
       border-radius:16px 16px 0 0; box-shadow:0 1px 0 rgba(0,0,0,.14); }
-    #form-modal .fm-title { font-size:15.5px; font-weight:740; margin:0; color:#fff; letter-spacing:.2px;
+    #form-modal .fm-title { font-size:15px; font-weight:740; margin:0; color:#fff; letter-spacing:.2px;
       text-shadow:0 1px 2px rgba(0,0,0,.22); }
-    #form-modal #fm-close { margin:0; flex:none; width:30px; height:30px; color:#fff; border-color:transparent; }
+    #form-modal #fm-close { margin:0; flex:none; width:28px; height:28px; color:#fff; border-color:transparent; }
     #form-modal #fm-close:hover { color:#fff; background:rgba(255,255,255,.22); }
-    #form-modal .fm-body { padding:18px 24px 24px; }
+    #form-modal .fm-body { padding:18px 24px 0; }
     #form-modal .fm-body form.card, #form-modal .fm-body form { border:none; box-shadow:none;
       background:none; padding:0; margin:0; max-width:none; }
     #form-modal .fm-body hr { border:none; border-top:1px solid var(--line); margin:16px 0; }
+    /* Action bar pinned to the bottom (the form's last .row) — Save/Cancel always reachable, and the
+       content visibly tucking under it signals there's more to scroll. The redundant divider above it
+       (management/gateway forms have an <hr>) is hidden in the modal since the footer has its own border. */
+    #form-modal .fm-body form > hr:last-of-type { display:none; }
+    #form-modal .fm-body form > .row:last-child { position:sticky; bottom:0; z-index:2;
+      margin:16px -24px 0; padding:13px 24px; background:var(--surface);
+      border-top:1px solid var(--line); border-radius:0 0 16px 16px; }
     /* Field help: breathing room from the control above; long (>2 line) help collapses with a More/Less toggle. */
     form p.muted { margin:8px 0 0; line-height:1.5; }
-    form p.muted.clamped { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2;
-      line-clamp:2; overflow:hidden; }
+    form p.muted.clamped { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:1;
+      line-clamp:1; overflow:hidden; }
     button.help-toggle, button.help-toggle:hover { background:none; color:var(--accent); border:none;
       box-shadow:none; padding:0; margin:5px 0 0; min-height:0; line-height:1.4; font-size:12px;
       font-weight:650; transform:none; filter:none; }
