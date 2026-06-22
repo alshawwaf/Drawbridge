@@ -449,9 +449,11 @@ def test_settings_spec_is_wellformed():
     keys = [s.key for s in app_settings.SETTINGS]
     assert len(keys) == len(set(keys))                       # unique keys
     for s in app_settings.SETTINGS:
-        assert s.kind in ("bool", "int") and s.label and s.help
+        assert s.kind in ("bool", "int", "str") and s.label and s.help
         if s.kind == "int":
             assert s.min <= s.default <= s.max               # default is in range
+        if s.kind == "str":
+            assert isinstance(s.default, str) and s.default   # a non-empty default template
 
 
 # --- revision-based policy cache -------------------------------------------------------------

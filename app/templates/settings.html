@@ -20,6 +20,13 @@
             <input type="checkbox" name="{{ s.key }}" {% if vals[s.key] %}checked{% endif %}>
             {{ s.label }}
           </label>
+        {% elif s.kind == 'str' %}
+          <label style="display:flex;align-items:center;gap:10px;font-weight:600;flex-wrap:wrap;">
+            <span style="min-width:260px;">{{ s.label }}</span>
+            <input type="text" name="{{ s.key }}" value="{{ vals[s.key] }}"
+                   maxlength="{{ s.max or 200 }}" spellcheck="false" autocomplete="off"
+                   style="min-width:240px;font-family:ui-monospace,monospace;">
+          </label>
         {% else %}
           <label style="display:flex;align-items:center;gap:10px;font-weight:600;flex-wrap:wrap;">
             <span style="min-width:260px;">{{ s.label }}</span>
