@@ -131,7 +131,16 @@ def test_inline_layer_recursion_and_automation_modes_are_drawn():
     edges = {(e.src, e.dst) for e in dt.EDGES}
     assert ("resolve", "inline") in edges                               # inline branch wired off resolve
     assert ("inline", "recurse") in edges                               # the recursion step
-    assert ("inlineEnd", "create") in edges and ("inlineEnd", "noop") in edges   # drop / accept cleanup
-    assert ("opts", "create") in edges                                  # override-deny -> create above the deny
+    assert ("inlineEnd", "inCreate") in edges and ("inlineEnd", "inNoop") in edges   # drop / accept cleanup
+    assert ("opts", "odCreate") in edges                                # override-deny -> create above the deny
     inline_end = next(n for n in dt.NODES if n.id == "inlineEnd")
     assert "cleanup" in inline_end.label.lower()
+
+
+def test_detail_branch_is_self_contained_no_cross_edges():
+    # the inline-layer + automation-mode detail must terminate in its OWN leaves, never draw an edge back
+    # to a CORE (level-0) leaf — those cross-edges were what tangled the expanded diagram.
+    level = {n.id: n.level for n in dt.NODES}
+    for e in dt.EDGES:
+        if level.get(e.src, 0) >= 1:                  # an edge leaving a detail node...
+            assert level.get(e.dst, 0) >= 1, f"detail edge {e.src}->{e.dst} reaches a core node"
