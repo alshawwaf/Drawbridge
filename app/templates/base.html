@@ -22,6 +22,9 @@
       --text:#e8ecf6; --text-2:#c3ccde; --muted:#8e98b0; --faint:#697088;
       --accent:#ff3d9a; --accent-2:#ff66b2; --accent-dark:#e6007e; --on-accent:#fff;
       --accent-soft:rgba(255,61,154,.15); --focus-ring:rgba(255,61,154,.32);
+      /* Signature magenta→violet gradient — used for icon chips, primary buttons, active chips. Defined
+         once here (references var(--accent), so it follows the theme); also covers light mode below. */
+      --accent-grad:linear-gradient(135deg, var(--accent) 0%, #7b3ff2 100%);
       --ok:#34d399; --ok-bg:rgba(52,211,153,.14); --ok-line:rgba(52,211,153,.34);
       --danger:#fb7185; --danger-bg:rgba(251,113,133,.13); --danger-line:rgba(251,113,133,.34);
       --warn:#fbbf24; --warn-bg:rgba(251,191,36,.16); --info:#38bdf8; --info-bg:rgba(56,189,248,.16);
@@ -75,7 +78,7 @@
       border-bottom:1px solid var(--header-line); color:var(--header-fg);
     }
     header .brand-mark { width:26px; height:26px; border-radius:8px; flex:none;
-      background:linear-gradient(135deg,var(--accent),#7c3aed); box-shadow:0 2px 10px var(--accent-soft);
+      background:var(--accent-grad); box-shadow:0 2px 10px var(--accent-soft);
       display:inline-flex; align-items:center; justify-content:center; }
     header .brand-mark svg { width:16px; height:16px; }
     header .brand { font-weight:750; font-size:15px; letter-spacing:-.1px; color:var(--header-fg); white-space:nowrap; }
@@ -154,8 +157,12 @@
     .page-head h1 { display:flex; align-items:center; gap:11px; margin:0; }
     .page-head .ph-sub { color:var(--muted); font-size:13.5px; margin:7px 0 0; max-width:720px; line-height:1.5; }
     .page-head .ph-actions { display:flex; gap:9px; align-items:center; flex-wrap:wrap; }
+    .page-head .ph-count { font-size:14px; font-weight:700; color:#fff; background:var(--accent-grad);
+      padding:1px 11px; border-radius:var(--r-pill); vertical-align:middle; position:relative; top:-2px;
+      box-shadow:0 2px 8px rgba(123,63,242,.25); }
     .icon-chip { display:inline-flex; align-items:center; justify-content:center; width:40px; height:40px;
-      border-radius:12px; flex:none; background:var(--accent-soft); color:var(--accent); }
+      border-radius:12px; flex:none; background:var(--accent-grad); color:#fff;
+      box-shadow:0 3px 12px rgba(123,63,242,.28); }
     .icon-chip svg { width:21px; height:21px; }
     .icon-chip.lg { width:48px; height:48px; border-radius:14px; }
     .icon-chip.lg svg { width:25px; height:25px; }
@@ -202,7 +209,7 @@
     /* ============================ Buttons ============================ */
     a.btn, button { font:inherit; font-size:13.5px; font-weight:650; border:none; border-radius:var(--r);
       padding:10px 17px; cursor:pointer; text-decoration:none; display:inline-flex; align-items:center; gap:6px;
-      line-height:1; background:linear-gradient(135deg,var(--accent),var(--accent-dark)); color:var(--on-accent);
+      line-height:1; background:var(--accent-grad); color:var(--on-accent);
       box-shadow:0 1px 2px rgba(0,0,0,.18); transition:filter .14s, transform .1s, box-shadow .14s, background .14s, border-color .14s, color .14s; }
     a.btn:hover, button:hover { filter:brightness(1.08); box-shadow:0 4px 16px var(--accent-soft); transform:translateY(-1px); }
     a.btn:active, button:active { transform:translateY(0); }
@@ -287,7 +294,7 @@
     .chip { background:var(--surface); color:var(--muted); border:1px solid var(--line); border-radius:var(--r-pill);
       padding:7px 15px; font-size:13px; font-weight:600; cursor:pointer; text-decoration:none; display:inline-block; transition:.12s; }
     .chip:hover { border-color:var(--line-strong); color:var(--text); }
-    .chip.active, .chip.active:hover { background:linear-gradient(135deg,var(--accent),var(--accent-dark));
+    .chip.active, .chip.active:hover { background:var(--accent-grad);
       color:var(--on-accent); border-color:transparent; }
     .chipcount { opacity:.7; margin-left:5px; }
 
