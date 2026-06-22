@@ -11,7 +11,7 @@
   </div>
   <div class="ph-actions">
     {{ export_menu('management') }}
-    <a class="btn" href="/management/new">+ New management server</a>
+    <a class="btn" href="/management/new" data-modal-form="/management/new" data-modal-title="New management server">+ New management server</a>
   </div>
 </div>
 
@@ -33,7 +33,7 @@
       {% if 'secret' in vis %}<td class="nowrap">{% if r.has_secret %}<span class="pill ok">saved</span>{% else %}<span class="pill faint">none</span>{% endif %}</td>{% endif %}
       {% if 'created' in vis %}<td class="nowrap"><time class="ts mono" data-ts="{{ r.ms.created_at.isoformat() }}">{{ r.ms.created_at.strftime('%Y-%m-%d') }}</time></td>{% endif %}
       {{ row_actions(
-           links=[{'label':'Edit','url':'/management/' ~ r.ms.id ~ '/edit'}],
+           links=[{'label':'Edit','url':'/management/' ~ r.ms.id ~ '/edit', 'modal':'Edit management server'}],
            menu=[{'label':'Test connection','attrs':'data-test="/management/'|safe ~ r.ms.id ~ '/test" data-name="'|safe ~ (r.ms.name | e) ~ '"'|safe}],
            delete={'url':'/management/' ~ r.ms.id ~ '/delete', 'name': r.ms.name}
          ) }}

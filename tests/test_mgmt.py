@@ -645,3 +645,16 @@ def test_is_lock_error_detects_locked_for_editing():
 def test_write_session_timeout_is_an_int_in_range():
     t = mgmt_api.write_session_timeout()
     assert isinstance(t, int) and 60 <= t <= 3600
+
+
+def test_form_tpl_returns_fragment_on_header():
+    """The new/edit routes return just the form fragment when loaded into a modal (X-Fragment), else
+    the full page — so the modal is a progressive enhancement and the page still works standalone."""
+    import types
+    from app.routers import mgmt, gateways
+    frag = types.SimpleNamespace(headers={"x-fragment": "1"})
+    full = types.SimpleNamespace(headers={})
+    assert mgmt._form_tpl(frag) == "_management_form.html"
+    assert mgmt._form_tpl(full) == "management_form.html"
+    assert gateways._form_tpl(frag) == "_gateway_form.html"
+    assert gateways._form_tpl(full) == "gateway_form.html"

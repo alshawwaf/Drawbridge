@@ -58,11 +58,16 @@ def mgmt_list(request: Request, db: Session = Depends(get_db)):
                                        "vis": table_prefs.visible_columns(db, user.id, "management")})
 
 
+def _form_tpl(request: Request) -> str:
+    """The full page normally; just the form fragment when loaded into the modal (X-Fragment header)."""
+    return "_management_form.html" if request.headers.get("x-fragment") else "management_form.html"
+
+
 @router.get("/management/new", response_class=HTMLResponse)
 def mgmt_new(request: Request, db: Session = Depends(get_db)):
     if get_user_or_none(request, db) is None:
         return RedirectResponse("/login", status_code=303)
-    return templates.TemplateResponse(request, "management_form.html",
+    return templates.TemplateResponse(request, _form_tpl(request),
                                       {"ms": None, "error": None, "action": "/management/new",
                                        "has_secret": False, "crypto_ok": mgmt_creds.available()})
 
@@ -281,7 +286,7 @@ def mgmt_edit(sid: int, request: Request, db: Session = Depends(get_db)):
     if user is None:
         return RedirectResponse("/login", status_code=303)
     ms = _owned(db, sid, user)
-    return templates.TemplateResponse(request, "management_form.html",
+    return templates.TemplateResponse(request, _form_tpl(request),
                                       {"ms": ms, "error": None, "action": f"/management/{sid}/edit",
                                        "has_secret": mgmt_creds.has_secret(db, ms),
                                        "crypto_ok": mgmt_creds.available()})

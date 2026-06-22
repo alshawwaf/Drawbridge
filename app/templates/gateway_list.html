@@ -11,7 +11,7 @@
   </div>
   <div class="ph-actions">
     {{ export_menu('gateways') }}
-    <a class="btn" href="/gateways/new">+ New gateway</a>
+    <a class="btn" href="/gateways/new" data-modal-form="/gateways/new" data-modal-title="New gateway">+ New gateway</a>
   </div>
 </div>
 
@@ -34,7 +34,7 @@
       {% if 'tls' in vis %}<td class="nowrap">{% if r.gw.cert_pem %}<span class="pill ok">pinned cert</span>{% elif r.gw.auto_trust %}<span class="pill faint">auto-trust</span>{% else %}<span class="pill faint">system trust</span>{% endif %}</td>{% endif %}
       {% if 'layers' in vis %}<td class="nowrap num">{{ r.layers }}</td>{% endif %}
       {% if 'created' in vis %}<td class="nowrap"><time class="ts mono" data-ts="{{ r.gw.created_at.isoformat() }}">{{ r.gw.created_at.strftime('%Y-%m-%d') }}</time></td>{% endif %}
-      {{ row_actions(links=[{'label':'Edit','url':'/gateways/' ~ r.gw.id ~ '/edit'}], delete={'url':'/gateways/' ~ r.gw.id ~ '/delete', 'name': r.gw.name}) }}
+      {{ row_actions(links=[{'label':'Edit','url':'/gateways/' ~ r.gw.id ~ '/edit', 'modal':'Edit gateway'}], delete={'url':'/gateways/' ~ r.gw.id ~ '/delete', 'name': r.gw.name}) }}
     </tr>
   {% endfor %}
   </tbody>
