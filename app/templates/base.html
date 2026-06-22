@@ -377,8 +377,12 @@
     .modal-overlay { position:fixed; inset:0; background:var(--overlay); -webkit-backdrop-filter:blur(3px); backdrop-filter:blur(3px);
       display:flex; align-items:center; justify-content:center; z-index:1000; }
     .modal-overlay[hidden] { display:none; }
-    .modal { background:var(--surface); border:1px solid var(--line); border-radius:16px; padding:26px; max-width:440px;
-      width:90%; box-shadow:var(--shadow-lg); max-height:88vh; overflow-y:auto; animation:pop .16s ease; }
+    /* No flat border — the shadow defines the card and the gradient header keeps crisp edge-to-edge corners;
+       a faint inner ring (only visible on the body edges, hidden under the opaque header) defines the dark edge. */
+    .modal { background:var(--surface); border:none; border-radius:16px; padding:26px; max-width:440px;
+      width:90%; box-shadow:var(--shadow-lg), inset 0 0 0 1px rgba(255,255,255,.06);
+      max-height:88vh; overflow-y:auto; animation:pop .16s ease; }
+    html[data-theme="light"] .modal { box-shadow:var(--shadow-lg); }
     .modal.wide { max-width:560px; } .modal.xwide { max-width:880px; }
     .modal h3 { margin:0 0 8px; font-size:18px; font-weight:740; }
     .modal p { color:var(--muted); font-size:14px; margin:0; }
