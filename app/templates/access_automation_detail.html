@@ -244,8 +244,9 @@ Content-Type: application/json
         h += '<div class="row" style="gap:6px; flex-wrap:wrap; margin-top:8px;">';
         c.forEach(function (x) {
           if (res.match && x.name === res.match) return;     // don't repeat the matched one
+          var tag = x.category || x.kind;   // apps carry category; services carry kind (icmp/other/…)
           h += '<button type="button" class="copybtn" ' + dataAttr + '="' + escAttr(x.name) + '" title="pick this ' + label + '">' +
-               esc(x.name) + (x.category ? ' <span class="muted">· ' + esc(x.category) + '</span>' : '') + '</button>';
+               esc(x.name) + (tag ? ' <span class="muted">· ' + esc(tag) + '</span>' : '') + '</button>';
         });
         h += '</div>';
       }

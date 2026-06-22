@@ -1021,14 +1021,14 @@ def test_icmp_request_disjoint_from_tcp_rule_creates():
     rules = [_irule(1, ["h"], ["any"], ["t443"], "acc", _SVC_OD),
              _irule(2, ["any"], ["any"], ["any"], "drp", _SVC_OD)]
     # different source so there's no exact-two-cell widen candidate; icmp ≠ tcp/443 -> create
-    req = AccessRequest(src_cidrs=["10.9.9.9/32"], dst_cidrs=["0.0.0.0/0"], service="echo-request")
+    req = AccessRequest(src_cidrs=["10.9.9.9/32"], dst_cidrs=["0.0.0.0/0"], service="echo-request", service_kind="icmp")
     assert aa.decide(req, rules).outcome is Outcome.CREATE     # icmp not covered by the tcp/443 rule
 
 
 def test_named_service_already_permitted_is_no_op():
     rules = [_irule(1, ["any"], ["any"], ["echo"], "acc", _SVC_OD),
              _irule(2, ["any"], ["any"], ["any"], "drp", _SVC_OD)]
-    req = AccessRequest(src_cidrs=["10.0.0.5/32"], dst_cidrs=["0.0.0.0/0"], service="echo-request")
+    req = AccessRequest(src_cidrs=["10.0.0.5/32"], dst_cidrs=["0.0.0.0/0"], service="echo-request", service_kind="icmp")
     assert aa.decide(req, rules).outcome is Outcome.NO_OP
 
 
@@ -1036,7 +1036,7 @@ def test_named_service_widens_exact_two_cells():
     # rule: src h, dst Any, svc echo-request, Accept ; request src 10.0.0.9 -> widen the source
     rules = [_irule(1, ["h"], ["any"], ["echo"], "acc", _SVC_OD),
              _irule(2, ["any"], ["any"], ["any"], "drp", _SVC_OD)]
-    req = AccessRequest(src_cidrs=["10.0.0.9/32"], dst_cidrs=["0.0.0.0/0"], service="echo-request")
+    req = AccessRequest(src_cidrs=["10.0.0.9/32"], dst_cidrs=["0.0.0.0/0"], service="echo-request", service_kind="icmp")
     d = aa.decide(req, rules)
     assert d.outcome is Outcome.WIDEN and d.widen_field == "source"
 
@@ -1055,3 +1055,50 @@ def test_build_request_named_service_and_precedence():
     assert r.service == "icmp" and r.application is None
     r2 = tk.build_request("10.0.0.5", "Any", "tcp", "443", application="Facebook", service="icmp")
     assert r2.application == "Facebook" and r2.service is None     # application wins
+
+
+# --- service protocol-family must not alias (v4 icmp != v6 icmp of the same name) ------------------
+def test_named_service_family_not_aliased():
+    od = dict(_SVC_OD)
+    od["echo6"] = {"uid": "echo6", "type": "service-icmp6", "name": "echo-request"}  # same NAME, v6 family
+    # rule allows the v6 echo-request; a v4 (icmp) echo-request request must NOT be read as covered
+    rules = [_irule(1, ["any"], ["any"], ["echo6"], "acc", od),
+             _irule(2, ["any"], ["any"], ["any"], "drp", od)]
+    req = AccessRequest(src_cidrs=["10.0.0.5/32"], dst_cidrs=["0.0.0.0/0"],
+                        service="echo-request", service_kind="icmp")
+    assert aa.decide(req, rules).outcome is Outcome.CREATE     # not NO_OP — different protocol family
+
+
+# --- configurable aggressiveness (DecideOptions) ---------------------------------------------------
+_DENY_OD = {
+    "h": {"uid": "h", "type": "host", "name": "h", "ipv4-address": "10.0.0.5"},
+    "any": {"uid": "any", "type": "CpmiAnyObject", "name": "Any"},
+    "t443": {"uid": "t443", "type": "service-tcp", "name": "https", "port": "443"},
+    "acc": {"uid": "acc", "name": "Accept"}, "drp": {"uid": "drp", "name": "Drop"},
+}
+
+
+def _req443():
+    return AccessRequest(src_cidrs=["10.0.0.5/32"], dst_cidrs=["0.0.0.0/0"], protocol="tcp", ports="443")
+
+
+def test_override_deny_off_reviews_on_off_creates_above():
+    # a specific (non-cleanup) covering DROP
+    rules = [_irule(1, ["h"], ["any"], ["t443"], "drp", _DENY_OD),
+             _irule(2, ["any"], ["any"], ["any"], "drp", _DENY_OD)]
+    assert aa.decide(_req443(), rules).outcome is Outcome.REVIEW                      # default: safe
+    d = aa.decide(_req443(), rules, aa.DecideOptions(override_deny=True))
+    assert d.outcome is Outcome.CREATE and d.position == {"above": "r1"}             # opt-in: create above
+
+
+def test_ignore_conditions_lets_conditional_accept_cover():
+    # a conditional (time-scoped) ACCEPT that covers the request
+    raw = {"uid": "r1", "rule-number": 1, "name": "biz-hours", "enabled": True,
+           "source": ["any"], "destination": ["any"], "service": ["t443"], "action": "acc",
+           "time": ["worktime"]}
+    od = dict(_DENY_OD, worktime={"uid": "worktime", "type": "time", "name": "WorkHours"})
+    r1 = aa._parse_rule(raw, od)
+    cleanup = _irule(2, ["any"], ["any"], ["any"], "drp", od)
+    assert r1.conditional                                                            # it IS conditional
+    assert aa.decide(_req443(), [r1, cleanup]).outcome is Outcome.CREATE             # default: skip -> create
+    assert aa.decide(_req443(), [r1, cleanup], aa.DecideOptions(ignore_conditions=True)).outcome is Outcome.NO_OP

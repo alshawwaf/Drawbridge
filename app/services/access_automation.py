@@ -201,6 +201,7 @@ class AccessRequest:
     ports: str = ""           # "443" or "8000-8100" (ignored when `application`/`service` is set)
     application: Optional[str] = None   # an application-site name (e.g. "Facebook") — overrides everything
     service: Optional[str] = None       # a named non-port service (e.g. "echo-request", "GRE") by name
+    service_kind: Optional[str] = None  # its protocol family (icmp/icmp6/sctp/other/…) — set by resolve()
     action: str = "Accept"
 
     def src_iv(self):
@@ -212,8 +213,8 @@ class AccessRequest:
     def svc(self) -> ServiceSet:
         if self.application:
             return ServiceSet(apps={self.application})
-        if self.service:
-            return ServiceSet(named={self.service})
+        if self.service:                # (family, name): family-less (unresolved) fails safe — it won't
+            return ServiceSet(named={(self.service_kind or "", self.service)})  # alias a real family object
         return ServiceSet(by_proto={self.protocol.lower(): _ports_to_iv(self.ports)})
 
 
@@ -415,14 +416,15 @@ def _parse_svc(cell, objdict: dict) -> ServiceSet:
             s.opaque = True                 # can't enumerate which apps it contains
         elif t in ("service-icmp", "service-icmp6", "service-sctp"):
             # Distinct protocols (icmp 1 / icmp6 58 / sctp 132) — can NEVER overlap a tcp/udp port
-            # request, so match them by name only (like apps), no port-uncertainty.
-            s.named.add(name)
+            # request, so match by name. Key on (family, name): the SAME predefined name exists across
+            # families (echo-request is both service-icmp AND service-icmp6) and must NOT alias.
+            s.named.add((t.replace("service-", ""), name))
         elif t in ("service-other", "service-dce-rpc", "service-rpc", "service-gtp",
                    "service-citrix-tcp", "service-compound-tcp"):
-            # Match by name, but their protocol/port reach can't be bounded (service-other is an
-            # arbitrary IP protocol; rpc/gtp/citrix/compound match dynamically) -> opaque so a PORT
+            # Match by (family, name), but their protocol/port reach can't be bounded (service-other is
+            # an arbitrary IP protocol; rpc/gtp/citrix/compound match dynamically) -> opaque so a PORT
             # request can't assume it's disjoint (stays in the path -> REVIEW for a deny).
-            s.named.add(name)
+            s.named.add((t.replace("service-", ""), name))
             s.opaque = True
         elif t == "service-group":
             s.group_uids.append(o.get("uid", ""))
@@ -565,11 +567,24 @@ def _provably_disjoint(rel: Relation, unknown: bool) -> bool:
     return (not unknown) and rel == Relation.DISJOINT
 
 
-def decide(req: AccessRequest, rules: list[ParsedRule]) -> Decision:
+@dataclass(frozen=True)
+class DecideOptions:
+    """Admin-tunable automation aggressiveness (built from Settings by the caller; decide() stays pure).
+    Both default OFF — the safe, conservative behaviour. Turning one ON converts a class of REVIEW into
+    an automatic action because the admin has accepted that risk."""
+    override_deny: bool = False        # an explicit (non-cleanup) deny covers/overlaps -> CREATE the
+                                       # allow ABOVE it (take precedence) instead of REVIEW
+    ignore_conditions: bool = False    # evaluate VPN/time/data/install-on-scoped rules as if uncondi-
+                                       # tional (a conditional ACCEPT can cover; a conditional DENY blocks)
+
+
+def decide(req: AccessRequest, rules: list[ParsedRule], options: "DecideOptions" = None) -> Decision:
     """Pure: pick the minimal correct change for ``req`` against ``rules``.
 
-    Walks the rulebase top-down, honouring Check Point first-match semantics.
+    Walks the rulebase top-down, honouring Check Point first-match semantics. ``options`` (default: all
+    conservative) lets an admin opt into auto-resolving the judgment-call REVIEWs.
     """
+    options = options or DecideOptions()
     # Guard 1 -- IPv6 is not yet modeled. ANY_IP and every parsed cell live in the IPv4 integer space
     # (0 .. 2^32-1); a v6 endpoint's intervals sit far above it, so relation() reads every v4/Any cell as
     # DISJOINT, the engine concludes "nothing is in the path", and silently CREATEs an allow above the
@@ -640,7 +655,7 @@ def decide(req: AccessRequest, rules: list[ParsedRule]) -> Decision:
         # conditional ACCEPT is excluded from NO_OP / reuse / widen (its grant only holds under that
         # condition) and skipped -- a clean rule decides, or we CREATE a precise rule for the requested
         # (unconditional) traffic, noting why the matching-but-conditional rule doesn't grant it.
-        if r.conditional and interferes:
+        if r.conditional and interferes and not options.ignore_conditions:
             if not r.is_accept:
                 return Decision(
                     Outcome.REVIEW,
@@ -669,6 +684,13 @@ def decide(req: AccessRequest, rules: list[ParsedRule]) -> Decision:
         if fully_covers and r.is_drop and covering_drop is None:
             if _is_catchall(r) and i == last_enabled:
                 covering_drop = r        # the real bottom cleanup -> placement floor
+            elif options.override_deny:
+                return Decision(
+                    Outcome.CREATE,
+                    f"traffic is denied by rule {r.number} ({r.name}); creating the allow ABOVE it "
+                    f"(override-deny mode is on)",
+                    target_rule=r, position={"above": r.uid},
+                )
             else:
                 return Decision(
                     Outcome.REVIEW,
@@ -683,6 +705,13 @@ def decide(req: AccessRequest, rules: list[ParsedRule]) -> Decision:
         # sub-flows -> REVIEW. (A fully-covering deny is handled above; the catch-all cleanup is excluded.)
         if (r.is_drop and not r.complex and covering_drop is None
                 and interferes and not fully_covers and not _is_catchall(r)):
+            if options.override_deny:
+                return Decision(
+                    Outcome.CREATE,
+                    f"rule {r.number} ({r.name}) partially denies the requested scope; creating the "
+                    f"allow ABOVE it (override-deny mode is on)",
+                    target_rule=r, position={"above": r.uid},
+                )
             return Decision(
                 Outcome.REVIEW,
                 f"rule {r.number} ({r.name}) partially denies the requested scope (an overlapping DROP "
@@ -1035,6 +1064,7 @@ def _resolve_svc(session, req: AccessRequest):
     res = services.resolve(session, req.service)
     if res.get("match"):
         req.service = res["match"]
+        req.service_kind = res.get("match_kind") or ""   # tag the family so the engine can't alias it
     return res
 
 
@@ -1055,6 +1085,16 @@ def _correlate(session, req: AccessRequest):
     return res, None, ""
 
 
+def _decide_options() -> "DecideOptions":
+    """Build the engine's automation-aggressiveness options from the admin's Settings (best-effort)."""
+    try:
+        from . import app_settings
+        return DecideOptions(override_deny=bool(app_settings.get("aa_override_deny")),
+                             ignore_conditions=bool(app_settings.get("aa_ignore_conditions")))
+    except Exception:  # noqa: BLE001
+        return DecideOptions()
+
+
 def _obj_review(res: dict, unresolved: dict, kind: str, base: dict) -> dict:
     return {"ok": True, "outcome": "review", "target_rule": None,
             "reason": (f"the {kind} “{unresolved['term']}” has no single confident match on this "
@@ -1069,7 +1109,7 @@ def preview(server, secret, req: AccessRequest, layer: str, *, package: Optional
             if unresolved is not None:
                 return _obj_review(res, unresolved, kind, {"cached": False, "trace": s.trace})
             rules, cached = load_layer_cached(s, server, layer, package)
-            decision = decide(req, rules)
+            decision = decide(req, rules, _decide_options())
             out = build_preview(s, decision, req, rules)
             return {"ok": True, **out, "cached": cached, "trace": s.trace, **res}
     except MgmtError as exc:
@@ -1091,7 +1131,7 @@ def execute(server, secret, req: AccessRequest, layer: str, *, package: Optional
                 return {"ok": True, "applied": False, "published": False,
                         **_obj_review(res, unresolved, kind, {"trace": s.trace})}
             rules = load_layer(s, layer, package)
-            decision = decide(req, rules)
+            decision = decide(req, rules, _decide_options())
             base = {"outcome": decision.outcome.value, "reason": decision.reason,
                     "target_rule": _brief(decision.target_rule), **res}
             if decision.outcome in (Outcome.NO_OP, Outcome.REVIEW):
