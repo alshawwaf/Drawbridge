@@ -66,6 +66,34 @@ SETTINGS: list[Setting] = [
             "Always pull fresh before applying",
             "Before committing a change (apply / publish), re-pull the live policy so the decision is "
             "never based on a cached rulebase. Recommended."),
+
+    # --- Storage & retention -------------------------------------------------------------------------
+    # The two high-volume tables (the Activity log and the built-in SIEM receiver) are bounded so a
+    # long-running demo — a Data Center importing on a schedule, or Log Exporter streaming for days —
+    # can never fill the disk. A background sweep (started in main.lifespan) enforces these caps.
+    Setting("activity_max_records", "int", 5000,
+            "Activity log — keep newest N",
+            "Hard cap on the Activity log table: older entries are trimmed (cheap indexed delete) so the "
+            "database can't grow without bound while integrations run. 0 = unlimited (not recommended in "
+            "production).", group="Storage & retention", min=0, max=2_000_000),
+    Setting("activity_max_age_days", "int", 0,
+            "Activity log — also delete older than (days)",
+            "Additionally drop Activity log entries older than this many days, regardless of count. "
+            "0 = keep by record count only.", group="Storage & retention", min=0, max=3650),
+    Setting("siem_max_records", "int", 2000,
+            "SIEM receiver — keep newest N",
+            "Hard cap on the built-in SIEM (Log Exporter) table so a flooding gateway can't fill the disk "
+            "— it's a live demo viewer, not a log archive. 0 = unlimited (not recommended).",
+            group="Storage & retention", min=0, max=2_000_000),
+    Setting("retention_sweep_min", "int", 5,
+            "Housekeeping interval (minutes)",
+            "How often the background pass enforces the caps above. Trimming is a cheap indexed range "
+            "delete that fires only when a table is over cap, so a few minutes is plenty.",
+            group="Storage & retention", min=1, max=1440),
+    Setting("retention_notify", "bool", True,
+            "Notify when records are trimmed",
+            "Post a notification (the header bell) when a housekeeping sweep trims records, so retention "
+            "is never silent. Throttled to at most once an hour.", group="Storage & retention"),
 ]
 
 _BY_KEY = {s.key: s for s in SETTINGS}

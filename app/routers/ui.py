@@ -1,5 +1,6 @@
 """Server-rendered portal UI (Jinja2 + HTMX)."""
 import json
+import re
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
@@ -18,7 +19,7 @@ from ..security import (
     get_user_or_none, hash_password, new_feed_token, password_strength_error, verify_password,
 )
 from ..schemas.ioc import IOC_FORMATS, IOC_LEVELS, IOC_TYPES
-from ..services import bundle, coverage, login_guard
+from ..services import bundle, coverage, login_guard, table_prefs
 from ..services.render import (
     custom_csv_command,
     normalize_generic_dc_content,
@@ -107,9 +108,11 @@ def api_explorer_page(request: Request, api: str = "management", version: str = 
 
 @router.get("/api-explorer/openapi.json")
 def api_explorer_spec(request: Request, api: str = "management", version: str = "",
-                      server_url: str = "", db: Session = Depends(get_db)):
+                      server_url: str = "", download: int = 0, db: Session = Depends(get_db)):
     """The full OpenAPI document Swagger UI loads — converted live from the CP docs, cached, with the
-    chosen target server pre-filled. `version=''` = latest published."""
+    chosen target server pre-filled. `version=''` = latest published. This is a standard OpenAPI 3.0
+    document, so `download=1` serves it as a file ready to import into Postman or Bruno (which both build
+    a request collection from it), with the selected target server baked into the spec's `servers`."""
     if get_user_or_none(request, db) is None:
         return JSONResponse({"error": "Not authenticated"}, status_code=401)
     if api not in ("management", "gaia"):
@@ -120,7 +123,11 @@ def api_explorer_spec(request: Request, api: str = "management", version: str = 
     except Exception as exc:  # noqa: BLE001
         return JSONResponse({"error": f"Could not build the {api} {version or 'latest'} spec — {exc}"},
                             status_code=502)
-    return JSONResponse(spec)
+    resp = JSONResponse(spec)
+    if download:
+        ver = re.sub(r"[^A-Za-z0-9._-]", "", version or coverage.latest(api) or "latest")
+        resp.headers["Content-Disposition"] = f'attachment; filename="checkpoint-{api}-{ver}.openapi.json"'
+    return resp
 
 # --- Generic Data Center default (the canonical sk167210 sample) -----------------------
 DEFAULT_FEED_NAME = "Generic-DC-Example"
@@ -467,7 +474,9 @@ def feeds_list(request: Request, db: Session = Depends(get_db)):
     return templates.TemplateResponse(
         request,
         "dashboard.html",
-        {"user": user, "rows": rows, "type_counts": type_counts, "flash": _pop_flash(request)},
+        {"user": user, "rows": rows, "type_counts": type_counts, "flash": _pop_flash(request),
+         "cols": table_prefs.spec("feeds"),
+         "vis": table_prefs.visible_columns(db, user.id, "feeds")},
     )
 
 

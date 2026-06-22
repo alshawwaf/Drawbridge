@@ -2,6 +2,16 @@
 {% block title %}Activity log{% endblock %}
 {% block main_class %}wide{% endblock %}
 {% block content %}
+<style>
+  .acttable th.act-del-col, .acttable td.act-del-col { width:34px; text-align:center; padding-left:0; padding-right:8px; }
+  .acttable .rowdel { opacity:0; border:0; background:transparent; color:var(--muted); cursor:pointer;
+    padding:4px; border-radius:7px; display:inline-flex; align-items:center; justify-content:center;
+    transition:opacity .12s, background .12s, color .12s; }
+  .acttable .rowdel svg { display:block; }
+  .act-row:hover .rowdel, .rowdel:focus-visible { opacity:1; }
+  .acttable .rowdel:hover { background:var(--bad-bg, #fde8ec); color:var(--bad-fg, #c4314b); }
+  @media (hover: none) { .acttable .rowdel { opacity:1; } }   /* touch: no hover, so always show */
+</style>
 <div class="page-head">
   <span class="icon-chip lg"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></span>
   <div class="ph-main">
@@ -151,9 +161,21 @@
     function reload() { page = 1; syncState(); load(); }
     window.gotoPage = function (n) { page = Math.max(1, n); load(); window.scrollTo({ top: 0, behavior: 'smooth' }); };
 
+    function deleteOne(id) {
+      if (!window.confirm('Delete this log record? This cannot be undone.')) return;
+      var body = query();          // current view (kinds / dc / status / page_size / q)
+      body.append('ids', id);
+      body.set('ajax', '1');
+      fetch('/activity/delete', {
+        method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: body.toString()
+      }).then(function () { load(); }).catch(function () {});
+    }
+
     rowsEl.addEventListener('click', function (e) {
       var pg = e.target.closest ? e.target.closest('[data-page]') : null;
       if (pg) { e.preventDefault(); window.gotoPage(parseInt(pg.getAttribute('data-page'), 10) || 1); return; }
+      var del = e.target.closest ? e.target.closest('.rowdel') : null;   // per-row hover delete — before row-open
+      if (del) { e.preventDefault(); e.stopPropagation(); deleteOne(del.getAttribute('data-del')); return; }
       if (e.target.classList.contains('row-cb')) { syncDel(); return; }
       var row = e.target.closest('.act-row');
       if (row) openRecord(row.getAttribute('data-id'));

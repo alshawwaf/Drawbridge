@@ -162,6 +162,8 @@
            placeholder="https://mgmt.example.com:443/{{ 'web_api' if api_type=='management' else 'gaia_api' }}">
   </label>
   <button id="ax-load" class="btn">Load</button>
+  <button id="ax-export" class="btn secondary" type="button"
+          title="Download an OpenAPI 3.0 file — import it into Postman or Bruno">⤓ Export for Postman / Bruno</button>
 </div>
 
 <p class="ax-note">
@@ -170,6 +172,12 @@
   blocked by the browser — but the exact request body, headers, and <code>curl</code> are still generated
   for you to run. For actual policy changes, use the gated editor on the Management Servers page (preview →
   publish). TLS is always verified server-side; this page never disables it.
+</p>
+<p class="ax-note">
+  <strong>Export for Postman / Bruno</strong> downloads this version's OpenAPI 3.0 file with your selected
+  target server baked in. In <strong>Postman</strong>: <em>Import → File</em> (builds a collection of every
+  command). In <strong>Bruno</strong>: <em>Import Collection → OpenAPI V3</em>. Re-export after switching the
+  version or target server to get a fresh file.
 </p>
 
 <div id="ax-status">Loading {{ api_type }} {{ version or 'latest' }} spec…</div>
@@ -230,6 +238,12 @@
   }
 
   document.getElementById('ax-load').addEventListener('click', load);
+  document.getElementById('ax-export').addEventListener('click', function () {
+    var p = new URLSearchParams({ api: API, version: verSel.value, download: '1' });
+    var t = targetUrl();
+    if (t) p.set('server_url', t);
+    window.location = '/api-explorer/openapi.json?' + p.toString();   // Content-Disposition → file download
+  });
   load();
 })();
 </script>

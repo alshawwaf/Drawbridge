@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from ..db import get_db
 from ..models import ManagementServer, User
 from ..security import get_user_or_none
-from ..services import gaia_export, mgmt_api, mgmt_creds, mgmt_export
+from ..services import gaia_export, mgmt_api, mgmt_creds, mgmt_export, table_prefs
 from ..services.gaia_client import ensure_pinned, fetch_gateway_cert
 from .ui import _flash, _pop_flash, templates
 
@@ -53,7 +53,9 @@ def mgmt_list(request: Request, db: Session = Depends(get_db)):
     ).all()
     rows = [{"ms": m, "has_secret": mgmt_creds.has_secret(db, m)} for m in servers]
     return templates.TemplateResponse(request, "management_list.html",
-                                      {"rows": rows, "flash": _pop_flash(request)})
+                                      {"rows": rows, "flash": _pop_flash(request),
+                                       "cols": table_prefs.spec("management"),
+                                       "vis": table_prefs.visible_columns(db, user.id, "management")})
 
 
 @router.get("/management/new", response_class=HTMLResponse)

@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from ..db import get_db
 from ..models import DynamicLayer, Gateway, GatewayLayerSnapshot, User
 from ..security import get_user_or_none, new_feed_token
-from ..services import gateway_creds, gaia_export
+from ..services import gateway_creds, gaia_export, table_prefs
 from ..services.apply_runner import fetch_dynamic_content
 from ..services.gaia_client import ensure_pinned, fetch_gateway_cert
 from .ui import _flash, _pop_flash, templates
@@ -46,7 +46,11 @@ def gateways_list(request: Request, db: Session = Depends(get_db)):
         if gid:
             counts[gid] = counts.get(gid, 0) + 1
     rows = [{"gw": g, "layers": counts.get(g.id, 0)} for g in gws]
-    return templates.TemplateResponse(request, "gateway_list.html", {"rows": rows, "flash": _pop_flash(request)})
+    return templates.TemplateResponse(request, "gateway_list.html", {
+        "rows": rows, "flash": _pop_flash(request),
+        "cols": table_prefs.spec("gateways"),
+        "vis": table_prefs.visible_columns(db, user.id, "gateways"),
+    })
 
 
 @router.get("/gateways/new", response_class=HTMLResponse)

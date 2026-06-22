@@ -21,7 +21,7 @@ from ..schemas.dynamic_layer import (
     validate_layer_content,
 )
 from ..security import get_user_or_none, new_feed_token
-from ..services import gateway_creds
+from ..services import gateway_creds, table_prefs
 from ..services.apply_runner import STAGES, fetch_dynamic_content, get_progress, start_apply
 from ..services.gaia_client import ensure_pinned, fetch_gateway_cert
 from .ui import _flash, _pop_flash, templates
@@ -144,7 +144,9 @@ def layers_list(request: Request, db: Session = Depends(get_db)):
     if gw_counts.get("none"):
         gw_filters.append({"key": "none", "name": "No gateway", "count": gw_counts["none"]})
     return templates.TemplateResponse(request, "dynamic_list.html",
-        {"rows": rows, "gw_filters": gw_filters, "flash": _pop_flash(request)})
+        {"rows": rows, "gw_filters": gw_filters, "flash": _pop_flash(request),
+         "cols": table_prefs.spec("layers"),
+         "vis": table_prefs.visible_columns(db, user.id, "layers")})
 
 
 def _gateways_of(db: Session, user: User):

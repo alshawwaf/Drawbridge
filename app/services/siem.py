@@ -18,8 +18,18 @@ _SEVERITY_NAMES = ["emerg", "alert", "crit", "err", "warning", "notice", "info",
 
 
 def _max_records() -> int:
-    """Newest-N retention cap — a flooding gateway can't grow the table without bound."""
-    return max(100, get_settings().syslog_max_records)
+    """Newest-N retention cap — a flooding gateway can't grow the table without bound. Admin-tunable
+    from the Settings page (``siem_max_records``), falling back to the env default; 0 = unlimited (the
+    background retention sweep still applies whatever cap is configured)."""
+    cap = 0
+    try:
+        from .app_settings import get
+        cap = int(get("siem_max_records"))
+    except Exception:  # noqa: BLE001 — never let a settings read break the hot store path
+        cap = 0
+    if cap <= 0:
+        cap = get_settings().syslog_max_records
+    return max(0, cap)
 
 
 def _parse_ext(ext: str) -> dict:
@@ -238,6 +248,8 @@ def _trim(db: Session) -> None:
     """Delete everything older than the newest N by primary key — an indexed range delete that fires
     only when over cap (cheap even under load), keeping the table (and disk) bounded."""
     cap = _max_records()
+    if cap <= 0:               # unlimited — the per-batch trim is disabled
+        return
     n = db.scalar(select(func.count()).select_from(SiemLog)) or 0
     if n > cap:
         max_id = db.scalar(select(func.max(SiemLog.id))) or 0

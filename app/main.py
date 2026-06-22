@@ -1,4 +1,6 @@
 """Application entrypoint: wiring, session middleware, DB bootstrap, admin seed."""
+import asyncio
+import logging
 import secrets
 import sys
 from contextlib import asynccontextmanager
@@ -55,15 +57,35 @@ async def _start_siem_receiver(settings):
     return receiver
 
 
+async def _retention_loop():
+    """Storage guardrail: periodically trim the Activity log + SIEM tables to the admin-configured caps
+    so a long-running demo can't fill the disk. Defensive — an iteration failure is logged and the loop
+    continues; the interval is read live so a Settings change takes effect on the next pass."""
+    from .services import app_settings, retention
+    await asyncio.sleep(20)   # let startup settle; the first pass also clears any pre-existing backlog
+    while True:
+        try:
+            await asyncio.to_thread(retention.run_once)
+        except Exception:  # noqa: BLE001 — housekeeping must never crash the app
+            logging.getLogger("dcsim.retention").exception("retention loop iteration failed")
+        try:
+            interval = max(1, int(app_settings.get("retention_sweep_min"))) * 60
+        except Exception:  # noqa: BLE001
+            interval = 300
+        await asyncio.sleep(interval)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
     init_db()
     _seed_admin(settings)
     receiver = await _start_siem_receiver(settings)
+    retention_task = asyncio.create_task(_retention_loop())
     try:
         yield
     finally:
+        retention_task.cancel()
         if receiver is not None:
             await receiver.stop()
         from .services.mgmt_api import close_pool   # log out pooled read sessions on shutdown
