@@ -52,3 +52,31 @@ def test_no_service_match():
     sv._cache.clear()
     r = sv.resolve(_Sess([]), "totally-unknown-zzz")
     assert r["match"] is None and r["candidates"] == [] and r["note"]
+
+
+def test_kind_filter_restricts_to_picked_service_type():
+    sv._cache.clear()
+    objs = [_svc("echo-request", typ="service-icmp"),
+            _svc("echo-request6", typ="service-icmp6"),
+            _svc("GRE", typ="service-other"),
+            _svc("https", typ="service-tcp")]
+    s = _Sess(objs)
+    # icmp keeps BOTH icmp families, drops other/tcp
+    icmp = {c["name"] for c in sv.search(s, "echo", kind="icmp")}
+    assert icmp == {"echo-request", "echo-request6"}
+    sv._cache.clear()
+    # "other" keeps only service-other
+    other = [c["name"] for c in sv.search(_Sess(objs), "GRE", kind="other")]
+    assert other == ["GRE"]
+    sv._cache.clear()
+    # no kind -> unfiltered (all service-*)   (_Sess ignores the server-side filter; term only gates len>=2)
+    allk = {c["name"] for c in sv.search(_Sess(objs), "ec", kind="")}
+    assert "https" in allk and "GRE" in allk
+
+
+def test_kind_is_part_of_the_cache_key():
+    sv._cache.clear()
+    objs = [_svc("echo-request", typ="service-icmp"), _svc("GRE", typ="service-other")]
+    s = _Sess(objs)
+    assert len(sv.search(s, "ec", kind="icmp")) == 1          # icmp only
+    assert "GRE" in {c["name"] for c in sv.search(s, "ec", kind="")}   # different key -> not the cached icmp result

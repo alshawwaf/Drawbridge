@@ -1050,6 +1050,48 @@ def test_service_other_drop_keeps_port_request_in_path():
     assert aa.decide(req, rules).outcome is Outcome.REVIEW
 
 
+# --- SCTP is PORT-based (a real port), not a portless named service like ICMP ---------------------
+_SCTP_OD = {
+    "any": {"uid": "any", "type": "CpmiAnyObject", "name": "Any"},
+    "s9000": {"uid": "s9000", "type": "service-sctp", "name": "sctp-9000", "port": "9000"},
+    "t9000": {"uid": "t9000", "type": "service-tcp", "name": "tcp-9000", "port": "9000"},
+    "acc": {"uid": "acc", "name": "Accept"}, "drp": {"uid": "drp", "name": "Drop"},
+}
+
+
+def test_sctp_rule_parses_to_by_proto_not_named():
+    r = _irule(1, ["any"], ["any"], ["s9000"], "acc", _SCTP_OD)
+    assert r.svc.by_proto.get("sctp") == [(9000, 9000)]      # keyed by value under its own protocol
+    assert not r.svc.named                                   # NOT a named service
+
+
+def test_sctp_request_no_op_by_port():
+    rules = [_irule(1, ["any"], ["any"], ["s9000"], "acc", _SCTP_OD),
+             _irule(2, ["any"], ["any"], ["any"], "drp", _SCTP_OD)]
+    req = AccessRequest(src_cidrs=["10.0.0.5/32"], dst_cidrs=["0.0.0.0/0"], protocol="sctp", ports="9000")
+    assert aa.decide(req, rules).outcome is Outcome.NO_OP
+
+
+def test_sctp_disjoint_from_same_port_tcp_rule_creates():
+    # sctp/9000 must NEVER be read as covered by a tcp/9000 rule (distinct protocols)
+    rules = [_irule(1, ["any"], ["any"], ["t9000"], "acc", _SCTP_OD),
+             _irule(2, ["any"], ["any"], ["any"], "drp", _SCTP_OD)]
+    req = AccessRequest(src_cidrs=["10.0.0.5/32"], dst_cidrs=["0.0.0.0/0"], protocol="sctp", ports="9000")
+    assert aa.decide(req, rules).outcome is Outcome.CREATE
+
+
+def test_icmp_still_parses_to_named_not_by_proto():
+    r = _irule(1, ["any"], ["any"], ["echo"], "acc", _SVC_OD)
+    assert ("icmp", "echo-request") in r.svc.named and not r.svc.by_proto   # portless -> named
+
+
+def test_build_request_accepts_sctp_rejects_other_protocols():
+    assert tk.build_request("1.1.1.1", "2.2.2.2", "sctp", "9000").protocol == "sctp"
+    for bad in ("icmp", "gre", "esp"):
+        with pytest.raises(ValueError):
+            tk.build_request("1.1.1.1", "2.2.2.2", bad, "9000")
+
+
 def test_build_request_named_service_and_precedence():
     r = tk.build_request("10.0.0.5", "Any", "tcp", "", service="icmp")
     assert r.service == "icmp" and r.application is None

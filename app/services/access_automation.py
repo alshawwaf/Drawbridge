@@ -407,8 +407,11 @@ def _parse_svc(cell, objdict: dict) -> ServiceSet:
         name = o.get("name") or ""
         if t == "CpmiAnyObject" or name.lower() == "any":
             return ServiceSet(any=True)
-        if t in ("service-tcp", "service-udp"):
-            proto = "tcp" if t.endswith("tcp") else "udp"
+        if t in ("service-tcp", "service-udp", "service-sctp"):
+            # Port-based protocols. SCTP (like TCP/UDP) carries a real destination port, so it is keyed by
+            # value in `by_proto` under its OWN protocol -- which never overlaps tcp/udp (distinct keys),
+            # so cross-protocol disjointness is automatic while same-protocol port ranges still widen/cover.
+            proto = t.replace("service-", "")     # tcp | udp | sctp
             iv = _parse_port(o.get("port", ""))
             if iv is None:
                 s.complex = True
@@ -426,10 +429,10 @@ def _parse_svc(cell, objdict: dict) -> ServiceSet:
             s.apps.add(name)
         elif t in ("application-site-category", "application-site-group"):
             s.opaque = True                 # can't enumerate which apps it contains
-        elif t in ("service-icmp", "service-icmp6", "service-sctp"):
-            # Distinct protocols (icmp 1 / icmp6 58 / sctp 132) — can NEVER overlap a tcp/udp port
-            # request, so match by name. Key on (family, name): the SAME predefined name exists across
-            # families (echo-request is both service-icmp AND service-icmp6) and must NOT alias.
+        elif t in ("service-icmp", "service-icmp6"):
+            # PORTLESS protocols (icmp 1 / icmp6 58) matched by type/code, never a port — can NEVER overlap
+            # a tcp/udp/sctp port request, so match by name. Key on (family, name): the SAME predefined
+            # name exists across families (echo-request is both service-icmp AND service-icmp6) -> no alias.
             s.named.add((t.replace("service-", ""), name))
         elif t in ("service-other", "service-dce-rpc", "service-rpc", "service-gtp",
                    "service-citrix-tcp", "service-compound-tcp"):
