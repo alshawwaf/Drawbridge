@@ -108,7 +108,8 @@ Content-Type: application/json
     #dt-zreset{min-width:52px;text-align:center;font-variant-numeric:tabular-nums;}
     #aa-flow-dt{background:transparent;border:0;margin:0;padding:0;line-height:1.3;}
     #aa-flow-dt:not([data-processed]){font-family:ui-monospace,monospace;font-size:11px;color:var(--muted);white-space:pre-wrap;}
-    .dtwrap{overflow:auto;max-height:74vh;border:1px solid var(--line);border-radius:12px;padding:12px;background:var(--surface-2);}
+    .dtwrap{overflow:auto;max-height:74vh;border:1px solid var(--line);border-radius:12px;padding:12px;background:var(--surface-2);cursor:grab;}
+    .dtwrap.grabbing{cursor:grabbing;user-select:none;}
     .dtwrap svg{height:auto;display:block;margin:0 auto;}
     .dthint{font-size:11.5px;color:var(--muted);margin:0 0 8px;}
     .dthint b{color:var(--info,#0ea5e9);font-weight:700;}
@@ -134,7 +135,7 @@ Content-Type: application/json
       </div>
     </div>
   </div>
-  <p class="dthint" id="dt-hint" hidden>Collapsed to the first levels — click a <b>＋ more</b> stub to reveal the next step, or “Expand all”.</p>
+  <p class="dthint" id="dt-hint" hidden>Collapsed to the first levels — click a <b>＋ more</b> stub to reveal the next step, or “Expand all”. When zoomed in, <b>drag</b> to pan.</p>
   <div class="dtwrap" id="aa-flow-wrap"><pre class="mermaid" id="aa-flow-dt">{{ decision_mermaid_dark }}</pre></div>
   <pre id="aa-flow-dt-light" hidden>{{ decision_mermaid_light }}</pre>
   <script id="dt-graph-data" type="application/json">{{ decision_graph_json|safe }}</script>
@@ -465,6 +466,10 @@ Content-Type: application/json
       svg.style.maxWidth = 'none';
       svg.style.width = w + 'px';
       svg.style.height = (w * ratio) + 'px';
+      // The <pre> wrapper must grow to the scaled width too, otherwise the SVG overflows it and gets
+      // CLIPPED instead of scrolled — so size `el` to match (centered when it's narrower than the box).
+      el.style.width = w + 'px';
+      el.style.margin = '0 auto';
       var lbl = document.getElementById('dt-zreset'); if (lbl) lbl.textContent = Math.round(f * 100) + '%';
     }
     function render(){
@@ -494,6 +499,30 @@ Content-Type: application/json
       var cb = document.getElementById('dt-collapse');
       if (cb) cb.addEventListener('click', function (){ resetVisible(); render(); });
     }
+    // Drag-to-pan: grab the canvas and move a zoomed-in diagram any direction (the .dtwrap also keeps its
+    // native scrollbars + trackpad/shift-wheel). A real drag suppresses the click so it never expands a
+    // stub mid-pan.
+    (function (){
+      var down = false, sx = 0, sy = 0, sl = 0, st = 0, moved = false;
+      wrap.addEventListener('mousedown', function (e){
+        if (e.button !== 0) return;
+        down = true; moved = false; sx = e.clientX; sy = e.clientY; sl = wrap.scrollLeft; st = wrap.scrollTop;
+        wrap.classList.add('grabbing');
+      });
+      window.addEventListener('mousemove', function (e){
+        if (!down) return;
+        var dx = e.clientX - sx, dy = e.clientY - sy;
+        if (Math.abs(dx) > 4 || Math.abs(dy) > 4) moved = true;
+        wrap.scrollLeft = sl - dx; wrap.scrollTop = st - dy;
+      });
+      window.addEventListener('mouseup', function (){ down = false; wrap.classList.remove('grabbing'); });
+      wrap.addEventListener('click', function (e){            // capture: swallow the click if we just panned
+        if (moved) { e.stopPropagation(); e.preventDefault(); moved = false; }
+      }, true);
+      wrap.addEventListener('wheel', function (e){            // shift+wheel -> horizontal scroll (convenience)
+        if (e.shiftKey && wrap.scrollWidth > wrap.clientWidth) { wrap.scrollLeft += e.deltaY; e.preventDefault(); }
+      }, { passive: false });
+    })();
     render();
     var t; new MutationObserver(function (m){
       if (m.some(function (x){ return x.attributeName === 'data-theme'; })) { clearTimeout(t); t = setTimeout(render, 60); }
