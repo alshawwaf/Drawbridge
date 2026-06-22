@@ -22,7 +22,7 @@ from ..db import get_db
 from ..models import ManagementServer, User
 from ..security import get_user_or_none
 from ..services import access_automation as aa
-from ..services import decision_tree, mgmt_api, mgmt_creds, table_prefs, ticketing
+from ..services import applications, decision_tree, mgmt_api, mgmt_creds, table_prefs, ticketing
 from ..services.gaia_client import ensure_pinned
 from .ui import _pop_flash, templates
 
@@ -124,6 +124,23 @@ def _run(db: Session, sid: int, user: User, body: AccessReqBody, *, do_apply: bo
         result = aa.preview(ms, secret, req, body.layer, package=body.package)
     code = 200 if result.get("ok") else 400
     return JSONResponse(result, status_code=code)
+
+
+@router.get("/access-automation/{sid}/app-search")
+def aa_app_search(sid: int, request: Request, q: str = "", db: Session = Depends(get_db)):
+    """Type-ahead: real Check Point applications matching ``q`` on this server (for the Application
+    field + the 'did you mean' chips). Best-effort — returns [] rather than erroring the UI."""
+    user = get_user_or_none(request, db)
+    if user is None:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    ms = _owned(db, sid, user)
+    secret, err = _secret_or_error(db, ms)
+    if err:
+        return JSONResponse({"candidates": []})
+    try:
+        return JSONResponse({"candidates": applications.search_server(ms, secret, q)})
+    except Exception:  # noqa: BLE001
+        return JSONResponse({"candidates": []})
 
 
 @router.post("/access-automation/{sid}/preview")
