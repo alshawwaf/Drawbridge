@@ -43,10 +43,13 @@ focused on the access-automation engine.</p>
 <div class="card">
   <h3 style="margin:0 0 6px;">Connect a client</h3>
   <div class="mcp-tokrow">
-    <label style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.03em;">Bearer token (DCSIM_MCP_TOKEN)
-      <input id="mcp-tok" placeholder="&lt;your DCSIM_MCP_TOKEN&gt;" autocomplete="off"></label>
+    <label style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.03em;">Paste a token or API key
+      <input id="mcp-tok" placeholder="&lt;token or API key&gt;" autocomplete="off"></label>
     <span class="muted" style="font-size:12px;">Endpoint: <code id="mcp-url"></code></span>
   </div>
+  <p class="mcp-note" style="margin:-2px 0 10px;">This field only fills the config below — nothing is sent or
+    saved. Create a revocable key in <a href="/settings#grp-api-keys">Settings → API keys</a> (scope
+    <b>mcp</b>), or set the shared token in <a href="/settings#grp-mcp-agent">Settings → MCP / agent</a>.</p>
   <div class="mcp-tabs" id="mcp-tabs">
     <button data-c="claude" class="active">Claude Desktop</button>
     <button data-c="cursor">Cursor</button>

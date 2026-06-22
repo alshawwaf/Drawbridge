@@ -252,6 +252,24 @@ class AppState(Base):
     value: Mapped[str] = mapped_column(String(255), default="")
 
 
+class ApiKey(Base):
+    """A named, revocable API key for the machine endpoints (MCP /mcp, the ticketing webhook). Only the
+    SHA-256 HASH of the secret is stored — the plaintext is shown once at creation and never again — so a
+    DB leak exposes no usable key. ``scope`` says which endpoint the key authorizes; ``hint`` is the last
+    few characters, kept for display so an admin can tell keys apart without revealing the secret."""
+
+    __tablename__ = "api_keys"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(120))
+    scope: Mapped[str] = mapped_column(String(20), default="mcp", index=True)   # "mcp" | "webhook"
+    key_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)  # sha256 hex of the secret
+    hint: Mapped[str] = mapped_column(String(12), default="")                   # last chars, for display
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    created_by: Mapped[str] = mapped_column(String(120), default="")
+    last_used_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class Notification(Base):
     """A persisted, per-user notification for the header bell. Every flash message is also recorded
     here so the admin can review and delete past notifications (transient toast + durable history)."""

@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..security import get_user_or_none
-from ..services import app_settings, table_prefs
+from ..services import api_keys, app_settings, table_prefs
 from .ui import _flash, _pop_flash, templates
 
 router = APIRouter(include_in_schema=False)
@@ -25,10 +25,14 @@ def settings_page(request: Request, db: Session = Depends(get_db)):
     user = get_user_or_none(request, db)
     if user is None:
         return RedirectResponse("/login", status_code=303)
+    new_key = request.session.pop("new_api_key", None)   # one-time reveal (NOT via _flash → not persisted)
     return templates.TemplateResponse(request, "settings.html",
                                       {"groups": _grouped(), "vals": app_settings.all_values(fresh=True),
                                        "secrets": app_settings.secret_status(),       # {key: is_set} — never the value
                                        "crypto_ok": app_settings.secret_available(),
+                                       "api_keys": api_keys.list_keys(),
+                                       "api_scopes": api_keys.SCOPES,
+                                       "new_key": new_key,
                                        "flash": _pop_flash(request)})
 
 
@@ -75,6 +79,32 @@ def settings_reset(request: Request, db: Session = Depends(get_db)):
     app_settings.save(app_settings.defaults())
     _flash(request, "Settings restored to defaults.")
     return RedirectResponse("/settings", status_code=303)
+
+
+@router.post("/settings/api-keys")
+async def api_key_create(request: Request, db: Session = Depends(get_db)):
+    """Generate a new API key. The plaintext is shown ONCE via a one-time session entry (never written
+    to the notification log), then only its hash remains."""
+    user = get_user_or_none(request, db)
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+    form = await request.form()
+    name = (form.get("name") or "").strip() or "key"
+    scope = form.get("scope") or "mcp"
+    row, secret = api_keys.generate(name, scope, created_by=user.username)
+    request.session["new_api_key"] = {"name": row.name, "scope": row.scope, "key": secret}
+    _flash(request, f"API key '{row.name}' ({row.scope}) created — copy it now, it's shown only once.")
+    return RedirectResponse("/settings#grp-api-keys", status_code=303)
+
+
+@router.post("/settings/api-keys/{key_id}/revoke")
+def api_key_revoke(key_id: int, request: Request, db: Session = Depends(get_db)):
+    user = get_user_or_none(request, db)
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+    if api_keys.revoke(key_id):
+        _flash(request, "API key revoked — it can no longer authenticate.")
+    return RedirectResponse("/settings#grp-api-keys", status_code=303)
 
 
 @router.post("/prefs/table/{table_id}/columns")

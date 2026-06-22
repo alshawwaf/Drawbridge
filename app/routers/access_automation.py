@@ -22,7 +22,7 @@ from ..db import get_db
 from ..models import ManagementServer, User
 from ..security import get_user_or_none
 from ..services import access_automation as aa
-from ..services import app_settings, applications, decision_tree, mgmt_api, mgmt_creds, services, table_prefs, ticketing
+from ..services import api_keys, app_settings, applications, decision_tree, mgmt_api, mgmt_creds, services, table_prefs, ticketing
 from ..services.gaia_client import ensure_pinned
 from .ui import _pop_flash, templates
 
@@ -242,12 +242,18 @@ async def aa_webhook(request: Request, db: Session = Depends(get_db)):
     is unset the webhook is DISABLED (503) — it never runs unauthenticated. The token grants policy
     publish on every allowed management server, so treat it as a top-tier secret; optionally scope it
     with DCSIM_WEBHOOK_SERVER_IDS."""
-    token = app_settings.get_secret_or_env("webhook_token", get_settings().webhook_token)
-    if not token:
-        return JSONResponse({"error": "Webhook disabled — set a token in Settings → Ticketing webhook "
-                                      "(or the DCSIM_WEBHOOK_TOKEN env var) to enable it."},
+    # Auth: the X-DCSim-Token header must match the legacy webhook token (Settings/env) OR an active
+    # webhook-scoped API key (Settings → API keys). Either one enables the endpoint.
+    presented = request.headers.get("x-dcsim-token", "")
+    legacy = (app_settings.get_secret_or_env("webhook_token", get_settings().webhook_token) or "").strip()
+    if not (legacy or api_keys.any_active("webhook")):
+        return JSONResponse({"error": "Webhook disabled — add a webhook key in Settings → API keys, or "
+                                      "set a token in Settings → Ticketing webhook (or the "
+                                      "DCSIM_WEBHOOK_TOKEN env var) to enable it."},
                             status_code=503)
-    if not hmac.compare_digest(request.headers.get("x-dcsim-token", ""), token):
+    ok = bool(presented) and ((legacy and hmac.compare_digest(presented, legacy))
+                              or api_keys.verify(presented, "webhook"))
+    if not ok:
         return JSONResponse({"error": "Invalid or missing X-DCSim-Token."}, status_code=401)
 
     try:

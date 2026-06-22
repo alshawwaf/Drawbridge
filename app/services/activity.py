@@ -4,8 +4,10 @@ import threading
 from ..db import SessionLocal
 from ..models import ActivityLog
 
-# Headers that must never be logged in the clear.
-SENSITIVE_HEADERS = {"authorization", "x-chkp-sid", "cookie", "set-cookie", "proxy-authorization"}
+# Headers that must never be logged in the clear. Includes the machine-endpoint auth headers:
+# x-dcsim-token (the ticketing webhook key / shared token, which can drive policy publish).
+SENSITIVE_HEADERS = {"authorization", "x-chkp-sid", "cookie", "set-cookie", "proxy-authorization",
+                     "x-dcsim-token"}
 # Any body/field key whose name CONTAINS one of these is redacted (covers gw_pass, basic_pass,
 # auth_header_value, password, x-chkp-sid/sid, secrets/tokens, etc. across JSON and form bodies).
 SENSITIVE_SUBSTRINGS = ("password", "passwd", "pwd", "pass", "secret", "token",

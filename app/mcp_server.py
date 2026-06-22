@@ -70,9 +70,35 @@ def resolve_token() -> str:
             return ""
 
 
+def mcp_enabled() -> bool:
+    """True when /mcp is live — a legacy token (Setting/env) OR at least one active MCP API key exists."""
+    if resolve_token():
+        return True
+    try:
+        from .services import api_keys
+        return api_keys.any_active("mcp")
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def token_configured() -> bool:
-    """True when a token is set (Setting or env) — i.e. /mcp is live. For the guide/status page."""
-    return bool(resolve_token())
+    """Back-compat alias for the guide/status page: is /mcp live (token or key)?"""
+    return mcp_enabled()
+
+
+def authorize_mcp(presented: str) -> bool:
+    """True if a presented bearer is valid for /mcp — it matches the legacy token (constant-time) OR an
+    active MCP API key. Resolved PER REQUEST so set/rotate/revoke take effect with no redeploy."""
+    if not presented:
+        return False
+    legacy = resolve_token()
+    if legacy and hmac.compare_digest(presented, legacy):
+        return True
+    try:
+        from .services import api_keys
+        return api_keys.verify(presented, "mcp")
+    except Exception:  # noqa: BLE001
+        return False
 
 
 async def _send_json(send, status: int, body: bytes):
@@ -83,33 +109,36 @@ async def _send_json(send, status: int, body: bytes):
 
 
 class _BearerGuard:
-    """Pure-ASGI bearer-token gate wrapping the MCP app (no coupling to the SDK's auth). The token is
-    resolved PER REQUEST from ``token_provider`` (a callable) so it can be set/rotated/cleared at runtime
-    with no redeploy. Non-http scopes (lifespan/websocket) pass straight through so the inner app's
-    startup still runs. When no token is configured → 503 (endpoint disabled); a missing/wrong bearer on
-    a configured endpoint → 401 (constant-time compared)."""
-    def __init__(self, app, token_provider):
-        self.app, self._token = app, token_provider
+    """Pure-ASGI bearer gate wrapping the MCP app (no coupling to the SDK's auth). Authorization is
+    decided PER REQUEST by the injected callables so tokens/keys can be set/rotated/revoked at runtime
+    with no redeploy: ``enabled_fn()`` → is the endpoint configured at all (else 503), ``verify_fn(token)``
+    → is this bearer valid (else 401, constant-time inside). Only the ``lifespan`` scope passes through
+    unguarded (so the inner session manager starts); websocket/unknown scopes are refused."""
+    def __init__(self, app, verify_fn, enabled_fn):
+        self.app, self._verify, self._enabled = app, verify_fn, enabled_fn
 
     async def __call__(self, scope, receive, send):
         stype = scope.get("type")
         if stype == "http":
-            token = ""
             try:
-                token = self._token() or ""
+                enabled = bool(self._enabled())
             except Exception:  # noqa: BLE001
-                token = ""
-            if not token:
+                enabled = False
+            if not enabled:
                 await _send_json(send, 503,
-                                 b'{"error":"MCP disabled - set a bearer token in Settings -> MCP / agent '
-                                 b'(or the DCSIM_MCP_TOKEN env var)"}')
+                                 b'{"error":"MCP disabled - add a key in Settings -> API keys, or set a '
+                                 b'token in Settings -> MCP / agent (or the DCSIM_MCP_TOKEN env var)"}')
                 return
             headers = dict(scope.get("headers") or [])
             auth = headers.get(b"authorization", b"").decode("latin-1")
-            ok = auth.startswith("Bearer ") and hmac.compare_digest(auth[7:], token)
+            presented = auth[7:] if auth.startswith("Bearer ") else ""
+            try:
+                ok = bool(presented) and bool(self._verify(presented))
+            except Exception:  # noqa: BLE001
+                ok = False
             if not ok:
                 await _send_json(send, 401,
-                                 b'{"error":"Unauthorized - send Authorization: Bearer <token>"}')
+                                 b'{"error":"Unauthorized - send Authorization: Bearer <token-or-key>"}')
                 return
             await self.app(scope, receive, send)
             return
@@ -148,13 +177,16 @@ def _asgi_app(mcp):
     return None
 
 
-def build_mcp_app(token_provider=resolve_token):
-    """A token-guarded ASGI app to mount at /mcp — or None only if the MCP SDK isn't installed (then the
-    caller just doesn't mount it). It is mounted REGARDLESS of whether a token is set yet: the guard
-    resolves the token per request via ``token_provider`` and returns 503 while none is configured, so a
-    token set later in Settings activates the endpoint with no redeploy."""
+def build_mcp_app(verify_fn=None, enabled_fn=None):
+    """A guarded ASGI app to mount at /mcp — or None only if the MCP SDK isn't installed (then the caller
+    just doesn't mount it). It is mounted REGARDLESS of whether any token/key is set yet: the guard
+    decides per request via ``verify_fn``/``enabled_fn`` (default: the MCP token + active API keys) and
+    returns 503 while nothing is configured, so a key/token added later in Settings activates the endpoint
+    with no redeploy."""
     if not _HAVE_MCP:
         return None
+    verify_fn = verify_fn or authorize_mcp
+    enabled_fn = enabled_fn or mcp_enabled
     from .services import mcp_tools as t
     mcp = _new_server()
     for name in _TOOLS:
@@ -166,7 +198,7 @@ def build_mcp_app(token_provider=resolve_token):
         return None
     global _INNER
     _INNER = app                          # parent lifespan runs its session manager (see mcp_lifespan)
-    return _BearerGuard(app, token_provider)
+    return _BearerGuard(app, verify_fn, enabled_fn)
 
 
 @contextlib.asynccontextmanager
@@ -193,7 +225,8 @@ def main():
     token = os.environ.get("DCSIM_MCP_TOKEN", "")
     if not token:
         raise SystemExit("set DCSIM_MCP_TOKEN to a strong secret first")
-    app = build_mcp_app(lambda: token)
+    # Env-only auth in the standalone process (no DB-backed Settings / API keys here).
+    app = build_mcp_app(verify_fn=lambda p: hmac.compare_digest(p, token), enabled_fn=lambda: True)
     if app is None:
         raise SystemExit("could not build the MCP app")
     import uvicorn
