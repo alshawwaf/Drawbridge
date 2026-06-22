@@ -270,6 +270,18 @@
        cool accent bar marking it as a copy-me command. */
     #cmd-pre { background:var(--surface-3); color:var(--text); border:1px solid var(--line);
       border-left:3px solid #3b82f6; }
+    /* The substitution values the pickers rewrite are pilled + colored to match their picker
+       (format = accent/magenta, protocol = blue) and pulse on change so the diff is obvious. */
+    #cmd-pre .tok { display:inline-block; padding:0 6px; border-radius:5px; font-weight:700; line-height:1.55; }
+    #cmd-pre #cmd-fmt { background:var(--accent-soft); color:var(--accent); }
+    #cmd-pre #cmd-proto { background:rgba(59,130,246,.18); color:#3b82f6; }
+    #cmd-pre .cmd-name { display:inline-block; font-weight:700; color:var(--text); }
+    #cmd-pre .flash { animation:cmd-flash .55s ease; }
+    @keyframes cmd-flash {
+      0% { transform:scale(1); filter:brightness(1); }
+      30% { transform:scale(1.16); filter:brightness(1.5); }
+      100% { transform:scale(1); filter:brightness(1); }
+    }
     .copy { font-family:ui-monospace,monospace; font-size:13px; background:var(--subtle-bg); color:var(--subtle-fg);
       border:1px solid var(--line); padding:11px 13px; border-radius:var(--r); word-break:break-all; }
     .fp { font-family:ui-monospace,monospace; font-size:12px; background:var(--subtle-bg); border:1px solid var(--line);
