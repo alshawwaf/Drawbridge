@@ -1417,9 +1417,21 @@ def _decide_options() -> "DecideOptions":
 
 
 def _obj_review(res: dict, unresolved: dict, kind: str, base: dict) -> dict:
-    return {"ok": True, "outcome": "review", "target_rule": None,
-            "reason": (f"the {kind} “{unresolved['term']}” has no single confident match on this "
-                       f"server — choose the exact Check Point {kind} below"), **res, **base}
+    """An application/service name that didn't resolve to a single Check Point object -> REVIEW, BEFORE any
+    write reaches the SMS (so a wrong/typo'd name never produces a failing add-access-rule). The candidate
+    matches are surfaced TWO ways: nested (``{kind}_resolution.candidates`` — drives the portal's pick
+    chips) AND as a top-level ``suggestions`` list + a 'did you mean …' reason, so a programmatic webhook
+    caller gets an actionable correction without digging into the nested dict."""
+    names = [c.get("name") for c in (unresolved.get("candidates") or []) if c.get("name")]
+    if names:
+        hint = f"did you mean: {', '.join(names[:6])}?"
+    elif unresolved.get("note"):
+        hint = unresolved["note"]
+    else:
+        hint = f"no close Check Point {kind} matched — check the exact object name"
+    return {"ok": True, "outcome": "review", "target_rule": None, "unresolved": kind,
+            "reason": f"“{unresolved['term']}” did not match a single Check Point {kind} — {hint}",
+            "suggestions": names, **res, **base}
 
 
 def preview(server, secret, req: AccessRequest, layer: str, *, package: Optional[str] = None) -> dict:
