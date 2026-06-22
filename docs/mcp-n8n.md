@@ -24,6 +24,12 @@ export DCSIM_MCP_TOKEN="<a long random secret>"
 On restart, `/mcp` mounts inside the portal (Streamable-HTTP, stateless). With no token set, or the SDK
 absent, it stays unmounted.
 
+**Self-serve onboarding page:** the portal has a **MCP for agents** page at **`/mcp-guide`** (under
+*Layers & Gateways*) — live status pills (SDK installed / endpoint enabled / publish gate), a
+connect-config generator with copy-paste snippets for Claude Desktop, Cursor, VS Code and n8n (built from
+the live origin + a bearer token you type in), and the full tool catalog. Same idea as
+<https://mcp.checkpoint.com/>. Point teammates there instead of hand-writing config.
+
 **Standalone alternative** (own port, e.g. if you don't want it on the portal): 
 ```bash
 DCSIM_MCP_TOKEN=... DCSIM_MCP_PORT=8765 python -m app.mcp_server
@@ -47,8 +53,15 @@ n8n discovers the tools automatically (`tools/list`). The agent can then call th
 | `decide_access(server_id, source, destination, layer, service?/port?/application?, …)` | **preview** the decision (no_op/widen/create/review) + reasoning + suggestions | no |
 | `correlate_service(server_id, name)` | service/protocol name → real CP object, or candidates | no |
 | `correlate_application(server_id, name)` | app/site name → real CP object, or candidates | no |
+| `summarize_layer(server_id, layer)` | rule counts, Accept/Drop split, Any-dimension counts, inline layers, cleanup-drop presence | no |
+| `analyze_policy(server_id, layer)` | summary + shadowed rules (covered by an earlier broader Accept/Drop) + overly-permissive Accepts | no |
 | `coverage_lookup(api, name?, version?)` | object/field support across API / Terraform / Ansible | no |
 | `apply_access(server_id, …, publish)` | `publish=false` **dry-run** (validate + discard); `publish=true` **commit** | gated |
+
+`summarize_layer` / `analyze_policy` are read-only and **provably conservative** — `analyze_policy` only
+flags a rule as shadowed when it can prove an earlier rule fully covers it under first-match (it abstains
+on application-layer / opaque cells rather than guessing), and only flags Accepts that are `Any` on a
+whole dimension. Good for an agent to *understand* a policy before proposing a change.
 
 ## 4. Safety model
 
@@ -76,7 +89,7 @@ n8n discovers the tools automatically (`tools/list`). The agent can then call th
 ## 6. Status — validated live
 
 Validated end-to-end against `mcp` SDK 1.28.0 (Streamable-HTTP): a request with no / wrong bearer → 401;
-`initialize` → 200 (serverInfo "Drawbridge"); `tools/list` → all 7 tools; `tools/call coverage_lookup`
+`initialize` → 200 (serverInfo "Drawbridge"); `tools/list` → all 9 tools; `tools/call coverage_lookup`
 returns real data; `decide_access` with a bad server id returns its error inside the tool result (no
 crash). The endpoint serves at **`/mcp`** (a bare `/mcp` 307-redirects to `/mcp/`; MCP clients, incl.
 n8n, follow it preserving the POST). The mounted app's session-manager lifespan is run from the portal's
