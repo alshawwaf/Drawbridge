@@ -981,3 +981,16 @@ def test_approx_drop_never_under_approximates():
              _irule(2, ["any"], ["any"], ["any"], "drp", od)]
     req = AccessRequest(src_cidrs=["10.7.7.7/32"], dst_cidrs=["0.0.0.0/0"], application="Facebook")
     assert aa.decide(req, rules).outcome is Outcome.REVIEW   # can't prove disjoint from an approx deny
+
+
+def test_malformed_port_reviews_not_crashes():
+    # _ports_to_iv must tolerate garbage (mirror the rule-side _parse_port) so decide() guard 2 -> REVIEW
+    assert aa._ports_to_iv("443x") == [] and aa._ports_to_iv("443-abc") == [] and aa._ports_to_iv("-1x") == []
+    od = {"any": {"uid": "any", "type": "CpmiAnyObject", "name": "Any"}, "drp": {"uid": "drp", "name": "Drop"}}
+    rules = [_irule(1, ["any"], ["any"], ["any"], "drp", od)]
+    for bad in ("443x", "443-abc", "abc"):          # FULLY unparsable -> empty service -> guard 2 -> REVIEW
+        req = AccessRequest(src_cidrs=["10.1.1.1/32"], dst_cidrs=["0.0.0.0/0"], protocol="tcp", ports=bad)
+        assert aa.decide(req, rules).outcome is Outcome.REVIEW, bad
+    # partial ("443,xyz" keeps the valid 443) is a real request -> a normal decision, just never a crash
+    req = AccessRequest(src_cidrs=["10.1.1.1/32"], dst_cidrs=["0.0.0.0/0"], protocol="tcp", ports="443,xyz")
+    assert aa.decide(req, rules).outcome in (Outcome.CREATE, Outcome.NO_OP, Outcome.WIDEN, Outcome.REVIEW)
