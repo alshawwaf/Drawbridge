@@ -54,6 +54,7 @@ cp_log_export restart name <span class="cmd-name">dcsim-siem-cef-udp</span></pre
     <form method="post" action="/siem/clear" style="margin:0;"><button class="copybtn cb-danger" type="submit" data-confirm="Clear all received logs? This cannot be undone.">Clear all</button></form>
   </div>
   {% if enabled and paused %}<p class="muted" style="font-size:12px; margin:10px 0 0; color:#f5a623;">⏸ Paused — incoming logs are being dropped. <b>Send test log</b> still works; click <b>Resume receiving</b> to capture live logs again.</p>{% endif %}
+  {% if enabled %}<p id="siem-rx" class="muted" style="font-size:12px; margin:8px 0 0;"></p>{% endif %}
 </div>
 
 <div class="filterbar" id="siem-filter" style="align-items:center;">
@@ -155,8 +156,27 @@ cp_log_export restart name <span class="cmd-name">dcsim-siem-cef-udp</span></pre
     }
     refreshSel.addEventListener('change', applyRefresh);
 
+    // Live receiver activity — counts lines ARRIVING at the listener (even while paused), so you can
+    // tell "nothing is reaching us" (network / host firewall) apart from "arriving but paused/displayed".
+    var rxEl = $('siem-rx');
+    function loadRx() {
+      if (!rxEl) return;
+      fetch('/siem/stats').then(function (r) { return r.ok ? r.json() : null; }).then(function (s) {
+        if (!s) return;
+        var age = s.age_seconds, seen;
+        if (age === null || age === undefined) seen = 'no packets received yet';
+        else if (age < 90) seen = 'last packet ' + Math.round(age) + 's ago';
+        else seen = 'last packet ' + Math.round(age / 60) + 'm ago';
+        rxEl.textContent = 'Receiver: ' + s.received + ' received · ' + s.stored + ' stored'
+          + (s.dropped ? ' · ' + s.dropped + ' dropped while paused' : '') + ' · ' + seen
+          + (s.received === 0 ? ' — nothing is reaching the listener yet (check the Log Exporter target + the host firewall on udp/tcp).' : '');
+      }).catch(function () {});
+    }
+
     load();
     applyRefresh();
+    loadRx();
+    setInterval(loadRx, 5000);
   })();
 </script>
 {% endblock %}

@@ -4,10 +4,13 @@
 {% block content %}
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.17.14/swagger-ui.css">
 <style>
-  .ax-tabs { display:flex; gap:6px; margin:4px 0 12px; }
-  .ax-tabs a { padding:7px 16px; border:1px solid var(--line); border-radius:9px; text-decoration:none;
-    color:var(--fg); font-weight:600; font-size:13px; }
-  .ax-tabs a.active { background:var(--accent); color:#fff; border-color:var(--accent); }
+  .ax-tabs { display:flex; gap:8px; margin:4px 0 12px; }
+  .ax-tabs a { padding:8px 18px; border:1px solid var(--line); border-radius:10px; text-decoration:none;
+    color:var(--text); font-weight:600; font-size:13px; background:var(--surface-2); transition:all .15s; }
+  .ax-tabs a:hover { border-color:var(--accent); transform:translateY(-1px); }
+  .ax-tabs a.active { color:#fff; border-color:transparent;
+    background:linear-gradient(135deg, var(--accent) 0%, #7b3ff2 100%);
+    box-shadow:0 3px 12px rgba(123,63,242,.30); }
   .ax-bar { display:flex; gap:14px; align-items:flex-end; flex-wrap:wrap; margin:6px 0 10px; font-size:13px; }
   .ax-bar label { display:flex; flex-direction:column; gap:3px; font-size:11px; color:var(--subtle-fg);
     text-transform:uppercase; letter-spacing:.03em; }
@@ -40,6 +43,9 @@
   #swagger-ui .scheme-container { background:var(--surface-2); box-shadow:none;
     border:1px solid var(--line); border-radius:10px; margin:0 0 18px; }
   #swagger-ui .scheme-container .schemes-title, #swagger-ui label { color:var(--text-2); }
+  /* The portal's own TARGET SERVER picker (above) already sets the base URL — hide Swagger's redundant
+     server line so the target isn't shown twice. Authorize stays. */
+  #swagger-ui .scheme-container .servers, #swagger-ui .scheme-container .servers-title { display:none; }
   /* command-group headers */
   #swagger-ui .opblock-tag { color:var(--text); border-bottom:1px solid var(--line); }
   #swagger-ui .opblock-tag:hover { background:var(--hover); }

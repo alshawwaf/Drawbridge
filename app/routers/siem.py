@@ -1,9 +1,10 @@
 """SIEM receiver UI: shows the logs the built-in Log Exporter listener received, with a 'how to
 point Check Point here' panel and a 'Send test log' button so it can be demoed without a gateway."""
 import random
+import time
 
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
@@ -64,6 +65,20 @@ def siem_rows(request: Request, fmt: str = "", page: int = 1,
     return templates.TemplateResponse(request, "_siem_rows.html",
                                       {"rows": rows, "total": total, "counts": counts,
                                        "page": page, "pages": pages, "matched": matched})
+
+
+@router.get("/siem/stats")
+def siem_stats(request: Request, db: Session = Depends(get_db)):
+    """Live receiver activity for the page indicator: lines the listener has RECEIVED (incremented even
+    while paused), stored, dropped-while-paused, and seconds-since-last. Lets you see whether traffic is
+    actually arriving — distinguishing a network/firewall problem from a pause or a display issue."""
+    if get_user_or_none(request, db) is None:
+        return JSONResponse({}, status_code=401)
+    st = siem.rx_stats()
+    age = (time.time() - st["last"]) if st["last"] else None
+    return JSONResponse({"received": st["received"], "stored": st["stored"], "dropped": st["dropped"],
+                         "age_seconds": (round(age, 1) if age is not None else None),
+                         "paused": siem.is_paused(db, fresh=True)})
 
 
 @router.get("/siem/{log_id}", response_class=HTMLResponse)

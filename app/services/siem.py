@@ -236,12 +236,29 @@ def set_paused(db: Session, value: bool) -> None:
     _pause_cache.update(value=bool(value), at=time.monotonic())   # same-process consistency, no wait
 
 
+# Live receiver activity (process-local; the listener runs in one process on this single-worker deploy).
+# Counts EVERY line that reaches the listener — incremented before the pause check — so the page can show
+# whether traffic is actually arriving. That's the tell that separates "nothing is reaching us" (a
+# network / host-firewall problem — see the external-UDP trap) from "arriving but paused/stored".
+_rx = {"received": 0, "stored": 0, "dropped": 0, "last": 0.0}
+
+
+def rx_stats() -> dict:
+    return dict(_rx)
+
+
 def store_received(db: Session, items: list[tuple[str, str, str]]) -> int:
     """The network listener's entrypoint. When the admin has paused, the batch is dropped (the
     listener keeps draining its queue so nothing backs up); only manual 'Send test log' still writes."""
+    n_in = len(items)
+    _rx["received"] += n_in
+    _rx["last"] = time.time()
     if is_paused(db):
+        _rx["dropped"] += n_in           # arriving but intentionally dropped — NOT a network problem
         return 0
-    return store_batch(db, items)
+    n = store_batch(db, items)
+    _rx["stored"] += n
+    return n
 
 
 def _trim(db: Session) -> None:
