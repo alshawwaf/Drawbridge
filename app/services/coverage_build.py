@@ -10,11 +10,15 @@ support is derived from the API schema + documented divergences (the web_api sid
 from __future__ import annotations
 
 import functools
+import gzip
 import json
 import os
 import re
 
 OUT_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "coverage_data")
+# Pre-built, example-injected full OpenAPI specs, gzipped on disk so the embedded explorer serves them
+# instantly instead of re-converting the CP docs on every cold load.
+OPENAPI_DIR = os.path.join(OUT_DIR, "openapi")
 
 TOOL_VERSIONS = {
     "terraform": "CheckPointSW/checkpoint v3.2.0",
@@ -342,15 +346,49 @@ def _inject_examples(spec: dict) -> None:
                     sch["example"] = sample
 
 
+def _bundle_path(api_type: str, version: str) -> str:
+    return os.path.join(OPENAPI_DIR, f"{api_type}-{version}.json.gz")
+
+
+def _load_bundled_spec(api_type: str, version: str) -> dict | None:
+    """The pre-built, example-injected spec from disk if one is bundled for this version, else None."""
+    if not version:
+        return None
+    path = _bundle_path(api_type, version)
+    if not os.path.exists(path):
+        return None
+    try:
+        with gzip.open(path, "rt", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:  # noqa: BLE001 — a corrupt/partial bundle must fall back to live conversion
+        return None
+
+
+def save_bundled_spec(api_type: str, version: str, spec: dict) -> str:
+    """Write the (already example-injected) spec to the on-disk gzip bundle. Used by the build tool."""
+    os.makedirs(OPENAPI_DIR, exist_ok=True)
+    path = _bundle_path(api_type, version)
+    with gzip.open(path, "wt", encoding="utf-8") as f:
+        json.dump(spec, f, separators=(",", ":"))
+    return path
+
+
 @functools.lru_cache(maxsize=6)
 def _cached_spec(api_type: str, version: str) -> dict:
-    spec = fetch_spec(api_type, version)
-    _inject_examples(spec)        # fill request/response examples the CP docs omit (explorer only)
+    bundled = _load_bundled_spec(api_type, version)   # disk hit -> instant, no CDN round-trip
+    if bundled is not None:
+        return bundled
+    spec = fetch_spec(api_type, version)              # not bundled (e.g. a newer version) -> convert live
+    _inject_examples(spec)                            # fill request/response examples the CP docs omit
     return spec
 
 
 def openapi_spec(api_type: str, version: str = "", server_url: str = "") -> dict:
-    """The full OpenAPI document for the explorer, with the requested target server pre-filled."""
+    """The full OpenAPI document for the explorer, with the requested target server pre-filled. Resolves
+    an empty version to the latest so the on-disk bundle is hit."""
+    if not version:
+        from app.services import coverage   # lazy import avoids a cycle
+        version = coverage.latest(api_type) or ""
     spec = _cached_spec(api_type, version)
     if server_url:
         spec = {**spec, "servers": [{"url": server_url, "description": "Target server (from the portal)"}]}
