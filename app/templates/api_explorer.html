@@ -180,16 +180,21 @@
   <button id="ax-load" class="btn">Load</button>
   <button id="ax-export" class="btn secondary" type="button"
           title="Download an OpenAPI 3.0 file — import it into Postman or Bruno">⤓ Export for Postman / Bruno</button>
+  <label style="flex-direction:row; align-items:center; gap:7px; text-transform:none; letter-spacing:0;
+                font-size:12.5px; color:var(--text-2); cursor:pointer;">
+    <input type="checkbox" id="ax-proxy" checked> Run calls through the portal <span class="muted">(avoids CORS)</span>
+  </label>
 </div>
 
 <div class="ax-callout">
   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
-  <div><b>About “Try it out”.</b> It calls the target straight from your browser, so a live call to a
-  real Management/Gaia server will usually show <b>“Failed to fetch — CORS”</b>. That's expected — a
-  Check Point server doesn't send browser CORS headers; it isn't a problem with the portal or your
-  request. Your request is still built correctly: use <b>Copy as cURL</b> or <b>Export for Postman /
-  Bruno</b> below to run it for real, or use the gated editor on <b>Management Servers</b> (preview →
-  publish) to actually change policy. TLS is always verified server-side — this page never disables it.</div>
+  <div><b>About “Try it out”.</b> By default it runs <b>through the portal</b> (server-side), so it
+  reaches your <b>saved</b> Management/Gateway servers without the browser's cross-origin (CORS) block —
+  just <b>Authorize</b> with a session id (sid) and execute. The proxy only ever reaches servers you've
+  added, and TLS is verified server-side. Untick <b>“Run calls through the portal”</b> to call straight
+  from the browser instead — handy for the copy-paste <code>curl</code>, though a real server will then
+  show <b>“Failed to fetch — CORS”</b> (expected, not a portal bug). For governed changes, use the gated
+  editor on <b>Management Servers</b> (preview → publish). You can also <b>Export for Postman / Bruno</b>.</div>
 </div>
 <p class="ax-note">
   <strong>Export for Postman / Bruno</strong> downloads this version's OpenAPI 3.0 file with your selected
@@ -242,7 +247,19 @@
       filter: true,
       tryItOutEnabled: true,
       persistAuthorization: true,
-      requestInterceptor: function (req) { return req; },
+      requestInterceptor: function (req) {
+        // Route the live call through the portal's same-origin proxy so the browser's CORS block
+        // doesn't stop it. The proxy only reaches your saved servers (see /api-explorer/proxy).
+        try {
+          var proxy = document.getElementById('ax-proxy');
+          if (proxy && proxy.checked && /^https?:\/\//i.test(req.url) &&
+              req.url.indexOf('/api-explorer/proxy') === -1) {
+            req.headers['X-Dcsim-Target'] = req.url;
+            req.url = location.origin + '/api-explorer/proxy';
+          }
+        } catch (e) { /* fall back to a direct browser call */ }
+        return req;
+      },
       onComplete: function () { statusEl.textContent = ''; },
       responseInterceptor: function (res) {
         if (res && res.status === 0) {

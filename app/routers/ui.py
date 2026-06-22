@@ -150,6 +150,81 @@ def api_explorer_spec(request: Request, api: str = "management", version: str = 
         resp.headers["Content-Disposition"] = f'attachment; filename="checkpoint-{api}-{ver}.openapi.json"'
     return resp
 
+
+def _explorer_proxy_targets(db: Session, user: User) -> dict:
+    """{'host:port': server} for the user's OWN saved Management Servers + Gateways — the ONLY targets the
+    explorer proxy may reach. This allowlist is the SSRF guard: the proxy is never an open relay."""
+    out: dict = {}
+    for m in db.execute(select(ManagementServer).where(ManagementServer.owner_id == user.id)).scalars():
+        out[f"{m.host}:{m.port}".lower()] = m
+    for g in db.execute(select(Gateway).where(Gateway.owner_id == user.id)).scalars():
+        out[f"{g.host}:{g.port}".lower()] = g
+    return out
+
+
+@router.api_route("/api-explorer/proxy", methods=["GET", "POST", "PUT", "DELETE", "PATCH"],
+                  include_in_schema=False)
+async def api_explorer_proxy(request: Request, db: Session = Depends(get_db)):
+    """Server-side proxy for the explorer's *Try it out*, so live calls work without the browser's
+    cross-origin (CORS) block. STRICTLY allowlisted — it forwards ONLY to the caller's own saved
+    Management Servers / Gateways (exact host:port), never an arbitrary URL, so it can't be abused as an
+    open relay (SSRF). TLS is verified server-side (the server's pinned cert when set); the portal's own
+    session cookie is never forwarded upstream."""
+    import ssl
+    import httpx
+    from urllib.parse import urlparse
+
+    user = get_user_or_none(request, db)
+    if user is None:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    target = request.headers.get("x-dcsim-target", "").strip()
+    try:                                          # a hostile header (bad IPv6 / port) must 400, not 500
+        parsed = urlparse(target) if target else None
+        port = parsed.port if parsed else None
+    except ValueError:
+        parsed, port = None, None
+    if not parsed or parsed.scheme not in ("http", "https") or not parsed.hostname:
+        return JSONResponse({"error": "Missing or invalid X-Dcsim-Target URL."}, status_code=400)
+    port = port or (443 if parsed.scheme == "https" else 80)
+    key = f"{parsed.hostname}:{port}".lower()
+    server = _explorer_proxy_targets(db, user).get(key)
+    if server is None:
+        return JSONResponse(
+            {"error": f"Refused — {parsed.hostname}:{port} is not one of your saved servers. The explorer "
+                      "only proxies to Management Servers / Gateways you've added (this prevents the portal "
+                      "being used as an open proxy). Add it under Layers & Gateways, then retry."},
+            status_code=403)
+
+    from ..services.mgmt_api import _verify_for
+    try:                                          # a malformed stored pin is a local config problem, not "upstream failed"
+        verify = _verify_for(server)
+    except ssl.SSLError:
+        return JSONResponse({"error": f"The pinned certificate stored for {key} is invalid PEM — re-add the "
+                                      "server's certificate on its Edit page.", "via": "portal-proxy"},
+                            status_code=502)
+    # Drop the full hop-by-hop set (RFC 7230) so httpx owns request framing from content=body — a stray
+    # Transfer-Encoding alongside our Content-Length would be a request-smuggling primitive. Also never
+    # forward the portal's own session cookie / forwarded-* headers upstream.
+    drop = {"host", "cookie", "content-length", "connection", "accept-encoding",
+            "x-dcsim-target", "x-forwarded-for", "x-forwarded-host", "x-forwarded-proto",
+            "transfer-encoding", "te", "trailer", "trailers", "upgrade", "keep-alive",
+            "proxy-authorization", "proxy-authenticate"}
+    fwd = {k: v for k, v in request.headers.items() if k.lower() not in drop}
+    body = await request.body()
+    if len(body) > 2_000_000:                     # cap the relayed request body (parity with the response cap)
+        return JSONResponse({"error": "Request body too large (max 2 MB for the explorer proxy)."},
+                            status_code=413)
+    try:
+        async with httpx.AsyncClient(verify=verify, timeout=20.0,
+                                     follow_redirects=False) as client:   # no redirect-based SSRF
+            r = await client.request(request.method, target, content=body, headers=fwd)
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"error": f"Upstream request to {key} failed: {exc}", "via": "portal-proxy"},
+                            status_code=502)
+    content = r.content[:2_000_000]   # truncate what we relay to the browser (allowlisted own-servers + 20s timeout bound the upstream size)
+    return Response(content=content, status_code=r.status_code,
+                    media_type=r.headers.get("content-type", "application/json"))
+
 # --- Generic Data Center default (the canonical sk167210 sample) -----------------------
 DEFAULT_FEED_NAME = "Generic-DC-Example"
 DEFAULT_FEED_DESCRIPTION = "Generic Data Center file example"
