@@ -57,6 +57,14 @@
           </label>
         {% endif %}
         <div class="muted small" style="margin-top:5px;max-width:760px;">{{ s.help }}</div>
+        {% if s.key == 'base_url' and detected_base_url %}
+        <div class="small" style="margin-top:6px;">Detected from this session:
+          <code>{{ detected_base_url }}</code>
+          <button type="button" class="btn secondary" data-url="{{ detected_base_url }}"
+                  style="padding:2px 10px;font-size:12px;margin-left:6px;"
+                  onclick="var i=document.querySelector('input[name=base_url]'); i.value=this.dataset.url; i.focus();">Use</button>
+        </div>
+        {% endif %}
       </div>
     {% endfor %}
   </div>

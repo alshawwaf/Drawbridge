@@ -17,7 +17,7 @@ import time
 from ..db import SessionLocal
 from ..models import ApiKey, utcnow
 
-SCOPES = ("mcp", "webhook")
+SCOPES = ("mcp", "webhook", "api")     # api = the general REST API (/api/v1) for any HTTP client
 _PREFIX = "dcsim"                      # token looks like dcsim_<scope>_<random> — scope is visible, not secret
 
 # Cache of active keys per scope: scope -> (monotonic_at, [(id, key_hash)]). Short TTL so a create/revoke
