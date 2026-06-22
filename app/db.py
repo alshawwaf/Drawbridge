@@ -62,6 +62,7 @@ _ADDED_COLUMNS = {
         "email": "VARCHAR(200) DEFAULT ''",
         "title": "VARCHAR(120) DEFAULT ''",
     },
+    "api_keys": {"expires_at": "DATETIME"},     # key-expiry, added after the table shipped
 }
 
 

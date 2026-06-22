@@ -70,6 +70,33 @@ def test_multiple_mcp_keys_each_validate(kdb):
     assert kdb.verify(s1, "mcp") is False and kdb.verify(s2, "mcp") is True
 
 
+def test_expires_at_has_additive_migration():
+    # create_all won't add a column to the already-shipped api_keys table — the additive migration must
+    # carry expires_at so existing (preview + deployed) DBs get it on boot, not just fresh ones.
+    from app import db
+    assert "expires_at" in db._ADDED_COLUMNS.get("api_keys", {})
+
+
+def test_expired_key_does_not_authenticate(kdb):
+    import datetime as dt
+    past = dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=1)
+    future = dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=30)
+    _, expired = kdb.generate("old", "mcp", expires_at=past)
+    _, valid = kdb.generate("fresh", "mcp", expires_at=future)
+    assert kdb.verify(expired, "mcp") is False        # past expiry -> rejected
+    assert kdb.verify(valid, "mcp") is True            # future expiry -> ok
+    # any_active counts only live keys: with ONLY the expired one, the scope is not "configured"
+    kdb.revoke(next(k.id for k in kdb.list_keys("mcp") if k.name == "fresh"))
+    assert kdb.any_active("mcp") is False
+
+
+def test_expiry_naive_datetime_is_handled(kdb):
+    import datetime as dt
+    naive_past = dt.datetime.utcnow() - dt.timedelta(days=1)   # naive (as SQLite may return)
+    _, k = kdb.generate("naive", "mcp", expires_at=naive_past)
+    assert kdb.verify(k, "mcp") is False               # as_utc() coercion -> no TypeError, correctly expired
+
+
 def test_webhook_auth_header_is_redacted_in_activity_log():
     # a webhook key/token rides in X-DCSim-Token; it must never be logged in the clear
     from app.services import activity
