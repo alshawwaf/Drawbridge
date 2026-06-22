@@ -51,6 +51,13 @@ class Settings(BaseSettings):
     webhook_token: str = ""
     webhook_server_ids: str = ""    # comma-separated server ids the webhook may target; blank = all
 
+    # MCP server (for n8n / LLM agents). The /mcp endpoint is DISABLED until this bearer token is set;
+    # clients send it as `Authorization: Bearer <token>`. Like the webhook token it can drive policy
+    # writes, so treat it as a top-tier secret. Writes are additionally gated by the mcp_allow_publish
+    # setting (default OFF) — an agent can decide/preview/dry-run freely but can't publish to a live SMS
+    # unless an admin turns that on. Requires the `mcp` SDK (install via Artifactory) to activate.
+    mcp_token: str = ""
+
     # Optional BUILT-IN write-back: post the decision + rule UID to a ServiceNow incident's work notes
     # via the Table API. (Other vendors use the generic per-request `callback_url`, or just read the
     # synchronous response.) TLS verification is always on; the password is read from env (never
