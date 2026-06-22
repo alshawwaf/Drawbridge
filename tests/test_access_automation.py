@@ -883,11 +883,20 @@ def test_webhook_rejects_bad_token(monkeypatch):
 
 
 def test_webhook_server_allowlist_parsing(monkeypatch):
+    # a clean list parses
     monkeypatch.setattr(aar, "get_settings",
-                        lambda: types.SimpleNamespace(webhook_server_ids="1, 3 ,x,5"))
+                        lambda: types.SimpleNamespace(webhook_server_ids="1, 3 ,5"))
     assert aar._allowed_server_ids() == {1, 3, 5}
+    # unset = allow-all (empty set)
     monkeypatch.setattr(aar, "get_settings", lambda: types.SimpleNamespace(webhook_server_ids=""))
-    assert aar._allowed_server_ids() == set()   # blank = no restriction
+    assert aar._allowed_server_ids() == set()
+    # a malformed entry FAILS CLOSED (raises) instead of silently dropping to allow-all
+    monkeypatch.setattr(aar, "get_settings", lambda: types.SimpleNamespace(webhook_server_ids="1,x,5"))
+    with pytest.raises(ValueError):
+        aar._allowed_server_ids()
+    monkeypatch.setattr(aar, "get_settings", lambda: types.SimpleNamespace(webhook_server_ids="prod-3"))
+    with pytest.raises(ValueError):
+        aar._allowed_server_ids()
 
 
 # --- template rendering -----------------------------------------------------------------------
@@ -1342,3 +1351,126 @@ def test_loader_cycle_guard_does_not_recurse_forever():
     rules = aa.load_layer(sess, "topL")        # must terminate
     assert rules[0].inline_rules is not None    # attached; the self-reference inside resolves to []
     assert rules[0].inline_rules[0].inline_rules == []   # the cycle was cut at the second encounter
+
+
+# ================= regression tests for the 2026-06-22 comprehensive audit =================
+# [1 BLOCKER] inline layer: an explicit bottom DROP must not be masked into NO_OP by implicit-accept
+def test_inline_explicit_drop_not_masked_by_implicit_accept():
+    sub = [_rule("i1", 1, "Accept", _host("10.1.0.9"), _host("8.8.8.8"), _tcp(22)), CLEANUP]
+    parent = _inline("p1", 5, _net("10.1.0.0/24"), _host("172.16.5.10"), _tcp(443), sub,
+                     cleanup="accept", name="L")
+    d = aa.decide(_req(), [parent, CLEANUP])
+    assert d.outcome is Outcome.CREATE and d.layer == "L" and "explicit" in d.reason
+
+
+# [2 BLOCKER] a group / service-group with NO members key is extent-unknown -> REVIEW, never disjoint
+def test_members_less_group_routes_to_review():
+    od = {"any": {"uid": "any", "type": "CpmiAnyObject", "name": "Any"},
+          "g": {"uid": "g", "type": "group", "name": "blocked"},          # no 'members'
+          "drp": {"uid": "drp", "name": "Drop"}}
+    rules = [_irule(1, ["any"], ["g"], ["any"], "drp", od), _irule(2, ["any"], ["any"], ["any"], "drp", od)]
+    assert rules[0].dst_unknown and rules[0].complex
+    req = AccessRequest(src_cidrs=["10.9.9.9/32"], dst_cidrs=["10.5.5.5/32"], protocol="tcp", ports="443")
+    assert aa.decide(req, rules).outcome is Outcome.REVIEW
+
+
+def test_explicitly_empty_group_stays_disjoint():
+    od = {"any": {"uid": "any", "type": "CpmiAnyObject", "name": "Any"},
+          "g": {"uid": "g", "type": "group", "name": "empty", "members": []},
+          "drp": {"uid": "drp", "name": "Drop"}}
+    r = _irule(1, ["any"], ["g"], ["any"], "drp", od)
+    assert not r.complex and not r.dst_unknown          # a real empty set, not "unknown"
+
+
+def test_members_less_service_group_routes_to_review():
+    od = {"any": {"uid": "any", "type": "CpmiAnyObject", "name": "Any"},
+          "sg": {"uid": "sg", "type": "service-group", "name": "blocked-svcs"},   # no 'members'
+          "drp": {"uid": "drp", "name": "Drop"}}
+    rules = [_irule(1, ["any"], ["any"], ["sg"], "drp", od), _irule(2, ["any"], ["any"], ["any"], "drp", od)]
+    assert rules[0].svc.complex
+    req = AccessRequest(src_cidrs=["10.0.0.5/32"], dst_cidrs=["Any"], protocol="tcp", ports="443")
+    assert aa.decide(req, rules).outcome is Outcome.REVIEW
+
+
+# [3 BLOCKER] a rulebase larger than max_rules must FAIL LOUD, never decide on a truncated view
+def test_pull_items_fails_loud_on_truncation():
+    class _Trunc:
+        def call(self, cmd, payload):
+            off = payload.get("offset", 0)
+            return {"rulebase": [{"type": "access-rule", "uid": f"r{off}"}],
+                    "objects-dictionary": [], "total": 200, "to": off + 1}
+    with pytest.raises(aa.MgmtError):
+        aa._pull_items(_Trunc(), "big-layer", None, max_rules=5)
+
+
+# [4 MAJOR] WIDEN must not use an approx (under-approximated infra) cell as its EQUAL guard
+def test_widen_excludes_approx_equal_dimension():
+    od = {"any": {"uid": "any", "type": "CpmiAnyObject", "name": "Any"},
+          "gw": {"uid": "gw", "type": "simple-gateway", "name": "gw", "ipv4-address": "10.0.0.1"},
+          "h": {"uid": "h", "type": "host", "name": "h", "ipv4-address": "172.16.5.10"},
+          "t443": {"uid": "t443", "type": "service-tcp", "name": "https", "port": "443"},
+          "acc": {"uid": "acc", "name": "Accept"}, "drp": {"uid": "drp", "name": "Drop"}}
+    rules = [_irule(1, ["gw"], ["h"], ["t443"], "acc", od), _irule(2, ["any"], ["any"], ["any"], "drp", od)]
+    assert rules[0].src_approx
+    req = AccessRequest(src_cidrs=["10.0.0.1/32"], dst_cidrs=["172.16.99.99/32"], protocol="tcp", ports="443")
+    assert aa.decide(req, rules).outcome is Outcome.CREATE     # approx src can't serve as EQUAL -> no widen
+
+
+# [5 MAJOR] a malformed IP in the object dictionary degrades that cell to REVIEW, never crashes the pull
+def test_malformed_ip_object_degrades_not_crashes():
+    od = {"any": {"uid": "any", "type": "CpmiAnyObject", "name": "Any"},
+          "bad": {"uid": "bad", "type": "host", "name": "bad", "ipv4-address": "10.0.0.300"},
+          "acc": {"uid": "acc", "name": "Accept"}}
+    r = _irule(1, ["bad"], ["any"], ["any"], "acc", od)        # must not raise
+    assert r.complex and r.src_unknown
+
+
+# [9 MAJOR] 0.0.0.0/0 and ::/0 are single-family networks, NOT the dual-family predefined Any
+def test_norm_endpoint_zero_route_is_per_family_not_any():
+    assert tk._norm_endpoint("0.0.0.0/0") == "0.0.0.0/0"
+    assert tk._norm_endpoint("::/0") == "::/0"
+    assert tk._norm_endpoint("any") == "Any" and tk._norm_endpoint("*") == "Any"
+    assert tk.build_request("0.0.0.0/0", "10.0.0.5", "tcp", "443").src_cidrs == ["0.0.0.0/0"]
+
+
+# [10 MAJOR] a non-MgmtError raised during apply must still DISCARD (no leaked locks) + report cleanly
+def test_apply_non_mgmt_error_discards_and_reports(monkeypatch):
+    calls = []
+    monkeypatch.setattr(aa, "MgmtSession", _fake_session_factory(calls))
+    monkeypatch.setattr(aa, "load_layer", lambda s, layer, package=None: [WEB, CLEANUP])
+    monkeypatch.setattr(aa, "_apply", lambda *a, **k: (_ for _ in ()).throw(ValueError("kaboom")))
+    res = aa.execute(object(), "secret",
+                     AccessRequest(["192.168.9.9/32"], ["172.16.9.9/32"], "tcp", "22"),
+                     "Net", publish=True)
+    assert res["ok"] is False and "apply failed" in res["error"]
+    assert ("discard", {}) in calls and ("publish", {}) not in calls
+
+
+# [11 MINOR] inline-layer placement renders against the inline rulebase, so the anchor resolves
+def test_rules_for_layer_resolves_inline_anchor():
+    inner = [_rule("inner1", 1, "Accept", _host("10.0.0.5"), _host("1.1.1.1"), _tcp(22))]
+    parent = _inline("p1", 5, _net("10.0.0.0/24"), _host("1.1.1.1"), _tcp(22), inner, name="InnerL")
+    dec = aa.Decision(Outcome.CREATE, "x", layer="InnerL", position={"below": "inner1"})
+    picked = aa._rules_for_layer(dec, [parent, CLEANUP])
+    assert [r.uid for r in picked] == ["inner1"]            # the inline layer's own rules, not the top
+    assert "inner1" in aa._position_human(dec.position, picked)
+
+
+# [12/13 MINOR] _validate_port normalises and rejects dirty/zero ports
+def test_validate_port_normalises_and_rejects_dirty():
+    assert tk._validate_port("443") == "443"
+    assert tk._validate_port("8000- 8100") == "8000-8100"
+    for bad in ("+443", "4 43", "٤٤٣", "0", "8000- ", "-5"):
+        with pytest.raises(ValueError):
+            tk._validate_port(bad)
+    with pytest.raises(ValueError):
+        tk._validate_port(0)                                   # int 0 not swallowed by truthiness
+
+
+# [15 MINOR] _apply fails loud on a multi-CIDR request instead of silently applying only the first
+def test_apply_rejects_multi_cidr():
+    s = _fake_session_factory([])(object(), "x")
+    dec = aa.Decision(Outcome.CREATE, "x", position={"above": "rC"})
+    req = AccessRequest(["10.0.0.0/24", "10.1.0.0/24"], ["1.1.1.1/32"], "tcp", "443")
+    with pytest.raises(aa.MgmtError):
+        aa._apply(s, dec, req, "Net", [CLEANUP], "TKT")

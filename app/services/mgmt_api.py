@@ -79,6 +79,15 @@ class MgmtSession:
 
     def __exit__(self, *exc) -> None:
         try:
+            # A read-WRITE session leaving via an exception may still hold uncommitted changes + locks;
+            # on Check Point a logout does NOT discard them, so they'd linger until session timeout. Best-
+            # effort discard as a backstop (execute() already handles its own paths). Read-only sessions
+            # hold no locks, and a clean exit has already published/discarded, so only act on the error path.
+            if exc and exc[0] is not None and not self._read_only and self.sid:
+                try:
+                    self.discard()
+                except Exception:  # noqa: BLE001 — never mask the original error
+                    pass
             self.logout()
         finally:
             self._client.close()
@@ -527,6 +536,12 @@ def _raw_pull(session: "MgmtSession", layer: str, package, max_rules: int) -> di
         if not batch or to >= total or to <= offset:
             break
         offset = to
+    # Fail loud on truncation so a partial rulebase is never cached or reasoned over (a missing cleanup
+    # / deny past the cap would make the access-automation engine under-deny). Raising here also means a
+    # truncated pull never reaches cached_raw's store, closing the sticky-cache hole.
+    if total and total > len(items):
+        raise MgmtError(f"layer “{layer}” has {total} rules, over the {max_rules} cap; refusing to "
+                        f"serve a truncated rulebase")
     return {"items": items, "objdict": objdict, "total": total}
 
 
@@ -536,7 +551,7 @@ def cached_raw(session: "MgmtSession", server, layer: str, package=None, max_rul
     from . import app_settings
     if not app_settings.get("mgmt_policy_cache"):
         return {**_raw_pull(session, layer, package, max_rules), "cached": False}
-    key = (_pool_key(server), layer, package or "")
+    key = (_pool_key(server), layer, package or "", max_rules)   # cap is part of the key (no cross-serve)
     now = time.monotonic()
 
     def _hit(e):
