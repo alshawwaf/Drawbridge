@@ -708,7 +708,8 @@ def load_layer(session, layer_name: str, package: Optional[str] = None,
     total, offset = 0, 0
     while offset < max_rules:
         payload = {"name": layer_name, "limit": 100, "offset": offset,
-                   "use-object-dictionary": True, "details-level": "full"}
+                   "use-object-dictionary": True, "details-level": "full",
+                   "dereference-group-members": True}   # resolve group cells to member IPs (see decide())
         if package:
             payload["package"] = package
         page = session.call("show-access-rulebase", payload)
