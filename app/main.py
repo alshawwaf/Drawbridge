@@ -14,7 +14,7 @@ from .db import SessionLocal, init_db
 from .models import User
 from .middleware import ActivityLogMiddleware
 from .routers import (
-    access_automation, aci_mock, activity, datacenters, dynamic_layers, exports, feeds, gateways,
+    access_automation, aci_mock, activity, api_v1, datacenters, dynamic_layers, exports, feeds, gateways,
     gaia_mock, kubernetes_mock, mgmt, notifications, nsxt_mock, nutanix_mock, openstack_mock,
     proxmox_mock, scenarios, serve, settings as settings_router, siem, ui, vcenter_mock,
 )
@@ -133,6 +133,7 @@ def create_app() -> FastAPI:
     app.include_router(settings_router.router)
     app.include_router(notifications.router)
     app.include_router(exports.router)
+    app.include_router(api_v1.router)   # general REST API for any HTTP client (api-scope key auth)
 
     # MCP server for n8n / LLM agents — mounted at /mcp whenever the SDK is installed (Artifactory).
     # The bearer token is resolved PER REQUEST (Settings → MCP / agent, with the DCSIM_MCP_TOKEN env var

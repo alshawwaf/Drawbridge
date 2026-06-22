@@ -44,6 +44,25 @@ the live origin + a bearer token you type in), and the full tool catalog. Same i
 DCSIM_MCP_TOKEN=... DCSIM_MCP_PORT=8765 python -m app.mcp_server
 ```
 
+## 1b. REST API (any HTTP client)
+
+Beyond MCP and the webhook, the access-automation brain is exposed as a plain **REST API** at
+**`/dbapi/v1`** (not `/api/v1` — that prefix is the Kubernetes/NSX-T datacenter mocks). Authenticate with
+an **api**-scope key (Settings → API keys) sent as `Authorization: Bearer <key>`; no valid key → **401**.
+It's auto-documented in the portal's OpenAPI (`/docs`, `/openapi.json`).
+
+```bash
+curl -s https://<host>/dbapi/v1/access/decide \
+  -H "Authorization: Bearer <api-key>" -H "Content-Type: application/json" \
+  -d '{"server_id":1,"source":"10.1.1.5","destination":"Any","service":"https"}'
+# -> {"outcome":"create","reason":...}
+```
+
+Endpoints (thin wrappers over the same `services.mcp_tools`, so behaviour + safety match MCP exactly):
+`GET /dbapi/v1/servers`, `GET /dbapi/v1/layers?server_id=`, `GET /dbapi/v1/layers/summary`,
+`GET /dbapi/v1/layers/analyze`, `GET /dbapi/v1/coverage`, `POST /dbapi/v1/access/decide`,
+`POST /dbapi/v1/access/apply` (publish admin-gated), `POST /dbapi/v1/access/correlate/{service,application}`.
+
 ## 2. Connect n8n
 
 In the **AI Agent** → add an **MCP Client Tool** node:

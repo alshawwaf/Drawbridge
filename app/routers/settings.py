@@ -20,6 +20,15 @@ def _grouped():
     return groups
 
 
+def _detected_base_url(request: Request) -> str:
+    """The public URL this request arrived on, honoring the reverse proxy's X-Forwarded-* headers — so
+    the admin can adopt it for base_url with one click instead of typing it blind. Suggestion only."""
+    h = request.headers
+    proto = (h.get("x-forwarded-proto") or request.url.scheme or "https").split(",")[0].strip()
+    host = (h.get("x-forwarded-host") or h.get("host") or request.url.netloc or "").split(",")[0].strip()
+    return f"{proto}://{host}".rstrip("/") if host else ""
+
+
 @router.get("/settings", response_class=HTMLResponse)
 def settings_page(request: Request, db: Session = Depends(get_db)):
     user = get_user_or_none(request, db)
@@ -33,6 +42,7 @@ def settings_page(request: Request, db: Session = Depends(get_db)):
                                        "api_keys": api_keys.list_keys(),
                                        "api_scopes": api_keys.SCOPES,
                                        "new_key": new_key,
+                                       "detected_base_url": _detected_base_url(request),
                                        "flash": _pop_flash(request)})
 
 
