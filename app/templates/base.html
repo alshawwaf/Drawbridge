@@ -612,15 +612,27 @@
           fetch(form.getAttribute('action') || location.pathname,
                 { method: 'POST', body: new FormData(form), headers: { 'X-Fragment': '1' }, redirect: 'follow' })
             .then(function (r) {
-              if (r.redirected || (r.ok && !/\/(new|edit)\/?$/.test(new URL(r.url).pathname))) { location.reload(); return null; }
-              return r.text();                // validation error etc. → re-render the form in place
+              // Success uses the POST→redirect→GET pattern (303 to the list); a re-rendered form (200,
+              // no redirect) means a validation error → show it in the modal.
+              if (r.redirected) { location.reload(); return null; }
+              return r.text();
             })
             .then(function (html) {
               if (html === null) return;
-              bodyEl.innerHTML = html; runScripts(bodyEl); wire();
+              bodyEl.innerHTML = fragmentOf(html); runScripts(bodyEl); wire();
             })
             .catch(function () { if (btn) { btn.disabled = false; btn.textContent = btn.dataset.t || 'Save'; } });
         });
+      }
+      function fragmentOf(html) {
+        // A route may return just the form (X-Fragment) OR a full page. For a full page, extract the
+        // main content and drop the page-head (the modal has its own title) — so ANY short create page
+        // works in the modal with no per-route changes.
+        if (!/<!doctype|<html|<header/i.test(html)) return html;
+        var doc = new DOMParser().parseFromString(html, 'text/html');
+        var main = doc.querySelector('main') || doc.body;
+        var ph = main.querySelector('.page-head'); if (ph) ph.remove();
+        return main.innerHTML;
       }
       function open(url, title) {
         titleEl.textContent = title || '';
@@ -629,14 +641,16 @@
         fetch(url, { headers: { 'X-Fragment': '1' } })
           .then(function (r) { return r.text(); })
           .then(function (html) {
-            bodyEl.innerHTML = html; runScripts(bodyEl); wire();
+            bodyEl.innerHTML = fragmentOf(html); runScripts(bodyEl); wire();
             var f = bodyEl.querySelector('input:not([type=hidden]),select,textarea'); if (f) f.focus();
           })
           .catch(function () { bodyEl.innerHTML = '<p class="err">Could not load the form. <a href="' + url + '">Open the page instead.</a></p>'; });
       }
       document.addEventListener('click', function (e) {
-        var cancel = e.target.closest('[data-fm-cancel]');
-        if (cancel && !fm.hidden) { e.preventDefault(); close(); return; }   // Cancel closes the modal (navigates on the full page)
+        // Cancel closes the modal (a [data-fm-cancel] link, or any secondary button-link in the body —
+        // e.g. a create page's "Cancel"). On the full page these just navigate, as a fallback.
+        var cancel = e.target.closest('[data-fm-cancel], #form-modal .fm-body a.btn.secondary, #form-modal .fm-body a.secondary');
+        if (cancel && !fm.hidden) { e.preventDefault(); close(); return; }
         var t = e.target.closest('[data-modal-form]'); if (!t) return;
         e.preventDefault();
         open(t.getAttribute('data-modal-form'), t.getAttribute('data-modal-title'));
