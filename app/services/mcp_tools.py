@@ -157,6 +157,45 @@ def correlate_application(server_id: int, name: str) -> dict:
         return {"error": str(exc)}
 
 
+def _load_layer_rules(server_id: int, layer: str):
+    db = SessionLocal()
+    try:
+        ms, secret = _server_secret(db, server_id)
+    finally:
+        db.close()
+    from . import access_automation as aa
+    from .mgmt_api import read_session
+    with read_session(ms, secret) as s:
+        rules, _ = aa.load_layer_cached(s, ms, layer)
+    return rules
+
+
+def summarize_layer(server_id: int, layer: str) -> dict:
+    """A high-level overview of an access layer (read-only): rule counts, Accept/Drop split, how many
+    rules are Any on source/destination/service, inline layers, whether a cleanup drop exists."""
+    try:
+        rules = _load_layer_rules(server_id, layer)
+    except Exception as exc:  # noqa: BLE001
+        return {"error": str(exc)}
+    from . import access_automation as aa
+    return {"server_id": int(server_id), "layer": layer, "summary": aa.summarize_rules(rules)}
+
+
+def analyze_policy(server_id: int, layer: str) -> dict:
+    """Read-only policy INSIGHTS for an access layer: the summary, plus rules that can never match
+    (shadowed by an earlier broader Accept/Drop) and overly-permissive Accept rules (Any on a whole
+    dimension) — to help tighten the policy. Provably-conservative: only flags what it can prove."""
+    try:
+        rules = _load_layer_rules(server_id, layer)
+    except Exception as exc:  # noqa: BLE001
+        return {"error": str(exc)}
+    from . import access_automation as aa
+    return {"server_id": int(server_id), "layer": layer,
+            "summary": aa.summarize_rules(rules),
+            "shadowed_rules": aa.find_shadowed(rules),
+            "overly_permissive": aa.find_permissive(rules)}
+
+
 def coverage_lookup(api: str = "management", name: str = "", version: str = "") -> dict:
     """Is a Check Point object (and its fields) supported by the Terraform provider / Ansible collection?
     With ``name`` returns that object's per-field 3-way support; without, the object list for the api."""

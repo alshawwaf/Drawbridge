@@ -50,6 +50,24 @@ def coverage_page(request: Request, api: str = "management", version: str = "",
     return templates.TemplateResponse(request, "coverage.html", coverage.page_context(api, version))
 
 
+@router.get("/mcp-guide", response_class=HTMLResponse)
+def mcp_guide_page(request: Request, db: Session = Depends(get_db)):
+    """Onboarding for the MCP server: the tool catalog + copy-paste connect config for the common
+    clients (Claude Desktop / Cursor / VS Code / n8n) + live status + the safety model."""
+    if get_user_or_none(request, db) is None:
+        return RedirectResponse("/login", status_code=303)
+    from .. import mcp_server
+    from ..config import get_settings
+    from ..services import app_settings
+    s = get_settings()
+    return templates.TemplateResponse(request, "mcp_guide.html", {
+        "tools": mcp_server.tool_catalog(),
+        "sdk_installed": mcp_server.have_mcp(),
+        "token_set": bool(s.mcp_token),
+        "allow_publish": bool(app_settings.get("mcp_allow_publish")),
+    })
+
+
 @router.get("/coverage/object")
 def coverage_object(request: Request, api: str, version: str, name: str,
                     db: Session = Depends(get_db)):

@@ -1557,3 +1557,34 @@ def test_execute_unknown_service_reviews_without_writing_to_sms(monkeypatch):
     assert "did you mean" in res["reason"] or "No Check Point" in res["reason"]
     assert "suggestions" in res                                           # always present for the caller
     assert not any(c[0] in ("add-access-rule", "add-service-tcp", "add-host", "publish") for c in calls)
+
+
+# ============ read-only policy analysis (MCP analyze tools) ============
+def test_summarize_rules_counts():
+    s = aa.summarize_rules([WEB, DENY_DB, CLEANUP])      # accept, specific drop, Any/Any/Any drop
+    assert s["total_rules"] == 3 and s["enabled"] == 3
+    assert s["accept"] == 1 and s["drop_or_reject"] == 2
+    assert s["any_service"] == 1 and s["has_cleanup_drop"] is True
+
+
+def test_find_shadowed_flags_covered_rule():
+    broad = _rule("rb", 1, "Accept", _net("10.0.0.0/8"), ANY, ServiceSet(any=True))
+    narrow = _rule("rn", 2, "Accept", _host("10.1.2.3"), _host("1.1.1.1"), _tcp(443))   # ⊆ broad on all dims
+    other = _rule("ro", 3, "Accept", _host("192.168.5.5"), _host("1.1.1.1"), _tcp(22))  # not covered
+    sh = aa.find_shadowed([broad, narrow, other])
+    assert [x["rule"] for x in sh] == [2] and sh[0]["shadowed_by"] == 1
+
+
+def test_find_shadowed_is_conservative_on_app_service():
+    # an app-service rule must NOT be falsely reported as shadowed by a port rule (can't prove coverage)
+    broad = _rule("rb", 1, "Accept", ANY, ANY, _tcp("1-65535"))
+    appr = _rule("ra", 2, "Accept", _host("10.0.0.5"), _host("1.1.1.1"), _app(["Facebook"]))
+    assert aa.find_shadowed([broad, appr]) == []
+
+
+def test_find_permissive_flags_any_dimensions():
+    wide = _rule("rw", 1, "Accept", ANY, _host("1.1.1.1"), _tcp(443))      # Any source
+    perm = aa.find_permissive([WEB, wide, CLEANUP])
+    assert [p["rule"] for p in perm] == [1] and perm[0]["any_dimensions"] == ["source"]
+    # CLEANUP is a Drop -> never flagged as a permissive accept
+    assert all(p["rule"] != 99 for p in perm)
