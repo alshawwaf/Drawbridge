@@ -67,14 +67,17 @@ EDGES: list[Edge] = [
 ]
 
 # kind -> (fill, stroke, font) — one palette every renderer shares, so .mmd/.drawio/.dot look the same.
+# Hierarchy: the process/decision steps are quiet (light slate, dark text); the four OUTCOMES are bold
+# solid badges (white text) so the eye lands on what the engine actually does — and the colours map to
+# the legend: green = no-op, blue = widen, amber = create, rose = review.
 PALETTE: dict[str, tuple[str, str, str]] = {
-    "start":    ("#eef1f6", "#c7cedb", "#1f2733"),
-    "process":  ("#eef1f6", "#c7cedb", "#1f2733"),
-    "decision": ("#e9edf4", "#aab4c5", "#1f2733"),
-    "review":   ("#fdecef", "#e3a6b2", "#8a1c2b"),
-    "noop":     ("#e6f5ec", "#9ed3b4", "#0f6b41"),
-    "widen":    ("#e6f1fb", "#9cc6e8", "#0b5a86"),
-    "create":   ("#fbf3e2", "#e6cb95", "#7a5512"),
+    "start":    ("#f1f5fb", "#cbd5e6", "#243244"),   # quiet entry
+    "process":  ("#eef2f9", "#cbd5e6", "#243244"),   # quiet step
+    "decision": ("#e2e8f2", "#94a3b8", "#1e293b"),   # slightly stronger outline — reads as a gate
+    "review":   ("#e11d48", "#be123c", "#ffffff"),   # rose-600  — human decides
+    "noop":     ("#0f9d6e", "#0b7d58", "#ffffff"),   # emerald   — already allowed
+    "widen":    ("#2563eb", "#1d4ed8", "#ffffff"),   # blue      — extend a rule
+    "create":   ("#e08600", "#b45309", "#ffffff"),   # amber     — new rule
 }
 
 
