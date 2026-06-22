@@ -915,3 +915,69 @@ def test_dereferenced_group_source_lets_engine_widen():
     assert not rules[0].complex and not rules[0].src_unknown
     d = aa.decide(_FB_REQ, rules)
     assert d.outcome is Outcome.WIDEN and d.target_rule.number == 6 and d.widen_field == "source"
+
+
+# --- network-cell resolution: infra objects (gateway/cluster/mgmt) resolve; opaque objects REVIEW -----
+def _od_infra():
+    return {
+        "h": {"uid": "h", "type": "host", "name": "win_server", "ipv4-address": "10.1.1.50"},
+        "gw": {"uid": "gw", "type": "simple-gateway", "name": "GW", "ipv4-address": "10.1.1.1"},
+        "sms": {"uid": "sms", "type": "checkpoint-host", "name": "SMS", "ipv4-address": "10.1.1.100"},
+        "rng": {"uid": "rng", "type": "address-range", "name": "r",
+                "ipv4-address-first": "10.2.0.1", "ipv4-address-last": "10.2.0.9"},
+        "any": {"uid": "any", "type": "CpmiAnyObject", "name": "Any"},
+        "fb": {"uid": "fb", "type": "application-site", "name": "Facebook"},
+        "acc": {"uid": "acc", "name": "Accept"}, "drp": {"uid": "drp", "name": "Drop"},
+        "zone": {"uid": "zone", "type": "security-zone", "name": "InternalZone"},
+        "dyn": {"uid": "dyn", "type": "dynamic-object", "name": "DynSrv"},
+        "role": {"uid": "role", "type": "access-role", "name": "Finance"},
+        "wild": {"uid": "wild", "type": "wildcard", "name": "odd",
+                 "ipv4-address": "10.0.0.0", "ipv4-mask-wildcard": "0.0.255.0"},
+    }
+
+
+def _irule(n, src, dst, svc, act, od):
+    return aa._parse_rule({"uid": f"r{n}", "rule-number": n, "name": f"r{n}", "enabled": True,
+                           "source": src, "destination": dst, "service": svc, "action": act}, od)
+
+
+def test_gateway_and_checkpoint_host_resolve_as_approx():
+    od = _od_infra()
+    r = _irule(1, ["h", "gw", "sms"], ["any"], ["any"], "acc", od)
+    assert not r.complex          # gateway + checkpoint-host now resolve to their ipv4-address
+    assert r.src_approx           # ...but flagged approx (main IP only)
+    assert not r.src_unknown
+
+
+def test_range_resolves_exact_not_approx():
+    od = _od_infra()
+    r = _irule(1, ["rng"], ["any"], ["any"], "acc", od)
+    assert not r.complex and not r.src_approx
+
+
+def test_opaque_network_objects_still_review():
+    od = _od_infra()
+    req = AccessRequest(src_cidrs=["10.9.9.9/32"], dst_cidrs=["0.0.0.0/0"], application="Facebook")
+    for opaque in ("zone", "dyn", "role", "wild"):
+        rules = [_irule(1, [opaque], ["any"], ["any"], "acc", od),
+                 _irule(2, ["any"], ["any"], ["any"], "drp", od)]
+        assert rules[0].complex, opaque
+        assert aa.decide(req, rules).outcome is Outcome.REVIEW, opaque
+
+
+def test_approx_accept_is_harmless_request_widens_later_rule():
+    od = _od_infra()
+    rules = [_irule(1, ["gw", "sms"], ["any"], ["any"], "acc", od),    # approx accept, disjoint source
+             _irule(2, ["h"], ["any"], ["fb"], "acc", od),             # the real widen target
+             _irule(3, ["any"], ["any"], ["any"], "drp", od)]
+    req = AccessRequest(src_cidrs=["10.4.4.4/32"], dst_cidrs=["0.0.0.0/0"], application="Facebook")
+    d = aa.decide(req, rules)
+    assert d.outcome is Outcome.WIDEN and d.target_rule.number == 2 and d.widen_field == "source"
+
+
+def test_approx_drop_never_under_approximates():
+    od = _od_infra()
+    rules = [_irule(1, ["gw"], ["any"], ["any"], "drp", od),           # deny from a (multi-homable) gateway
+             _irule(2, ["any"], ["any"], ["any"], "drp", od)]
+    req = AccessRequest(src_cidrs=["10.7.7.7/32"], dst_cidrs=["0.0.0.0/0"], application="Facebook")
+    assert aa.decide(req, rules).outcome is Outcome.REVIEW   # can't prove disjoint from an approx deny

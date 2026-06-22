@@ -225,6 +225,11 @@ class ParsedRule:
     src_unknown: bool = False
     dst_unknown: bool = False
     svc_unknown: bool = False
+    # An infra object (gateway/cluster/mgmt) resolved to its main ipv4-address — an UNDER-approximation
+    # of its possibly-multi-homed reach. Trusted to drop an ACCEPT out of the path; never treated as
+    # provably-disjoint, so an overlapping/uncertain DROP with such a cell still routes to REVIEW.
+    src_approx: bool = False
+    dst_approx: bool = False
     # Match-gating columns the engine does NOT model (VPN community, time window, content/data type,
     # install-on gateway subset, service-resource). When set, the rule only matches UNDER that extra
     # condition -> it is not an always-on Accept/Drop and must never be reused/widened/NO_OP'd.
@@ -307,36 +312,52 @@ def _deref(ref, objdict: dict) -> dict:
 
 
 def _parse_net(cell, objdict: dict):
-    """-> (ip intervals, complex?, [group uids found in this cell])."""
-    iv, groups, cx = [], [], False
+    """Resolve a source/destination cell to IPv4 intervals.
+
+    -> (ip intervals, complex?, [group uids], approx?).
+    Resolution is by FIELD, not just type, so any object that exposes a concrete IPv4 extent resolves
+    (hosts AND infrastructure objects — gateways, clusters, management/checkpoint-hosts, interoperable
+    devices — which carry an ``ipv4-address`` but are not type ``host``).
+    - ``complex`` = the cell held something with NO computable IPv4 extent (security-zone, dynamic-object,
+      updatable-object, access-role, dns-domain, a wildcard's non-contiguous mask, a v6-only object, a
+      group-with-exclusion, or a negated cell upstream) -> the rule's reach is unknown -> REVIEW.
+    - ``approx`` = we resolved an object to its main ``ipv4-address`` but its TRUE reach may exceed that
+      single IP (a gateway/cluster can be multi-homed). It is an under-approximation, never an over-
+      approximation, so it's safe to drop an ACCEPT out of the path; but decide() never treats an approx
+      cell as 'provably disjoint', so an overlapping/uncertain DROP stays in the path -> REVIEW (we must
+      never under-approximate a deny)."""
+    iv, groups, cx, approx = [], [], False, False
     for ref in cell or []:
         o = _deref(ref, objdict)
-        t = o.get("type", "")
+        t = (o.get("type") or "").lower()
         name = (o.get("name") or "").lower()
-        if t == "CpmiAnyObject" or name == "any":
-            return ANY_IP, False, groups
-        if t == "host":
-            a = o.get("ipv4-address")
-            iv.append((_ip_int(a), _ip_int(a))) if a else (cx := True)
-        elif t == "network":
-            sub = o.get("subnet4") or o.get("subnet")
-            ml = o.get("mask-length4", o.get("mask-length"))
-            if sub and ml is not None:
-                net = ipaddress.ip_network(f"{sub}/{ml}", strict=False)
-                iv.append((int(net.network_address), int(net.broadcast_address)))
-            else:
-                cx = True
-        elif t == "address-range":
-            f, l = o.get("ipv4-address-first"), o.get("ipv4-address-last")
-            iv.append((_ip_int(f), _ip_int(l))) if (f and l) else (cx := True)
-        elif t in ("group", "group-with-exclusion"):
+        if t == "cpmianyobject" or name == "any":
+            return ANY_IP, False, groups, False
+        if t in ("group", "group-with-exclusion"):
             groups.append(o.get("uid", ""))
-            sub_iv, sub_cx, _ = _parse_net(o.get("members", []), objdict)
+            sub_iv, sub_cx, _, sub_ap = _parse_net(o.get("members", []), objdict)
             iv.extend(sub_iv)
-            cx = cx or sub_cx or (t == "group-with-exclusion")
-        else:
+            cx = cx or sub_cx or (t == "group-with-exclusion")   # exclusion subtracts -> can't interval it
+            approx = approx or sub_ap
+            continue
+        sub = o.get("subnet4") or o.get("subnet")
+        ml = o.get("mask-length4", o.get("mask-length"))
+        first, last = o.get("ipv4-address-first"), o.get("ipv4-address-last")
+        addr = o.get("ipv4-address")
+        if o.get("ipv4-mask-wildcard"):              # wildcard: non-contiguous mask -> not an interval
             cx = True
-    return _merge(iv), cx, groups
+        elif sub and ml is not None:                 # network (and anything carrying subnet4 + mask)
+            net = ipaddress.ip_network(f"{sub}/{ml}", strict=False)
+            iv.append((int(net.network_address), int(net.broadcast_address)))
+        elif first and last:                         # address-range / multicast-address-range
+            iv.append((_ip_int(first), _ip_int(last)))
+        elif addr:                                   # host OR an infra object (gateway/cluster/mgmt/...)
+            iv.append((_ip_int(addr), _ip_int(addr)))
+            if t != "host":                          # main IP only; full reach may be larger -> approx
+                approx = True
+        else:                                        # zone / dynamic / updatable / role / domain / v6-only
+            cx = True
+    return _merge(iv), cx, groups, approx
 
 
 def _parse_port(spec):
@@ -427,8 +448,8 @@ def _rule_conditions(e: dict, objdict: dict) -> tuple:
 
 
 def _parse_rule(e, objdict: dict) -> ParsedRule:
-    src, src_cx, src_groups = _parse_net(e.get("source", []), objdict)
-    dst, dst_cx, dst_groups = _parse_net(e.get("destination", []), objdict)
+    src, src_cx, src_groups, src_ap = _parse_net(e.get("source", []), objdict)
+    dst, dst_cx, dst_groups, dst_ap = _parse_net(e.get("destination", []), objdict)
     svc = _parse_svc(e.get("service", []), objdict)
     action = e.get("action")
     if isinstance(action, str):
@@ -450,6 +471,7 @@ def _parse_rule(e, objdict: dict) -> ParsedRule:
         source_group_uids=src_groups, dest_group_uids=dst_groups,
         complex=bool(src_unknown or dst_unknown or svc_unknown),
         src_unknown=src_unknown, dst_unknown=dst_unknown, svc_unknown=svc_unknown,
+        src_approx=src_ap, dst_approx=dst_ap,
         conditional=bool(conditions), conditions=conditions,
     )
 
@@ -567,8 +589,12 @@ def decide(req: AccessRequest, rules: list[ParsedRule]) -> Decision:
         # (This is the safety invariant: never reason past a rule whose real reach is unknown.)
         svc_uncertain = _svc_uncertain(req_svc, r.svc)
         svc_indeterminate = _svc_indeterminate(req_svc, r.svc)
-        interferes = not (_provably_disjoint(rel_src, r.src_unknown)
-                          or _provably_disjoint(rel_dst, r.dst_unknown)
+        # An approx cell (infra object resolved to its main IP) is an under-approximation, so it can
+        # never be PROVEN disjoint — fold it into the per-cell "unknown". An ACCEPT with an approx cell
+        # that doesn't otherwise match simply isn't acted on (harmless); a DROP stays in the path so a
+        # possibly-wider deny is never silently stepped over.
+        interferes = not (_provably_disjoint(rel_src, r.src_unknown or r.src_approx)
+                          or _provably_disjoint(rel_dst, r.dst_unknown or r.dst_approx)
                           or _provably_disjoint(rel_svc, r.svc_unknown or svc_indeterminate))
 
         if (r.complex or svc_uncertain or not r.is_resolved_action) and interferes:
