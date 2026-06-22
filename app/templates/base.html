@@ -73,6 +73,21 @@
     ::selection { background:var(--accent-soft); }
     a { color:var(--accent); }
 
+    /* Branded scrollbars — a gradient thumb on a transparent track. The transparent 2px border +
+       padding-box clip slims the thumb and rounds its ends. WebKit/Blink use the pseudo-elements;
+       Firefox can't do a gradient, so it gets a solid accent thumb via the standard properties (scoped
+       to Firefox only — if set globally, Chrome prefers the standard prop and drops the gradient). */
+    ::-webkit-scrollbar { width:11px; height:11px; }
+    ::-webkit-scrollbar-track { background:transparent; }
+    ::-webkit-scrollbar-corner { background:transparent; }
+    ::-webkit-scrollbar-thumb { border-radius:9px; border:2px solid transparent; background-clip:padding-box;
+      background-image:linear-gradient(180deg, var(--accent) 0%, #7b3ff2 100%); }
+    ::-webkit-scrollbar-thumb:hover { border-width:1px;
+      background-image:linear-gradient(180deg, var(--accent-2) 0%, #8b4ff8 100%); }
+    @supports (-moz-appearance:none) {
+      * { scrollbar-width:thin; scrollbar-color:var(--accent) transparent; }
+    }
+
     /* ============================ Header ============================ */
     header {
       position:sticky; top:0; z-index:50; height:60px; padding:0 26px;
