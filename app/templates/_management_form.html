@@ -87,12 +87,13 @@
     });
   })();
 
-  (function () {  // auto-trust on → the manual paste panel is just an optional override
+  (function () {  // auto-trust on → the portal pins the cert for you, so the manual paste panel is
+    // irrelevant: collapse it entirely (untick to reveal it and paste your own). A hidden textarea still
+    // submits, so an already-pinned cert is preserved, not wiped.
     var auto = document.getElementById('auto_trust');
     var panel = document.getElementById('tls-subpanel');
-    var cert = document.getElementById('ms_cert');
     if (!auto || !panel) return;
-    function sync() { panel.classList.toggle('is-locked', auto.checked); if (cert) cert.readOnly = auto.checked; }
+    function sync() { panel.style.display = auto.checked ? 'none' : ''; }
     auto.addEventListener('change', sync);
     sync();
   })();
