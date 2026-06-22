@@ -25,6 +25,9 @@
       /* Signature magenta→violet gradient — used for icon chips, primary buttons, active chips. Defined
          once here (references var(--accent), so it follows the theme); also covers light mode below. */
       --accent-grad:linear-gradient(135deg, var(--accent) 0%, #7b3ff2 100%);
+      /* Cool secondary gradient — for a SECOND selector on the same view (e.g. PROTOCOL vs FORMAT) so two
+         adjacent pickers don't read as the same control. */
+      --accent-grad-2:linear-gradient(135deg, #06b6d4 0%, #3b82f6 100%);
       --ok:#34d399; --ok-bg:rgba(52,211,153,.14); --ok-line:rgba(52,211,153,.34);
       --danger:#fb7185; --danger-bg:rgba(251,113,133,.13); --danger-line:rgba(251,113,133,.34);
       --warn:#fbbf24; --warn-bg:rgba(251,191,36,.16); --info:#38bdf8; --info-bg:rgba(56,189,248,.16);
@@ -263,6 +266,10 @@
       overflow:auto; font-size:12.5px; line-height:1.65; border:1px solid var(--line-soft); }
     code { background:var(--subtle-bg); color:var(--subtle-fg); padding:1.5px 6px; border-radius:5px;
       font-size:12.5px; font-family:ui-monospace,monospace; }
+    /* The Log Exporter command panel follows the theme (no stark black box on the light page) with a
+       cool accent bar marking it as a copy-me command. */
+    #cmd-pre { background:var(--surface-3); color:var(--text); border:1px solid var(--line);
+      border-left:3px solid #3b82f6; }
     .copy { font-family:ui-monospace,monospace; font-size:13px; background:var(--subtle-bg); color:var(--subtle-fg);
       border:1px solid var(--line); padding:11px 13px; border-radius:var(--r); word-break:break-all; }
     .fp { font-family:ui-monospace,monospace; font-size:12px; background:var(--subtle-bg); border:1px solid var(--line);
@@ -308,6 +315,10 @@
     .chip:hover { border-color:var(--line-strong); color:var(--text); }
     .chip.active, .chip.active:hover { background:var(--accent-grad);
       color:var(--on-accent); border-color:transparent; }
+    /* PROTOCOL picker uses the cool gradient so it reads as a distinct control from the magenta FORMAT
+       picker right next to it. */
+    .cmdpick[data-cmd="cmd-proto"] .chip.active,
+    .cmdpick[data-cmd="cmd-proto"] .chip.active:hover { background:var(--accent-grad-2); }
     .chipcount { opacity:.7; margin-left:5px; }
 
     /* ============================ Dropdown menu ============================ */
