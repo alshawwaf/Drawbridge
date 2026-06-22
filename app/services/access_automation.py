@@ -294,11 +294,14 @@ def _ports_to_iv(spec: str):
     out = []
     for part in str(spec).split(","):
         part = part.strip()
-        if "-" in part:
-            lo, hi = part.split("-", 1)
-            out.append((int(lo), int(hi)))
-        elif part:
-            out.append((int(part), int(part)))
+        try:
+            if "-" in part:
+                lo, hi = part.split("-", 1)
+                out.append((int(lo), int(hi)))
+            elif part:
+                out.append((int(part), int(part)))
+        except ValueError:
+            continue   # unparsable token -> drop it; an all-empty result hits decide()'s guard 2 -> REVIEW
     return _merge(out)
 
 
