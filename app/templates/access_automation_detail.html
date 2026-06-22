@@ -217,6 +217,7 @@ Content-Type: application/json
       if (j.source_object) rows += '<tr><td class="nowrap"><b>Source</b></td><td><code>' + esc(j.source_object) + '</code></td></tr>';
       if (j.destination_object) rows += '<tr><td class="nowrap"><b>Destination</b></td><td><code>' + esc(j.destination_object) + '</code></td></tr>';
       if (j.service_object) rows += '<tr><td class="nowrap"><b>Service</b></td><td><code>' + esc(j.service_object) + '</code></td></tr>';
+      if (j.layer) rows += '<tr><td class="nowrap"><b>Inline layer</b></td><td>the change lands inside inline layer <code>' + esc(j.layer) + '</code></td></tr>';
       if (j.position) rows += '<tr><td class="nowrap"><b>Position</b></td><td>' + esc(j.position) + '</td></tr>';
       if (j.target_rule) rows += '<tr><td class="nowrap"><b>Anchor rule</b></td><td>#' + esc(j.target_rule.number) + ' ' + esc(j.target_rule.name) + '</td></tr>';
       if (rows) h += '<table class="acttable" style="margin-top:10px;"><tbody>' + rows + '</tbody></table>';

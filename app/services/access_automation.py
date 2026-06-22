@@ -246,6 +246,15 @@ class ParsedRule:
     # condition -> it is not an always-on Accept/Drop and must never be reused/widened/NO_OP'd.
     conditional: bool = False
     conditions: tuple = ()
+    # Inline layer ("Apply Layer"): the parent rule diverts matching traffic into a sub-rulebase. The
+    # loader pulls + attaches that rulebase so decide() can recurse purely. inline_rules is None for a
+    # normal rule, a (possibly empty) list for an inline-layer rule; inline_cleanup is the inline layer's
+    # own implicit cleanup action ("drop" | "accept" | "" unknown) -- what happens when traffic enters
+    # the layer but matches no rule there.
+    inline_uid: str = ""                        # uid of the referenced inline layer (set by _parse_rule)
+    inline_layer_name: str = ""                 # its name (for the apply 'layer' param + messages)
+    inline_rules: Optional[list] = None
+    inline_cleanup: str = ""
 
     @property
     def is_accept(self) -> bool:
@@ -278,6 +287,9 @@ class Decision:
     position: Optional[dict] = None             # internal placement hint (resolved at apply)
     widen_group_uid: Optional[str] = None       # group to add the object to, if that cell uses one
     widen_field: Optional[str] = None           # "source" | "destination" — the dimension to extend
+    layer: Optional[str] = None                 # target layer for the change — set to an INLINE layer's
+                                                # name when the decision lands inside it (else the caller's
+                                                # top-level layer is used)
 
 
 # --------------------------------------------------------------------------- #
@@ -488,6 +500,15 @@ def _parse_rule(e, objdict: dict) -> ParsedRule:
     dst_unknown = bool(dst_cx or e.get("destination-negate"))
     svc_unknown = bool(svc.complex or e.get("service-negate"))
     conditions = _rule_conditions(e, objdict)
+    # Inline layer: action "Apply Layer" + an `inline-layer` reference (uid or inline dict). Record the
+    # uid + name now; the loader attaches the sub-rulebase. The layer's implicit-cleanup action is read
+    # from the object dictionary here when present (no extra call); the loader falls back to a lookup.
+    inline_ref = e.get("inline-layer")
+    inline_uid = inline_ref if isinstance(inline_ref, str) else (
+        (inline_ref or {}).get("uid", "") if isinstance(inline_ref, dict) else "")
+    inline_obj = objdict.get(inline_uid) if inline_uid else None
+    inline_name = (inline_obj or {}).get("name", "") if isinstance(inline_obj, dict) else ""
+    inline_cleanup = ((inline_obj or {}).get("implicit-cleanup-action", "") or "").lower()
     return ParsedRule(
         uid=e.get("uid", ""),
         number=e.get("rule-number", e.get("number", 0)),
@@ -500,6 +521,7 @@ def _parse_rule(e, objdict: dict) -> ParsedRule:
         src_unknown=src_unknown, dst_unknown=dst_unknown, svc_unknown=svc_unknown,
         src_approx=src_ap, dst_approx=dst_ap,
         conditional=bool(conditions), conditions=conditions,
+        inline_uid=inline_uid, inline_layer_name=inline_name, inline_cleanup=inline_cleanup,
     )
 
 
@@ -638,6 +660,58 @@ def decide(req: AccessRequest, rules: list[ParsedRule], options: "DecideOptions"
         interferes = not (_provably_disjoint(rel_src, r.src_unknown or r.src_approx)
                           or _provably_disjoint(rel_dst, r.dst_unknown or r.dst_approx)
                           or _provably_disjoint(rel_svc, r.svc_unknown or svc_indeterminate))
+
+        # Inline layer ("Apply Layer"): the parent rule's columns gate entry into a sub-rulebase that the
+        # loader has attached as r.inline_rules. Honour Check Point first-match: if ALL of the request is
+        # contained in the parent's match (and the parent is a plain, unconditional rule), every packet
+        # descends into the inline layer and never returns to this layer -> recurse and let the sub-rules
+        # plus the inline layer's OWN implicit cleanup decide. If the request only partially matches, it
+        # splits across the inline layer and the parent layer (a multi-rule interaction we won't
+        # second-guess) -> REVIEW. This converts the old blanket "non-Accept/Drop action" REVIEW into an
+        # automatic decision whenever the request lives wholly inside one inline layer.
+        if r.inline_rules is not None and interferes and covering_drop is None:
+            name = r.inline_layer_name or r.name
+            if r.conditional and not options.ignore_conditions:
+                return Decision(
+                    Outcome.REVIEW,
+                    f"rule {r.number} ({r.name}) applies inline layer “{name}” only under "
+                    f"{', '.join(r.conditions)} (a dimension the engine doesn't model) -- needs review",
+                    target_rule=r,
+                )
+            if r.complex or not _is_subset(rel_src, rel_dst, rel_svc):
+                return Decision(
+                    Outcome.REVIEW,
+                    f"the request only partially matches rule {r.number} ({r.name}); its traffic splits "
+                    f"across inline layer “{name}” and the parent layer -- needs human review",
+                    target_rule=r,
+                )
+            sub = decide(req, r.inline_rules, options)
+            if sub.outcome is Outcome.REVIEW:
+                return sub
+            if sub.outcome is Outcome.CREATE:
+                # No explicit rule in the inline layer covers it -> its implicit cleanup is the verdict.
+                if r.inline_cleanup == "accept":
+                    return Decision(
+                        Outcome.NO_OP,
+                        f"already permitted by the implicit cleanup (accept) of inline layer “{name}” "
+                        f"(applied by rule {r.number})",
+                        target_rule=r,
+                    )
+                if r.inline_cleanup != "drop":
+                    return Decision(
+                        Outcome.REVIEW,
+                        f"the request reaches inline layer “{name}” (rule {r.number}) but no rule there "
+                        f"covers it and the layer's implicit cleanup is unknown -- needs human review",
+                        target_rule=r,
+                    )
+                sub.reason = (f"no rule in inline layer “{name}” (applied by rule {r.number}) covers the "
+                              f"request; create a least-privilege rule inside it, above its drop cleanup")
+            elif sub.outcome is Outcome.NO_OP:
+                sub.reason = f"already permitted inside inline layer “{name}”: {sub.reason}"
+            # WIDEN / CREATE land INSIDE the inline layer (keep a deeper layer a nested recursion set).
+            if sub.outcome is not Outcome.NO_OP:
+                sub.layer = sub.layer or name
+            return sub
 
         if (r.complex or svc_uncertain or not r.is_resolved_action) and interferes:
             return Decision(
@@ -781,10 +855,11 @@ def _placement(covering_drop, lower_anchor) -> dict:
 # --------------------------------------------------------------------------- #
 # I/O layer  (uses the existing MgmtSession client)
 # --------------------------------------------------------------------------- #
-def load_layer(session, layer_name: str, package: Optional[str] = None,
-               max_rules: int = 5000) -> list[ParsedRule]:
-    """Pull a layer with full object details (same pattern as mgmt_api.pull_for_export) and parse
-    every rule into value-resolved intervals."""
+_INLINE_MAX_DEPTH = 4     # inline layers can nest; cap the recursion (a cycle guard backs this up)
+
+
+def _pull_items(session, layer_name: str, package: Optional[str], max_rules: int = 5000) -> tuple:
+    """One layer's raw rulebase items + object dictionary (paged), the pull pattern decide() relies on."""
     items: list[dict] = []
     objdict: dict = {}
     total, offset = 0, 0
@@ -805,7 +880,56 @@ def load_layer(session, layer_name: str, package: Optional[str] = None,
         if not batch or to >= total or to <= offset:
             break
         offset = to
-    return [_parse_rule(e, objdict) for e in _flatten(items) if e.get("type") == "access-rule"]
+    return items, objdict
+
+
+def _layer_cleanup_action(session, layer_ref: str) -> str:
+    """An access layer's implicit cleanup action ("drop" | "accept" | ""). Read straight from the rule's
+    object dictionary when present (no extra call); this is the lookup fallback when it wasn't."""
+    if not layer_ref:
+        return ""
+    try:
+        r = session.call("show-access-layer", {"uid": layer_ref})       # VERIFY (accepts uid)
+        return (r.get("implicit-cleanup-action", "") or "").lower()
+    except Exception:  # noqa: BLE001 — best-effort; unknown cleanup just routes the no-match case to REVIEW
+        return ""
+
+
+def _attach_inline_layers(session, rules, package, pull, depth: int, visited: set) -> None:
+    """For every "Apply Layer" rule, pull + parse its inline layer's rulebase (recursively) and attach it
+    as r.inline_rules so decide() can recurse purely. ``pull(layer_name) -> list[ParsedRule]`` does the
+    fetch (fresh or cached). Guards: a depth cap and a visited-uid set (an inline layer referencing one of
+    its ancestors would otherwise loop). On any error the rule is left as a normal unresolved action,
+    which decide() routes to REVIEW -- never a silent grant."""
+    if depth <= 0:
+        return
+    for r in rules:
+        if not r.inline_uid:
+            continue
+        if r.inline_uid in visited:
+            r.inline_rules = []                  # cycle -> treat as an empty inline layer (cleanup decides)
+            continue
+        try:
+            sub = pull(r.inline_layer_name or r.inline_uid)
+            _attach_inline_layers(session, sub, package, pull, depth - 1, visited | {r.inline_uid})
+            r.inline_rules = sub
+            if not r.inline_cleanup:             # not carried in the object dictionary -> look it up once
+                r.inline_cleanup = _layer_cleanup_action(session, r.inline_uid)
+        except Exception:  # noqa: BLE001 — leave inline_rules None -> REVIEW (safe), never assume a grant
+            r.inline_rules = None
+
+
+def load_layer(session, layer_name: str, package: Optional[str] = None,
+               max_rules: int = 5000) -> list[ParsedRule]:
+    """Pull a layer with full object details (same pattern as mgmt_api.pull_for_export) and parse
+    every rule into value-resolved intervals, attaching any inline-layer sub-rulebases."""
+    def _pull(name: str) -> list[ParsedRule]:
+        items, objdict = _pull_items(session, name, package, max_rules)
+        return [_parse_rule(e, objdict) for e in _flatten(items) if e.get("type") == "access-rule"]
+
+    rules = _pull(layer_name)
+    _attach_inline_layers(session, rules, package, _pull, _INLINE_MAX_DEPTH, set())
+    return rules
 
 
 def lookup_host(session, ip: str) -> Optional[str]:
@@ -966,6 +1090,8 @@ def build_preview(session, decision: Decision, req: AccessRequest, rules: list[P
     """Read-only: report exactly what execute() would do, without writing anything."""
     out: dict = {"outcome": decision.outcome.value, "reason": decision.reason,
                  "target_rule": _brief(decision.target_rule)}
+    if decision.layer:                       # the change lands inside an inline layer, not the top layer
+        out["layer"] = decision.layer
     if decision.outcome in (Outcome.NO_OP, Outcome.REVIEW):
         return out
 
@@ -992,6 +1118,11 @@ def build_preview(session, decision: Decision, req: AccessRequest, rules: list[P
 def _apply(session, decision: Decision, req: AccessRequest, layer: str,
            rules: list[ParsedRule], ticket_id: str) -> dict:
     out: dict = {"ops": []}
+    # The change targets the inline layer when the decision landed inside one (decision.layer); otherwise
+    # the caller's top-level layer. The position uids in decision.position belong to that same layer.
+    target_layer = decision.layer or layer
+    if decision.layer:
+        out["layer"] = decision.layer
 
     if decision.outcome == Outcome.WIDEN:
         field = decision.widen_field or "source"
@@ -1003,7 +1134,8 @@ def _apply(session, decision: Decision, req: AccessRequest, layer: str,
         # references it. decide() guarantees the other two cells equal the request exactly, so this
         # grants precisely the requested source x destination x service and nothing more.
         session.call("set-access-rule",
-                     {"uid": decision.target_rule.uid, "layer": layer, field: {"add": obj_name}})  # VERIFY
+                     {"uid": decision.target_rule.uid, "layer": target_layer,
+                      field: {"add": obj_name}})  # VERIFY
         out["ops"].append(f"set-access-rule {decision.target_rule.uid} {field}.add {obj_name}")
         return out
 
@@ -1013,7 +1145,7 @@ def _apply(session, decision: Decision, req: AccessRequest, layer: str,
     svc_name = _resolve_svc_object(session, req)
     from . import naming
     payload = {
-        "layer": layer,
+        "layer": target_layer,
         "position": _position_payload(decision.position or {}),
         "name": naming.rule_name(ticket_id),
         "source": src_name,
@@ -1034,10 +1166,17 @@ def _apply(session, decision: Decision, req: AccessRequest, layer: str,
 # Top-level entry points the router / webhook call
 # --------------------------------------------------------------------------- #
 def load_layer_cached(session, server, layer: str, package: Optional[str] = None):
-    """Parsed rules for ``layer`` via the revision-based policy cache. Returns (rules, cached)."""
+    """Parsed rules for ``layer`` via the revision-based policy cache, with inline-layer sub-rulebases
+    attached (each pulled through the same cache, keyed by its own name). Returns (rules, cached)."""
+    def _pull(name: str) -> list[ParsedRule]:
+        raw = cached_raw(session, server, name, package=package)
+        return [_parse_rule(e, raw["objdict"]) for e in _flatten(raw["items"])
+                if e.get("type") == "access-rule"]
+
     raw = cached_raw(session, server, layer, package=package)
     rules = [_parse_rule(e, raw["objdict"]) for e in _flatten(raw["items"])
              if e.get("type") == "access-rule"]
+    _attach_inline_layers(session, rules, package, _pull, _INLINE_MAX_DEPTH, set())
     return rules, bool(raw.get("cached"))
 
 

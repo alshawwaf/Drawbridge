@@ -1102,3 +1102,156 @@ def test_ignore_conditions_lets_conditional_accept_cover():
     assert r1.conditional                                                            # it IS conditional
     assert aa.decide(_req443(), [r1, cleanup]).outcome is Outcome.CREATE             # default: skip -> create
     assert aa.decide(_req443(), [r1, cleanup], aa.DecideOptions(ignore_conditions=True)).outcome is Outcome.NO_OP
+
+
+# --- inline-layer recursion ("Apply Layer") --------------------------------------------------------
+def _inline(uid, num, src, dst, svc, sub, *, cleanup="drop", name=None, conditions=()):
+    """An 'Apply Layer' parent rule whose inline-layer sub-rulebase (`sub`) is already attached, as the
+    loader would. `cleanup` is the inline layer's implicit-cleanup-action."""
+    return ParsedRule(uid=uid, number=num, name=uid, enabled=True, action="Apply Layer",
+                      src=src, dst=dst, svc=svc, conditional=bool(conditions), conditions=tuple(conditions),
+                      inline_uid=f"{uid}-L", inline_layer_name=name or f"{uid}-inline",
+                      inline_rules=list(sub), inline_cleanup=cleanup)
+
+
+def _req(src="10.1.0.5/32", dst="172.16.5.10/32", proto="tcp", port="443"):
+    return AccessRequest(src_cidrs=[src], dst_cidrs=[dst], protocol=proto, ports=port)
+
+
+# parent gates the whole 10.1.0.0/24 -> 172.16.5.10 :443 domain into the inline layer
+def _parent(sub, **kw):
+    return _inline("p1", 5, _net("10.1.0.0/24"), _host("172.16.5.10"), _tcp(443), sub, **kw)
+
+
+def test_inline_explicit_accept_inside_is_no_op():
+    sub = [_rule("i1", 1, "Accept", _host("10.1.0.5"), _host("172.16.5.10"), _tcp(443))]
+    d = aa.decide(_req(), [_parent(sub), CLEANUP])
+    assert d.outcome is Outcome.NO_OP and "inline layer" in d.reason
+
+
+# a sub rule that neither covers NOR widens the request (differs in dst AND svc) -> forces the inline
+# layer's own implicit cleanup to be the verdict
+_NONMATCH_SUB = [_rule("i1", 1, "Accept", _host("10.1.0.9"), _host("8.8.8.8"), _tcp(22))]
+
+
+def test_inline_no_match_drop_cleanup_creates_inside_layer():
+    d = aa.decide(_req(), [_parent(_NONMATCH_SUB, cleanup="drop"), CLEANUP])
+    assert d.outcome is Outcome.CREATE
+    assert d.layer == "p1-inline"                          # the change lands INSIDE the inline layer
+    assert "above its drop cleanup" in d.reason
+
+
+def test_inline_no_match_accept_cleanup_is_no_op():
+    d = aa.decide(_req(), [_parent(_NONMATCH_SUB, cleanup="accept"), CLEANUP])
+    assert d.outcome is Outcome.NO_OP and "implicit cleanup (accept)" in d.reason
+
+
+def test_inline_no_match_unknown_cleanup_reviews():
+    d = aa.decide(_req(), [_parent(_NONMATCH_SUB, cleanup=""), CLEANUP])
+    assert d.outcome is Outcome.REVIEW and "implicit cleanup is unknown" in d.reason
+
+
+def test_inline_partial_match_splits_to_review():
+    # request dst (a /24) is a SUPERSET of the parent's /32 -> traffic splits across layers
+    req = AccessRequest(src_cidrs=["10.1.0.5/32"], dst_cidrs=["172.16.5.0/24"], protocol="tcp", ports="443")
+    sub = [_rule("i1", 1, "Accept", ANY, ANY, _tcp(443))]
+    d = aa.decide(req, [_parent(sub), CLEANUP])
+    assert d.outcome is Outcome.REVIEW and "splits across" in d.reason
+
+
+def test_inline_widen_targets_a_rule_inside_the_layer():
+    # inline rule equals request in dst+svc, differs only in source -> WIDEN that inline rule
+    sub = [_rule("i1", 1, "Accept", _host("10.1.0.9"), _host("172.16.5.10"), _tcp(443))]
+    req = AccessRequest(src_cidrs=["10.1.0.5/32"], dst_cidrs=["172.16.5.10/32"], protocol="tcp", ports="443")
+    d = aa.decide(req, [_parent(sub), CLEANUP])
+    assert d.outcome is Outcome.WIDEN
+    assert d.target_rule.uid == "i1" and d.layer == "p1-inline"
+
+
+def test_inline_explicit_drop_inside_reviews_then_override_creates():
+    sub = [_rule("i1", 1, "Drop", _host("10.1.0.5"), _host("172.16.5.10"), _tcp(443))]
+    assert aa.decide(_req(), [_parent(sub), CLEANUP]).outcome is Outcome.REVIEW
+    d = aa.decide(_req(), [_parent(sub), CLEANUP], aa.DecideOptions(override_deny=True))
+    assert d.outcome is Outcome.CREATE and d.layer == "p1-inline"
+
+
+def test_inline_conditional_parent_reviews_unless_ignored():
+    sub = [_rule("i1", 1, "Accept", _host("10.1.0.5"), _host("172.16.5.10"), _tcp(443))]
+    parent = _parent(sub, conditions=("time",))
+    assert aa.decide(_req(), [parent, CLEANUP]).outcome is Outcome.REVIEW
+    d = aa.decide(_req(), [parent, CLEANUP], aa.DecideOptions(ignore_conditions=True))
+    assert d.outcome is Outcome.NO_OP
+
+
+def test_inline_parent_disjoint_is_not_entered():
+    # request outside the parent's domain -> never descends; falls to a normal CREATE at the cleanup
+    sub = [_rule("i1", 1, "Drop", ANY, ANY, ServiceSet(any=True))]   # would block if (wrongly) entered
+    req = AccessRequest(src_cidrs=["192.168.50.5/32"], dst_cidrs=["8.8.8.8/32"], protocol="tcp", ports="53")
+    d = aa.decide(req, [_parent(sub), CLEANUP])
+    assert d.outcome is Outcome.CREATE and d.layer is None
+
+
+def test_inline_nested_two_levels():
+    inner = [_rule("j1", 1, "Accept", _host("10.1.0.5"), _host("172.16.5.10"), _tcp(443))]
+    mid = [_inline("m1", 1, _net("10.1.0.0/24"), _host("172.16.5.10"), _tcp(443), inner, name="mid")]
+    d = aa.decide(_req(), [_parent(mid), CLEANUP])
+    assert d.outcome is Outcome.NO_OP
+
+
+# --- loader: attach inline sub-rulebases (I/O), with cycle + cleanup guards -------------------------
+class _FakeSession:
+    """Minimal stand-in for MgmtSession.call covering the loader's show-access-rulebase / -layer calls.
+    `layers` maps a layer NAME -> its rulebase; `objs` is the shared object dictionary returned with every
+    rulebase page (so the inline-layer name resolves like a real pull); `cleanups` maps a layer UID -> its
+    implicit-cleanup-action for the show-access-layer fallback."""
+    def __init__(self, layers, objs=None, cleanups=None):
+        self.layers, self.objs, self.cleanups, self.calls = layers, objs or [], cleanups or {}, []
+
+    def call(self, cmd, payload):
+        self.calls.append((cmd, payload))
+        if cmd == "show-access-rulebase":
+            return {"rulebase": self.layers.get(payload.get("name"), []),
+                    "objects-dictionary": self.objs, "total": 0, "to": 0}
+        if cmd == "show-access-layer":
+            return {"implicit-cleanup-action": self.cleanups.get(payload.get("uid"), "")}
+        return {}
+
+
+def _ap_rule(uid, num, inline_uid):
+    return {"type": "access-rule", "uid": uid, "rule-number": num, "name": uid, "enabled": True,
+            "source": ["Any"], "destination": ["Any"], "service": ["Any"], "action": "Apply Layer",
+            "inline-layer": inline_uid}
+
+
+def test_loader_attaches_inline_rules_and_cleanup():
+    # object dictionary names the inline layer (so the pull uses its name); cleanup is NOT in the dict,
+    # so the loader falls back to a show-access-layer lookup.
+    objs = [{"uid": "L-DMZ", "type": "access-layer", "name": "DMZ"}]
+    top = [_ap_rule("p", 1, "L-DMZ")]
+    dmz = [{"type": "access-rule", "uid": "d1", "rule-number": 1, "name": "d1", "enabled": True,
+            "source": ["Any"], "destination": ["Any"], "service": ["Any"], "action": "Accept"}]
+    sess = _FakeSession({"DMZ": dmz, "topL": top}, objs=objs, cleanups={"L-DMZ": "drop"})
+    rules = aa.load_layer(sess, "topL")
+    assert rules[0].inline_layer_name == "DMZ"             # resolved from the object dictionary
+    assert rules[0].inline_rules is not None and len(rules[0].inline_rules) == 1
+    assert rules[0].inline_cleanup == "drop"               # looked up via show-access-layer fallback
+    assert ("show-access-layer", {"uid": "L-DMZ"}) in sess.calls
+
+
+def test_loader_cleanup_from_object_dictionary_skips_lookup():
+    # cleanup carried in the object dictionary -> no extra show-access-layer call
+    objs = [{"uid": "L-DMZ", "type": "access-layer", "name": "DMZ", "implicit-cleanup-action": "Accept"}]
+    sess = _FakeSession({"DMZ": [], "topL": [_ap_rule("p", 1, "L-DMZ")]}, objs=objs)
+    rules = aa.load_layer(sess, "topL")
+    assert rules[0].inline_cleanup == "accept"
+    assert not any(c[0] == "show-access-layer" for c in sess.calls)
+
+
+def test_loader_cycle_guard_does_not_recurse_forever():
+    # an inline layer whose rulebase re-applies itself -> the visited-uid guard stops the recursion
+    objs = [{"uid": "L-LOOP", "type": "access-layer", "name": "LOOP"}]
+    selfref = [_ap_rule("s", 1, "L-LOOP")]
+    sess = _FakeSession({"LOOP": selfref, "topL": selfref}, objs=objs, cleanups={"L-LOOP": "drop"})
+    rules = aa.load_layer(sess, "topL")        # must terminate
+    assert rules[0].inline_rules is not None    # attached; the self-reference inside resolves to []
+    assert rules[0].inline_rules[0].inline_rules == []   # the cycle was cut at the second encounter
