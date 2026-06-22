@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros.html" import export_menu %}
 {% block title %}Automation coverage{% endblock %}
 {% block main_class %}wide{% endblock %}
 {% block content %}
@@ -58,6 +59,7 @@
     <h1>Automation coverage <span class="pill">API · Terraform · Ansible</span></h1>
     <p class="ph-sub">Every object/command from the Check Point API, compared with the Terraform provider and the Ansible collection — generated from the API spec and bundled per version. Expand a row for its full <b>web_api JSON</b>, <b>mgmt_cli</b>, <b>Terraform</b> and <b>Ansible</b> example, with each field colour-coded by where it's supported.</p>
   </div>
+  <div class="ph-actions">{{ export_menu('coverage', 'api=' ~ api_type ~ '&version=' ~ version) }}</div>
 </div>
 
 <div class="cov-tabs">

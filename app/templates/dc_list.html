@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros.html" import export_menu %}
 {% block title %}Data Centers{% endblock %}
 {% block content %}
 {% from "_macros.html" import row_actions, columns_menu %}
@@ -9,6 +10,7 @@
     <p class="ph-sub">Mock cloud/datacenter providers Check Point connects to. Point a SmartConsole Data Center object at the portal — it serves the inventory in the provider's own API.</p>
   </div>
   <div class="ph-actions">
+    {{ export_menu('datacenters') }}
     <div class="menu">
       <a href="#" class="btn menu-trigger">+ New Data Center ▾</a>
       <div class="menu-items">

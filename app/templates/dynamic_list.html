@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros.html" import export_menu %}
 {% block title %}Dynamic Layers{% endblock %}
 {% block content %}
 {% from "_macros.html" import row_actions, columns_menu %}
@@ -9,6 +10,7 @@
     <p class="ph-sub">Author Access Control rules here, then push them to a gateway with <code>set-dynamic-content</code> — saved on the portal, reflected on the gateway (no policy install).</p>
   </div>
   <div class="ph-actions">
+    {{ export_menu('layers') }}
     <a class="btn" href="/layers/new">+ New Dynamic Layer</a>
   </div>
 </div>

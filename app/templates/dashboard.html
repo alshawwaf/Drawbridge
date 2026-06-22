@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros.html" import export_menu %}
 {% block title %}Dashboard{% endblock %}
 {% block content %}
 {% from "_macros.html" import row_actions, columns_menu %}
@@ -38,6 +39,7 @@
         <a href="/feeds/new/ioc">IoC Feed</a>
       </div>
     </div>
+    {{ export_menu('feeds') }}
   </div>
 </div>
 
