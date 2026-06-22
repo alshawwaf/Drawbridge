@@ -42,10 +42,13 @@ from enum import Enum
 from typing import Optional
 
 try:  # keep the engine import-safe outside the app runtime (offline smoke test)
-    from .mgmt_api import (MgmtError, MgmtSession, cached_raw, invalidate_cache, read_session)
+    from .mgmt_api import (MgmtError, MgmtSession, _is_lock_error, cached_raw, invalidate_cache,
+                           locking_sessions, read_session, write_session_timeout)
 except Exception:  # pragma: no cover
     MgmtSession = object  # type: ignore
-    read_session = cached_raw = invalidate_cache = None  # type: ignore
+    read_session = cached_raw = invalidate_cache = locking_sessions = None  # type: ignore
+    write_session_timeout = lambda: 300  # type: ignore  # noqa: E731
+    _is_lock_error = lambda m: False     # type: ignore  # noqa: E731
 
     class MgmtError(Exception):
         pass
@@ -963,7 +966,7 @@ def execute(server, secret, req: AccessRequest, layer: str, *, package: Optional
         # WRITE path: an isolated read-write session (NOT the shared read pool) that loads the live
         # policy, decides, applies, and publishes/discards in one transaction -> always decided on
         # fresh rules, locks held only for this commit.
-        with MgmtSession(server, secret,
+        with MgmtSession(server, secret, session_timeout=write_session_timeout(),
                          session_description="DC-Sim access automation (apply)") as s:
             rules = load_layer(s, layer, package)
             decision = decide(req, rules)
@@ -987,7 +990,12 @@ def execute(server, secret, req: AccessRequest, layer: str, *, package: Optional
             return {"ok": True, "applied": True, "published": publish,
                     "validated": not publish, **base, **applied, "trace": s.trace}
     except MgmtError as exc:
-        return {"ok": False, "error": str(exc)}
+        msg = str(exc)
+        out = {"ok": False, "error": msg}
+        if _is_lock_error(msg):       # name the session holding the lock + let the UI offer a take-over
+            out["lock_conflict"] = True
+            out["sessions"] = locking_sessions(server, secret)
+        return out
 
 
 # --------------------------------------------------------------------------- #

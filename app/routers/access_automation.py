@@ -22,7 +22,7 @@ from ..db import get_db
 from ..models import ManagementServer, User
 from ..security import get_user_or_none
 from ..services import access_automation as aa
-from ..services import mgmt_creds, table_prefs, ticketing
+from ..services import mgmt_api, mgmt_creds, table_prefs, ticketing
 from ..services.gaia_client import ensure_pinned
 from .ui import _pop_flash, templates
 
@@ -117,6 +117,27 @@ def aa_preview(sid: int, body: AccessReqBody, request: Request, db: Session = De
     if user is None:
         return JSONResponse({"error": "Not authenticated"}, status_code=401)
     return _run(db, sid, user, body, do_apply=False)
+
+
+class TakeOverBody(BaseModel):
+    session_uid: str
+
+
+@router.post("/access-automation/{sid}/take-over")
+def aa_take_over(sid: int, body: TakeOverBody, request: Request, db: Session = Depends(get_db)):
+    """Release a 'Locked for editing' conflict by taking over the offending session and discarding its
+    uncommitted changes. DESTRUCTIVE — the UI confirms first. Returns {ok} / {error}."""
+    user = get_user_or_none(request, db)
+    if user is None:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    ms = _owned(db, sid, user)
+    secret, err = _secret_or_error(db, ms)
+    if err:
+        return err
+    if not (body.session_uid or "").strip():
+        return JSONResponse({"error": "No session id."}, status_code=400)
+    res = mgmt_api.take_over_session(ms, secret, body.session_uid.strip())
+    return JSONResponse(res, status_code=200 if res.get("ok") else 400)
 
 
 @router.post("/access-automation/{sid}/apply")

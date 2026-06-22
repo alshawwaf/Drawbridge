@@ -651,6 +651,68 @@ def test_connection(server, secret: str) -> dict:
 _RULE_EDIT_FIELDS = ("enabled", "action", "track", "name", "comments")
 
 
+def write_session_timeout() -> int:
+    """Idle timeout (seconds) for a read-write apply/publish session — admin-tunable so a lock left by
+    an interrupted apply expires fast. Falls back to a safe default."""
+    try:
+        return int(app_settings.get("mgmt_write_session_timeout"))
+    except Exception:  # noqa: BLE001
+        return 300
+
+
+def _is_lock_error(msg: str) -> bool:
+    """A Check Point object-lock conflict ('Requested object … locked: [Locked for editing by admin]')."""
+    return "lock" in (msg or "").lower()
+
+
+def show_sessions(server, secret: str) -> list[dict]:
+    """Every current management session (read-only, via the shared pooled session)."""
+    with read_session(server, secret) as s:
+        return s.call_paged("show-sessions", key="objects")
+
+
+def locking_sessions(server, secret: str) -> list[dict]:
+    """The open sessions holding uncommitted changes / object locks — the usual cause of a
+    'Locked for editing' error. Best-effort + read-only; returns [] if it can't be determined.
+    A read-only session (like our own pooled reader) never holds locks, so it's filtered out."""
+    try:
+        out: list[dict] = []
+        for sess in show_sessions(server, secret):
+            locks = sess.get("locks") or sess.get("number-of-locks") or sess.get("locks-count") or 0
+            changes = sess.get("changes") or 0
+            if (not locks and not changes) or sess.get("read-only"):
+                continue
+            ll = sess.get("last-login-time")
+            out.append({
+                "uid": sess.get("uid"),
+                "user": sess.get("user") or sess.get("name") or "—",
+                "application": sess.get("application") or "—",
+                "locks": int(locks or 0), "changes": int(changes or 0),
+                "last_login": (ll.get("iso-8601") if isinstance(ll, dict) else ll) or "",
+            })
+        out.sort(key=lambda x: (x["locks"], x["changes"]), reverse=True)
+        return out
+    except MgmtError:
+        return []
+
+
+def take_over_session(server, secret: str, uid: str) -> dict:
+    """Take ownership of another open session and DISCARD its uncommitted changes, releasing its object
+    locks. DESTRUCTIVE — it drops that session's unpublished work — so the caller must confirm. Uses a
+    read-write session (a read-only one can't take over). Returns {ok} or {ok, error}."""
+    if not uid:
+        return {"ok": False, "error": "No session id to take over."}
+    try:
+        with MgmtSession(server, secret, session_timeout=write_session_timeout(),
+                         session_description="DC-Sim portal (take over + release locks)") as s:
+            # disconnect-active-session lets us take over a session still attached to a live GUI client.
+            s.call("take-over-session", {"uid": uid, "disconnect-active-session": True})
+            s.discard()
+        return {"ok": True}
+    except MgmtError as exc:
+        return {"ok": False, "error": str(exc)}
+
+
 def build_set_rule_op(layer: str, uid: str, changes: dict) -> dict:
     """Build a single ``set-access-rule`` op from a small change dict. Only the keys actually present
     in ``changes`` are sent, so the op touches nothing else on the rule. Returns
@@ -682,7 +744,7 @@ def apply_changes(server, secret: str, ops: list[dict], *, publish: bool) -> dic
     change never lingers. Returns {ok, published, results, trace, error?}."""
     results: list[dict] = []
     try:
-        with MgmtSession(server, secret,
+        with MgmtSession(server, secret, session_timeout=write_session_timeout(),
                          session_description="DC-Sim portal (apply changes)") as s:
             try:
                 for op in ops:
@@ -700,4 +762,8 @@ def apply_changes(server, secret: str, ops: list[dict], *, publish: bool) -> dic
                 raise
             return {"ok": True, "published": publish, "results": results, "trace": s.trace}
     except MgmtError as exc:
-        return {"ok": False, "published": False, "error": str(exc), "results": results}
+        out = {"ok": False, "published": False, "error": str(exc), "results": results}
+        if _is_lock_error(str(exc)):                       # surface who holds the lock + enable take-over
+            out["lock_conflict"] = True
+            out["sessions"] = locking_sessions(server, secret)
+        return out
