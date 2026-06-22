@@ -30,7 +30,7 @@ re-scans, and in SmartConsole as the dynamic object's members change.
 ## Presets
 
 Each preset expands against the DC's **current** inventory, in the provider's tag style — a bare tag
-string for list-tag providers (vCenter / NSX-T / Proxmox / OpenStack) or `key=value` for Kubernetes
+string for list-tag providers (vCenter / NSX-T / Global NSX-T / Proxmox / OpenStack) or `key=value` for Kubernetes
 (labels) and Nutanix (categories):
 
 | Preset | Steps | Demo |

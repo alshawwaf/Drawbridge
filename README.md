@@ -1,4 +1,4 @@
-# Check Point Dynamic-Object Integration Simulator
+# Drawbridge — a Check Point Integration Simulator
 
 A portal that **acts as the external systems Check Point integrates with**, so SEs and partners can
 demo CloudGuard / dynamic-object integrations end-to-end during a PoV — **without** a real
@@ -40,8 +40,28 @@ Point at it, endpoints, object model, gotchas) live in **[docs/integrations/](do
   rulebase in the portal and apply it to a gateway's Gaia API (`set-dynamic-content`), or to a
   built-in **mock gateway** for a no-hardware demo, complete with async task + change summary.
 - **[SIEM receiver](docs/integrations/siem.md)** *(reverse)* — point Check Point's **Log Exporter**
-  at the portal; it parses **CEF / LEEF / JSON / syslog** over TCP+UDP and shows the logs arriving
-  live — proof that gateway logs reach the SIEM, with no real Splunk/QRadar.
+  at the portal; it **auto-detects** the format (CEF / LEEF / JSON / key=value / syslog) over TCP+UDP
+  and shows the logs arriving live — proof that gateway logs reach the SIEM, with no real Splunk/QRadar.
+
+## Management-side — connect to a real SMS (pull, author & automate)
+
+Beyond mocking the *systems Check Point talks to*, the portal can also drive a **real R82.10
+Management Server** read-only (it does exactly what the API account is permitted to — least privilege):
+
+- **[Management API export](docs/integrations/management-export.md)** — save a Management Server /
+  MDS-domain connection, pull its layers + access rulebase, view them in the portal, and **export to
+  Terraform / Ansible / `mgmt_cli`** Infrastructure-as-Code.
+- **[Gaia config export](docs/integrations/gaia-export.md)** — pull a gateway's or SMS's live **Gaia
+  OS** config (interfaces, routes, DNS, NTP…) and export it to Terraform / Ansible / clish.
+- **[Access Automation](docs/integrations/access-automation.md)** — a ticket (ServiceNow / Jira / any
+  webhook) becomes a Check Point rule: the engine computes the **minimal** change (reuse / widen /
+  create, placed first-match-safe, or flagged for REVIEW), previews it, and applies on approval.
+- **[MCP server + REST API](docs/mcp-n8n.md)** — expose the access-automation + policy tools to n8n /
+  LLM agents over `/mcp`, and a general REST API at `/dbapi/v1`. In-app onboarding at **`/mcp-guide`**,
+  a live **API explorer** (Swagger) at `/api-explorer`, and the IaC-export **coverage** matrix at `/coverage`.
+- **[Settings](docs/settings.md)** — set every integration secret from the UI (encrypted at rest, no
+  redeploy), mint scoped **API keys**, and tune the **SMS session cache** that dodges the CP
+  login-rate throttle.
 
 ## Live-demo tooling
 
@@ -95,7 +115,8 @@ hardcodes that) and the SIEM receiver on **5514/tcp+udp** — both covered in DE
 For a self-contained run without Dokploy (e.g. an isolated customer lab):
 
 ```bash
-cp .env.example .env     # set DCSIM_DOMAIN, DCSIM_BASE_URL, secrets
+cp .env.example .env     # set DCSIM_DOMAIN, DCSIM_BASE_URL, and the secrets
+                         # (DCSIM_SESSION_SECRET + DCSIM_ENCRYPTION_KEY: openssl rand -base64 32)
 docker compose up -d --build
 ```
 
@@ -106,10 +127,15 @@ Caddy obtains the cert for `DCSIM_DOMAIN` (use `localhost` for an internal cert)
 
 - Portal management endpoints require login; feed endpoints are public-by-design (the gateway must
   reach them) but guarded by a long random token plus an optional per-feed credential.
-- TLS 1.2+ via Caddy/Traefik; no secrets in code (all via env); portal logins use PBKDF2; saved
+- TLS 1.2+ via Caddy/Traefik; no secrets in code; portal logins use PBKDF2; saved
   **gateway & datacenter credentials are AES-256-GCM encrypted at rest** (`DCSIM_ENCRYPTION_KEY`,
   falls back to the session secret); parameterized queries via SQLAlchemy; feed input validated
   against the Check Point schema.
+- **Secrets & access are portal-managed** — integration secrets (MCP token, ticketing webhook,
+  ServiceNow) are set write-only from **Settings**, encrypted at rest (AES-256-GCM), and take
+  precedence over the `DCSIM_*` env vars **with no redeploy** (the env vars are fallbacks). Machine
+  access uses named, scoped (`mcp` / `webhook` / `api`), revocable **API keys** with optional expiry,
+  minted in **Settings → API keys** (shown once, SHA-256-hashed at rest). See **[docs/settings.md](docs/settings.md)**.
 - **Gateway TLS is always verified.** Self-signed lab gateways are handled by pinning the
   certificate — trust-on-first-use (auto-pinned on first connect, the default) or a manually
   fetched/pasted cert. Verification is never disabled.
@@ -121,7 +147,7 @@ Caddy obtains the cert for `DCSIM_DOMAIN` (use `localhost` for an internal cert)
 ## Tests
 
 ```bash
-pip install pytest && pytest -q          # 250+ tests, all green
+pip install pytest && pytest -q          # 590+ tests, all green
 ```
 
 See **[PLAN.md](PLAN.md)** for the design and verified feed formats, and **[ASSESSMENT.md](ASSESSMENT.md)**

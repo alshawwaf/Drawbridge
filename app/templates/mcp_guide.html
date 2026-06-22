@@ -35,7 +35,7 @@ focused on the access-automation engine.</p>
 
 <div class="mcp-status">
   {% if sdk_installed %}<span class="pill ok">MCP SDK installed</span>{% else %}<span class="pill" style="background:var(--warn-bg);color:var(--warn);">MCP SDK not installed — <code>pip install mcp</code> (Artifactory)</span>{% endif %}
-  {% if token_set %}<span class="pill ok">Endpoint enabled (token set)</span>{% else %}<span class="pill" style="background:var(--warn-bg);color:var(--warn);">Disabled — <a href="/settings#grp-mcp-agent" style="color:inherit;text-decoration:underline;">set a bearer token in Settings</a> to enable /mcp</span>{% endif %}
+  {% if token_set %}<span class="pill ok">Endpoint enabled</span>{% else %}<span class="pill" style="background:var(--warn-bg);color:var(--warn);">Disabled — add an <a href="/settings#grp-api-keys" style="color:inherit;text-decoration:underline;">MCP API key</a> or <a href="/settings#grp-mcp-agent" style="color:inherit;text-decoration:underline;">set a bearer token</a> to enable /mcp</span>{% endif %}
   {% if allow_publish %}<span class="pill" style="background:var(--danger-bg);color:var(--danger);">Agent publish: ON (commits to live policy)</span>{% else %}<span class="pill ok">Agent publish: OFF (dry-run only)</span>{% endif %}
   {% if not crypto_ok %}<span class="pill" style="background:var(--warn-bg);color:var(--warn);">At-rest encryption off — token can't be stored in the portal; use <code>DCSIM_MCP_TOKEN</code></span>{% endif %}
 </div>
@@ -74,10 +74,12 @@ focused on the access-automation engine.</p>
 
 <div class="card">
   <h3 style="margin:0 0 8px;">Safety</h3>
-  <p class="mcp-note">Every call needs <code>Authorization: Bearer &lt;token&gt;</code>. The token is set in
-  <b>Settings → MCP / agent</b> (stored encrypted at rest; a <code>DCSIM_MCP_TOKEN</code> env var is used
-  only as a fallback) and can be set, rotated, or cleared with no redeploy — no token configured →
-  <b>503</b> (endpoint disabled), wrong/missing token → <b>401</b>. <b>decide_access</b>, the analyse tools,
+  <p class="mcp-note">Every call needs <code>Authorization: Bearer &lt;token&gt;</code>, where the bearer is
+  <b>either</b> an active <b>MCP-scope API key</b> (<b>Settings → API keys</b> — individually revocable,
+  SHA-256-hashed at rest) <b>or</b> the shared <b>MCP token</b> (<b>Settings → MCP / agent</b> — encrypted
+  at rest; the <code>DCSIM_MCP_TOKEN</code> env var is only a fallback). Both can be set, rotated, or
+  cleared with no redeploy — neither configured → <b>503</b> (endpoint disabled), wrong/missing bearer →
+  <b>401</b>. <b>decide_access</b>, the analyse tools,
   and the correlate/coverage tools are read-only. <b>apply_access</b> with <code>publish=false</code>
   dry-runs (validate then discard); <code>publish=true</code> is <b>refused</b> unless an admin enables
   <b>Settings → MCP / agent → "Let the MCP agent publish to live policy"</b>. The engine's own guarantees

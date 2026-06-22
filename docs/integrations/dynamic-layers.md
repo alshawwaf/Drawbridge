@@ -6,7 +6,8 @@ portal authors an Access Control rulebase and applies it to a gateway's **Gaia A
 no-hardware demo with a realistic async task + change summary.
 
 - Builder/apply router: [`app/routers/dynamic_layers.py`](../../app/routers/dynamic_layers.py)
-- Real-gateway client: [`app/services/gaia_client.py`](../../app/services/gaia_client.py)
+- Real-gateway apply flow (the Gaia API session): [`app/services/apply_runner.py`](../../app/services/apply_runner.py)
+- TLS cert fetch / pin (trust-on-first-use): [`app/services/gaia_client.py`](../../app/services/gaia_client.py)
 - Mock Gaia API: [`app/routers/gaia_mock.py`](../../app/routers/gaia_mock.py)
 - Gateways: [`app/routers/gateways.py`](../../app/routers/gateways.py)
 
@@ -23,7 +24,7 @@ no-hardware demo with a realistic async task + change summary.
 
 ## Real-gateway push
 
-`gaia_client` uses `httpx` against the gateway's Gaia API:
+`apply_runner` uses `httpx` against the gateway's Gaia API (cert pinning is handled by `gaia_client`):
 
 - `login` → session id (sid) → `set-dynamic-content` → `show-task` (poll until done) → `logout`.
 - **TLS is verified by default.** For a self-signed lab gateway you have two policy-safe options,

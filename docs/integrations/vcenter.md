@@ -21,7 +21,7 @@ served at the portal **apex** (root) and resolves the **most-recently-created** 
 
 1. Portal → **Data Centers → New → VMware vCenter**. Add VMs (`name = ip | tag1, tag2` per line) and
    set a username/password. Save.
-2. SmartConsole → **New → More → Server → Data Center → VMware vCenter**.
+2. SmartConsole → **New → More → Cloud → Data Center → VMware vCenter**.
    - **Hostname:** the portal's bare host, e.g. `dcsim.ai.alshawwaf.ca` (no `https://`, no `/path`).
    - **Username / Password:** the credentials you set on the portal DC.
 3. **Test Connection**, then **Select objects** — the inventory tree + Tags appear.

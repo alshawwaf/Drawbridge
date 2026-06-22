@@ -62,6 +62,8 @@ Endpoints (thin wrappers over the same `services.mcp_tools`, so behaviour + safe
 `GET /dbapi/v1/servers`, `GET /dbapi/v1/layers?server_id=`, `GET /dbapi/v1/layers/summary`,
 `GET /dbapi/v1/layers/analyze`, `GET /dbapi/v1/coverage`, `POST /dbapi/v1/access/decide`,
 `POST /dbapi/v1/access/apply` (publish admin-gated), `POST /dbapi/v1/access/correlate/{service,application}`.
+The `correlate/*` endpoints take a body of `{"server_id":1,"name":"dns"}` (a fuzzy name → matching Check
+Point service / application objects); each endpoint's exact request schema is also browsable at `/docs`.
 
 ## 2. Connect n8n
 
