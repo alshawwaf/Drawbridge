@@ -118,3 +118,11 @@ def test_build_mcp_app_none_without_sdk_or_token():
         assert mcp_server.build_mcp_app("tok") is None
     assert mcp_server.build_mcp_app("") is None      # no token -> never mount, regardless of SDK
     assert set(mcp_server._TOOLS) <= set(dir(mcp_tools))   # every advertised tool exists
+
+
+def test_tool_catalog_lists_all_tools_with_summaries():
+    cat = mcp_server.tool_catalog()
+    names = {c["name"] for c in cat}
+    assert names == set(mcp_server._TOOLS)                       # catalog == registered tools
+    assert all(c["summary"] for c in cat)                        # every tool has a one-line summary
+    assert "summarize_layer" in names and "analyze_policy" in names   # the CP-style analyze tools

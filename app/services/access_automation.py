@@ -1362,6 +1362,77 @@ def load_layer_cached(session, server, layer: str, package: Optional[str] = None
     return rules, bool(raw.get("cached"))
 
 
+# --------------------------------------------------------------------------- #
+# Read-only policy analysis (the MCP "analyze / insights" tools). PURE over parsed rules.
+# --------------------------------------------------------------------------- #
+def _svc_definitely_covers(big: ServiceSet, small: ServiceSet) -> bool:
+    """Conservative: True only when we can PROVE ``big`` covers ``small`` on the service dimension. Any
+    app/named/opaque/complex member on either side -> we don't claim coverage (avoids false shadows)."""
+    if big.any:
+        return True
+    if small.any:
+        return False
+    if (big.apps or big.named or big.opaque or big.complex
+            or small.apps or small.named or small.opaque or small.complex):
+        return False
+    return _portset_covers(big.by_proto, small.by_proto)
+
+
+def summarize_rules(rules: list[ParsedRule]) -> dict:
+    """High-level shape of a rulebase (for an agent's natural-language overview)."""
+    enabled = [r for r in rules if r.enabled]
+    def _any(r):  # noqa: ANN001
+        return _covers(r.src, ANY_IP), _covers(r.dst, ANY_IP), r.svc.any
+    return {
+        "total_rules": len(rules),
+        "enabled": len(enabled),
+        "disabled": sum(1 for r in rules if not r.enabled),
+        "accept": sum(1 for r in enabled if r.is_accept),
+        "drop_or_reject": sum(1 for r in enabled if r.is_drop),
+        "inline_layers": sum(1 for r in enabled if r.inline_rules is not None),
+        "conditional": sum(1 for r in enabled if r.conditional),
+        "any_source": sum(1 for r in enabled if _any(r)[0]),
+        "any_destination": sum(1 for r in enabled if _any(r)[1]),
+        "any_service": sum(1 for r in enabled if _any(r)[2]),
+        "has_cleanup_drop": any(_is_catchall(r) and r.is_drop for r in enabled),
+    }
+
+
+def find_shadowed(rules: list[ParsedRule]) -> list[dict]:
+    """Rules that can NEVER match because an earlier, fully-resolved, unconditional Accept/Drop already
+    covers them on all three dimensions (first-match shadowing). Conservative — only provable cases."""
+    out: list[dict] = []
+    enabled = [r for r in rules if r.enabled]
+    for j, rj in enumerate(enabled):
+        if rj.complex:
+            continue
+        for ri in enabled[:j]:
+            if ri.complex or ri.conditional or ri.inline_rules is not None or not (ri.is_accept or ri.is_drop):
+                continue
+            if (relation(rj.src, ri.src) in (Relation.SUBSET, Relation.EQUAL)
+                    and relation(rj.dst, ri.dst) in (Relation.SUBSET, Relation.EQUAL)
+                    and _svc_definitely_covers(ri.svc, rj.svc)):
+                out.append({"rule": rj.number, "name": rj.name, "shadowed_by": ri.number,
+                            "shadowed_by_name": ri.name, "covering_action": ri.action})
+                break
+    return out
+
+
+def find_permissive(rules: list[ParsedRule]) -> list[dict]:
+    """Enabled ACCEPT rules that are broad on a whole dimension (Any source / destination / service) —
+    candidates to tighten. The bottom catch-all cleanup (usually a Drop) is naturally excluded."""
+    out: list[dict] = []
+    for r in rules:
+        if not r.enabled or not r.is_accept or r.inline_rules is not None:
+            continue
+        wide = [d for d, on in (("source", _covers(r.src, ANY_IP)),
+                                ("destination", _covers(r.dst, ANY_IP)),
+                                ("service", r.svc.any)) if on]
+        if wide:
+            out.append({"rule": r.number, "name": r.name, "any_dimensions": wide})
+    return out
+
+
 def _resolve_app(session, req: AccessRequest):
     """If the request is application-based, correlate its name to a real Check Point application. On a
     confident (unique exact / normalized-exact) hit, rewrite req.application to CP's canonical name so

@@ -25,12 +25,27 @@ _INNER = None
 
 # The tools an agent can call (logic in services.mcp_tools; registered by name + docstring + type hints).
 _TOOLS = ("list_management_servers", "list_access_layers", "decide_access", "apply_access",
-          "correlate_service", "correlate_application", "coverage_lookup")
+          "correlate_service", "correlate_application", "summarize_layer", "analyze_policy",
+          "coverage_lookup")
 
 
 def have_mcp() -> bool:
     """True if the MCP SDK is importable (so /mcp can be served)."""
     return _HAVE_MCP
+
+
+def tool_catalog() -> list:
+    """[{name, summary}] for the tools an agent gets — names + the first docstring line. Works without
+    the SDK installed (reads services.mcp_tools directly), so the /mcp-guide page always renders."""
+    from .services import mcp_tools as t
+    out = []
+    for name in _TOOLS:
+        fn = getattr(t, name, None)
+        summary = ""
+        if fn and fn.__doc__:
+            summary = " ".join(fn.__doc__.strip().split())   # collapse the docstring to one line
+        out.append({"name": name, "summary": summary})
+    return out
 
 
 def import_error() -> str:

@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+{% block title %}MCP for agents{% endblock %}
+{% block content %}
+<style>
+  .mcp-hero h1 { margin:0 0 4px; }
+  .mcp-sub { color:var(--muted); max-width:900px; line-height:1.55; margin:0 0 14px; }
+  .mcp-status { display:flex; gap:8px; flex-wrap:wrap; margin:0 0 16px; }
+  .mcp-status .pill { font-size:12px; }
+  .mcp-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); gap:10px; }
+  .mcp-tool { border:1px solid var(--line); border-radius:11px; padding:12px 13px; background:var(--surface-2); }
+  .mcp-tool code { font-size:13px; font-weight:700; color:var(--accent); }
+  .mcp-tool p { margin:5px 0 0; font-size:12.5px; color:var(--muted); line-height:1.5; }
+  .mcp-tabs { display:flex; gap:6px; flex-wrap:wrap; margin:6px 0 10px; }
+  .mcp-tabs button { padding:7px 15px; border:1px solid var(--line); border-radius:9px; background:transparent;
+    color:var(--text); font-weight:600; font-size:13px; cursor:pointer; }
+  .mcp-tabs button.active { background:var(--accent); color:#fff; border-color:var(--accent); }
+  .mcp-cfg { position:relative; }
+  .mcp-cfg pre { background:var(--surface-2); border:1px solid var(--line); border-radius:11px; padding:14px;
+    overflow:auto; font-size:12.5px; line-height:1.5; margin:0; color:var(--text);
+    font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+  .mcp-tokrow { display:flex; align-items:center; gap:10px; margin:0 0 10px; flex-wrap:wrap; }
+  .mcp-tokrow input { font-family:ui-monospace,monospace; min-width:340px; padding:7px 10px; }
+  .mcp-note { font-size:12.5px; color:var(--muted); line-height:1.55; max-width:900px; }
+  .mcp-note code { font-family:ui-monospace,monospace; }
+</style>
+
+<div class="mcp-hero">
+  <h1><span class="icon-chip lg"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v1H7a2 2 0 0 0-2 2v3H4a2 2 0 1 0 0 4h1v3a2 2 0 0 0 2 2h3v1a3 3 0 1 0 6 0v-1h3a2 2 0 0 0 2-2v-3h1a2 2 0 1 0 0-4h-1V8a2 2 0 0 0-2-2h-2V5a3 3 0 0 0-3-3z"/></svg></span> MCP for agents</h1>
+</div>
+<p class="mcp-sub">Drive Drawbridge from an LLM agent (n8n, Claude Desktop, Cursor, VS Code) over the Model
+Context Protocol. The agent gets typed tools to <b>reason about and act on</b> Check Point access
+policy — decide on a request, correlate a service/app name, analyse a layer, and (gated) apply a change.
+Same idea as <a href="https://mcp.checkpoint.com/" target="_blank" rel="noopener">Check Point's MCP servers</a>,
+focused on the access-automation engine.</p>
+
+<div class="mcp-status">
+  {% if sdk_installed %}<span class="pill ok">MCP SDK installed</span>{% else %}<span class="pill" style="background:var(--warn-bg);color:var(--warn);">MCP SDK not installed — <code>pip install mcp</code> (Artifactory)</span>{% endif %}
+  {% if token_set %}<span class="pill ok">Endpoint enabled (token set)</span>{% else %}<span class="pill" style="background:var(--warn-bg);color:var(--warn);">Disabled — set <code>DCSIM_MCP_TOKEN</code> to enable /mcp</span>{% endif %}
+  {% if allow_publish %}<span class="pill" style="background:var(--danger-bg);color:var(--danger);">Agent publish: ON (commits to live policy)</span>{% else %}<span class="pill ok">Agent publish: OFF (dry-run only)</span>{% endif %}
+</div>
+
+<div class="card">
+  <h3 style="margin:0 0 6px;">Connect a client</h3>
+  <div class="mcp-tokrow">
+    <label style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.03em;">Bearer token (DCSIM_MCP_TOKEN)
+      <input id="mcp-tok" placeholder="&lt;your DCSIM_MCP_TOKEN&gt;" autocomplete="off"></label>
+    <span class="muted" style="font-size:12px;">Endpoint: <code id="mcp-url"></code></span>
+  </div>
+  <div class="mcp-tabs" id="mcp-tabs">
+    <button data-c="claude" class="active">Claude Desktop</button>
+    <button data-c="cursor">Cursor</button>
+    <button data-c="vscode">VS Code</button>
+    <button data-c="n8n">n8n</button>
+  </div>
+  <div class="mcp-cfg">
+    <button type="button" class="copybtn" id="mcp-copy" style="position:absolute;right:8px;top:8px;">Copy</button>
+    <pre id="mcp-snippet"></pre>
+  </div>
+  <p class="mcp-note" id="mcp-clienthint" style="margin-top:8px;"></p>
+</div>
+
+<div class="card">
+  <h3 style="margin:0 0 8px;">Tools the agent gets ({{ tools|length }})</h3>
+  <div class="mcp-grid">
+    {% for t in tools %}
+    <div class="mcp-tool"><code>{{ t.name }}</code><p>{{ t.summary }}</p></div>
+    {% endfor %}
+  </div>
+</div>
+
+<div class="card">
+  <h3 style="margin:0 0 8px;">Safety</h3>
+  <p class="mcp-note">Every call needs <code>Authorization: Bearer &lt;DCSIM_MCP_TOKEN&gt;</code> — no token →
+  <b>401</b>; no token configured → the endpoint isn't even mounted. <b>decide_access</b>, the analyse tools,
+  and the correlate/coverage tools are read-only. <b>apply_access</b> with <code>publish=false</code>
+  dry-runs (validate then discard); <code>publish=true</code> is <b>refused</b> unless an admin enables
+  <b>Settings → MCP / agent → "Let the MCP agent publish to live policy"</b>. The engine's own guarantees
+  still hold — an unknown/ambiguous service returns a review + suggestions, never a wrong call to the SMS.</p>
+</div>
+
+<script>
+  (function () {
+    var url = location.origin + '/mcp';
+    document.getElementById('mcp-url').textContent = url;
+    var tokEl = document.getElementById('mcp-tok'), snip = document.getElementById('mcp-snippet'),
+        hint = document.getElementById('mcp-clienthint'), tabs = document.getElementById('mcp-tabs');
+    var current = 'claude';
+    function tok() { return tokEl.value.trim() || '<DCSIM_MCP_TOKEN>'; }
+    function cfg() {
+      var t = tok(), auth = 'Bearer ' + t;
+      if (current === 'claude') {
+        return { code: JSON.stringify({ mcpServers: { drawbridge: {
+          command: 'npx', args: ['mcp-remote', url, '--header', 'Authorization: ' + auth] } } }, null, 2),
+          hint: 'Claude Desktop speaks stdio, so it bridges to our HTTP server via <code>mcp-remote</code>. Put this in <code>claude_desktop_config.json</code>, then restart Claude Desktop.' };
+      }
+      if (current === 'cursor') {
+        return { code: JSON.stringify({ mcpServers: { drawbridge: {
+          url: url, headers: { Authorization: auth } } } }, null, 2),
+          hint: 'Put this in <code>~/.cursor/mcp.json</code> (or the project <code>.cursor/mcp.json</code>).' };
+      }
+      if (current === 'vscode') {
+        return { code: JSON.stringify({ servers: { drawbridge: {
+          type: 'http', url: url, headers: { Authorization: auth } } } }, null, 2),
+          hint: 'Put this in <code>.vscode/mcp.json</code> (GitHub Copilot Chat → MCP).' };
+      }
+      return { code: 'URL:    ' + url + '\nHeader: Authorization: ' + auth,
+        hint: 'In the n8n <b>MCP Client Tool</b> node, set the endpoint URL and add the Authorization header. Transport: Streamable HTTP (or SSE).' };
+    }
+    function render() { var c = cfg(); snip.textContent = c.code; hint.innerHTML = c.hint; }
+    tabs.addEventListener('click', function (e) {
+      var b = e.target.closest('button[data-c]'); if (!b) return;
+      current = b.getAttribute('data-c');
+      tabs.querySelectorAll('button').forEach(function (x) { x.classList.toggle('active', x === b); });
+      render();
+    });
+    tokEl.addEventListener('input', render);
+    document.getElementById('mcp-copy').addEventListener('click', function () {
+      navigator.clipboard && navigator.clipboard.writeText(snip.textContent);
+      var btn = this, old = btn.textContent; btn.textContent = 'Copied'; setTimeout(function () { btn.textContent = old; }, 1200);
+    });
+    render();
+  })();
+</script>
+{% endblock %}
