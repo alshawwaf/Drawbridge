@@ -179,6 +179,21 @@ Content-Type: application/json
     var lastActionable = false;
 
     function esc(s) { var d = document.createElement('div'); d.textContent = (s == null ? '' : s); return d.innerHTML; }
+    function lockHelp(sessions) {
+      var h = '<div class="card" style="margin-top:10px; border-color:var(--danger-line);">' +
+        '<b>Object locked by another session.</b> <span class="muted">This is not a read-only issue — the publish runs read-write. A different open session (commonly your own SmartConsole, or a previous unpublished change) holds a lock on this object. Publish or discard that session, release it below, or wait for it to auto-expire.</span>';
+      if (sessions && sessions.length) {
+        h += '<table class="acttable" style="margin-top:10px;"><thead><tr><th>Session</th><th>Holds</th><th>Since</th><th></th></tr></thead><tbody>';
+        sessions.forEach(function (s) {
+          h += '<tr><td><b>' + esc(s.user) + '</b> <span class="muted">' + esc(s.application) + '</span></td>' +
+            '<td>' + esc(s.locks) + ' lock(s) · ' + esc(s.changes) + ' change(s)</td>' +
+            '<td class="muted" style="font-size:12px;">' + esc(s.last_login || '—') + '</td>' +
+            '<td style="text-align:right;"><button type="button" class="btn" style="background:var(--danger);border-color:var(--danger);color:#fff;" data-takeover="' + esc(s.uid) + '">Take over &amp; release</button></td></tr>';
+        });
+        h += '</tbody></table><p class="muted" style="font-size:12px; margin:8px 0 0;">Take over discards that session’s unpublished changes to free the lock — it can’t be undone.</p>';
+      }
+      return h + '</div>';
+    }
     function body() {
       return {
         layer: layerSel.value || '',
@@ -218,7 +233,11 @@ Content-Type: application/json
              '<table class="acttable"><tbody>' + rows + '</tbody></table></details>';
     }
     function render(j, mode) {
-      if (!j.ok) { result.innerHTML = '<div class="err">' + esc(j.error || 'Failed.') + '</div>'; setActionable(false); return; }
+      if (!j.ok) {
+        var eh = '<div class="err">' + esc(j.error || 'Failed.') + '</div>';
+        if (j.lock_conflict) eh += lockHelp(j.sessions);
+        result.innerHTML = eh; setActionable(false); return;
+      }
       var h = '<div class="runbox">';
       h += '<div class="row" style="align-items:center; gap:10px;">' + outcomeBadge(j.outcome) +
            '<span>' + esc(j.reason) + '</span></div>';
@@ -277,6 +296,21 @@ Content-Type: application/json
     btnPublish.addEventListener('click', function () { if (lastActionable) confirmBox.hidden = false; });
     document.getElementById('aa-confirm-no').addEventListener('click', function () { confirmBox.hidden = true; });
     document.getElementById('aa-confirm-yes').addEventListener('click', function () { confirmBox.hidden = true; call('apply', 'publish', true); });
+
+    // Delegated: "Take over & release" on a lock-conflict result (destructive — confirm, then re-preview).
+    result.addEventListener('click', function (e) {
+      var b = e.target.closest ? e.target.closest('[data-takeover]') : null;
+      if (!b) return;
+      var uid = b.getAttribute('data-takeover');
+      if (!window.confirm('Take over that session and DISCARD its unpublished changes to release the lock? This cannot be undone.')) return;
+      b.disabled = true; b.textContent = 'Releasing…';
+      fetch('/access-automation/' + id + '/take-over', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session_uid: uid })
+      }).then(function (r) { return r.json(); }).then(function (j) {
+        if (j.ok) { result.innerHTML = '<div class="ok">✓ Session taken over and discarded — locks released. Re-running preview…</div>'; call('preview', 'preview'); }
+        else { result.innerHTML = '<div class="err">' + esc(j.error || 'Take-over failed.') + '</div>'; }
+      }).catch(function () { result.innerHTML = '<div class="err">Take-over request failed.</div>'; });
+    });
 
     // Re-preview (and lock apply) whenever an input changes, so apply always matches what's shown.
     ['aa-layer', 'aa-source', 'aa-dest', 'aa-proto', 'aa-port', 'aa-app', 'aa-ticket'].forEach(function (eid) {

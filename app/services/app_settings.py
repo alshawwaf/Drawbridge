@@ -66,6 +66,11 @@ SETTINGS: list[Setting] = [
             "Always pull fresh before applying",
             "Before committing a change (apply / publish), re-pull the live policy so the decision is "
             "never based on a cached rulebase. Recommended."),
+    Setting("mgmt_write_session_timeout", "int", 300,
+            "Write session idle timeout (seconds)",
+            "Idle timeout for the read-write session used by an apply/publish. An apply runs in seconds, "
+            "so a short value means a lock left by an interrupted apply (a 'Locked for editing' error) "
+            "clears quickly instead of lingering ~10 minutes. 60–3600.", min=60, max=3600),
 
     # --- Storage & retention -------------------------------------------------------------------------
     # The two high-volume tables (the Activity log and the built-in SIEM receiver) are bounded so a

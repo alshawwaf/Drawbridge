@@ -629,3 +629,15 @@ def test_export_ansible_negate_underscored_and_names_quoted():
     assert "source_negate: true" in ans and "source-negate: true" not in ans   # module-correct key
     assert '- name: "Add rule allow: web"' in ans                              # quoted -> valid YAML
     assert '- name: "Restore Check Point policy - layer Net: prod"' in ans
+
+
+def test_is_lock_error_detects_locked_for_editing():
+    assert mgmt_api._is_lock_error(
+        "Requested object with ObjId: [9d44c88b] locked: [Locked for editing by admin]") is True
+    assert mgmt_api._is_lock_error("validation failed: bad service") is False
+    assert mgmt_api._is_lock_error("") is False
+
+
+def test_write_session_timeout_is_an_int_in_range():
+    t = mgmt_api.write_session_timeout()
+    assert isinstance(t, int) and 60 <= t <= 3600
