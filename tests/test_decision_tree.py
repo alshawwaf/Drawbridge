@@ -90,14 +90,14 @@ def test_all_nodes_reachable_from_a_single_start():
             assert n.id in dsts, f"{n.id} is never reached by an edge"
 
 
-def test_default_collapsed_view_cuts_at_bfs_depth():
+def test_default_collapsed_view_shows_core_hides_detail():
+    # collapse is by DETAIL TIER (Node.level): the whole core flow (level 0) shows; detail branches hide
     dv = dt.default_visible()
     allids = {n.id for n in dt.NODES}
-    assert dv < allids, "nothing is collapsed — the depth cut is missing"
-    depth = dt._bfs_depth()
-    assert dv == {n.id for n in dt.NODES if depth[n.id] <= dt.DEFAULT_DEPTH}
-    assert {"req", "unsup", "resolve"} <= dv                              # the top levels show
-    assert not ({"create", "noop", "inline", "recurse", "opts"} & dv)    # deeper nodes are behind '+ more'
+    assert dv < allids, "nothing is collapsed — the level cut is missing"
+    assert dv == {n.id for n in dt.NODES if n.level == 0}
+    assert {"req", "resolve", "perm", "deny", "widen", "create", "noop", "noteO"} <= dv   # core flow shows
+    assert not ({"kindq", "inline", "recurse", "opts", "apply", "idupd"} & dv)            # detail behind '+ more'
 
 
 def test_bfs_depth_root_is_zero_and_all_reachable():
@@ -121,7 +121,7 @@ def test_to_graph_is_client_consumable_and_matches_mermaid():
     g = dt.to_graph()
     assert g["start"] == "req" and g["default_depth"] == dt.DEFAULT_DEPTH
     assert {n["id"] for n in g["nodes"]} == {n.id for n in dt.NODES}
-    assert all(set(n) >= {"id", "kind", "depth", "mm"} for n in g["nodes"])
+    assert all(set(n) >= {"id", "kind", "level", "depth", "mm"} for n in g["nodes"])   # level drives collapse
     assert {(e["src"], e["dst"]) for e in g["edges"]} == {(e.src, e.dst) for e in dt.EDGES}
     for theme in ("dark", "light"):
         assert g["themes"][theme]["init"].startswith("%%{init:") and g["themes"][theme]["classDefs"]

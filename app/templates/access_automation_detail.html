@@ -150,7 +150,11 @@ Content-Type: application/json
       cursor:grab;touch-action:none;}
     .dtwrap.grabbing{cursor:grabbing;}
     .dtwrap svg{display:block;user-select:none;}
-    .dtwrap svg g.node{filter:drop-shadow(0 1px 3px rgba(0,0,0,.22));}
+    .dtwrap svg g.node{filter:drop-shadow(0 2px 5px rgba(0,0,0,.28));}
+    .dtwrap svg .edgePath path{stroke-width:1.6px;}
+    /* crisp labels on the richer gradient fills (dark canvas only; light keeps its dark theme text) */
+    html:not([data-theme="light"]) .dtwrap svg g.node .nodeLabel,
+    html:not([data-theme="light"]) .dtwrap svg g.node .nodeLabel *{text-shadow:0 1px 2px rgba(0,0,0,.55);}
     /* the entry node wears the brand gradient (painted in JS) -> force white label for contrast */
     .dtwrap svg g.node.start .nodeLabel,
     .dtwrap svg g.node.start .nodeLabel *{color:#fff !important;fill:#fff !important;}
@@ -518,8 +522,10 @@ Content-Type: application/json
     var GRAPH = null;
     try { GRAPH = JSON.parse(document.getElementById('dt-graph-data').textContent); } catch (e) {}
     var visible = new Set();                                  // node ids currently shown (survives re-render)
-    var CUT = (GRAPH && GRAPH.default_depth != null) ? GRAPH.default_depth : 2;   // collapse cut (BFS depth)
-    function resetVisible(){ visible = new Set(); if (GRAPH) GRAPH.nodes.forEach(function (n){ if (n.depth <= CUT) visible.add(n.id); }); }
+    // Collapse by DETAIL TIER (level), not BFS depth: the whole core flow (level 0) shows at once; each
+    // detail branch sits behind a "＋ more" stub until expanded. (Fallback to depth if level is absent.)
+    function isCore(n){ return (n.level != null) ? n.level === 0 : (n.depth <= 1); }
+    function resetVisible(){ visible = new Set(); if (GRAPH) GRAPH.nodes.forEach(function (n){ if (isCore(n)) visible.add(n.id); }); }
     resetVisible();
     function childrenOf(id){ return GRAPH.edges.filter(function (e){ return e.src === id; }).map(function (e){ return e.dst; }); }
     function hiddenChildren(id){ return childrenOf(id).filter(function (c){ return !visible.has(c); }); }
@@ -561,20 +567,27 @@ Content-Type: application/json
       });
     }
     // --- on-page gradient polish (the .mmd/.drawio/.dot downloads stay flat + portable) -----------
-    // Each node fill becomes a subtle top-lit gradient of its OWN colour (depth without changing the
-    // palette); the entry "start" node wears the portal's brand magenta→violet. Colours are read from
-    // the already-rendered shapes, so this auto-adapts to the dark/light theme + any palette change.
+    // Every node gets a real diagonal gradient: in DARK mode it runs from a vivid tint of the node's OWN
+    // accent (its border colour) down to its dark body — so each box looks "designed" in its kind's
+    // colour, not flat; in LIGHT mode it stays a soft top-light. The entry node wears the portal's brand
+    // magenta→violet. Colours are read from the rendered shapes, so it auto-adapts to theme + palette.
     var SVGNS = "http://www.w3.org/2000/svg";
+    function _rgb(s){ var m = (s || "").match(/\d+(\.\d+)?/g); return (m && m.length >= 3) ? [+m[0], +m[1], +m[2]] : null; }
     function _lighten(rgb, amt){
-      var m = (rgb || "").match(/\d+(\.\d+)?/g); if (!m || m.length < 3) return rgb;
-      function up(x){ x = +x; return Math.round(x + (255 - x) * amt); }
-      return "rgb(" + up(m[0]) + "," + up(m[1]) + "," + up(m[2]) + ")";
+      var c = _rgb(rgb); if (!c) return rgb;
+      function up(x){ return Math.round(x + (255 - x) * amt); }
+      return "rgb(" + up(c[0]) + "," + up(c[1]) + "," + up(c[2]) + ")";
     }
-    function _grad(defs, gid, c0, c1){
+    function _mix(a, b, t){                 // blend colour a toward colour b by t (0..1)
+      var x = _rgb(a), y = _rgb(b); if (!x || !y) return a;
+      function m(i){ return Math.round(x[i] + (y[i] - x[i]) * t); }
+      return "rgb(" + m(0) + "," + m(1) + "," + m(2) + ")";
+    }
+    function _grad(defs, gid, c0, c1, diag){
       if (defs.querySelector("#" + gid)) return;
       var lg = document.createElementNS(SVGNS, "linearGradient");
       lg.setAttribute("id", gid); lg.setAttribute("x1", "0"); lg.setAttribute("y1", "0");
-      lg.setAttribute("x2", "0"); lg.setAttribute("y2", "1");
+      lg.setAttribute("x2", diag ? "1" : "0"); lg.setAttribute("y2", "1");
       [["0", c0], ["1", c1]].forEach(function (p){
         var s = document.createElementNS(SVGNS, "stop");
         s.setAttribute("offset", p[0]); s.setAttribute("stop-color", p[1]); lg.appendChild(s);
@@ -590,21 +603,34 @@ Content-Type: application/json
     function paintGradients(svg){
       var defs = svg.querySelector("defs");
       if (!defs) { defs = document.createElementNS(SVGNS, "defs"); svg.insertBefore(defs, svg.firstChild); }
+      var dark = !isLight();
       var cs = getComputedStyle(document.documentElement);
       var acc = (cs.getPropertyValue("--accent") || "#ff3d9a").trim();
-      _grad(defs, "dtg-brand", acc, "#7b3ff2");
+      _grad(defs, "dtg-brand", acc, "#7b3ff2", true);
       svg.querySelectorAll("g.node").forEach(function (g){
         var shape = _outline(g); if (!shape) return;
-        // Mermaid's classDef sets `fill` with !important, so the override must be !important too (inline
-        // !important wins over a stylesheet !important).
-        if (/\bstart\b/.test(g.getAttribute("class") || "")) {
-          shape.style.setProperty("fill", "url(#dtg-brand)", "important"); return;
+        var isStart = /\bstart\b/.test(g.getAttribute("class") || "");
+        // Mermaid's classDef sets fill with !important, so the override must be !important too.
+        if (isStart) {
+          shape.style.setProperty("fill", "url(#dtg-brand)", "important");
+        } else {
+          var fill = getComputedStyle(shape).fill, stroke = getComputedStyle(shape).stroke;
+          if (fill && fill !== "none" && fill.indexOf("url(") !== 0) {
+            // dark: vivid (40% toward the kind's accent) -> body; light: gentle top-light
+            var top = dark ? _mix(fill, stroke, 0.42) : _lighten(fill, 0.10);
+            var gid = "dtg-" + (fill + stroke).replace(/[^0-9]/g, "") + (dark ? "d" : "l");
+            _grad(defs, gid, top, fill, true);
+            shape.style.setProperty("fill", "url(#" + gid + ")", "important");
+          }
         }
-        var fill = getComputedStyle(shape).fill;
-        if (!fill || fill === "none" || fill.indexOf("url(") === 0) return;
-        var gid = "dtg-" + fill.replace(/[^0-9]/g, "");
-        _grad(defs, gid, _lighten(fill, 0.18), fill);
-        shape.style.setProperty("fill", "url(#" + gid + ")", "important");
+        // Brighten the label in DARK mode for crisp contrast on the richer fills (light mode keeps its
+        // theme-correct dark text). The start node is forced white by CSS.
+        if (dark && !isStart) {
+          g.querySelectorAll(".nodeLabel, .nodeLabel *, text, tspan").forEach(function (t){
+            t.style.setProperty("fill", "#eef4fc", "important");
+            t.style.setProperty("color", "#eef4fc", "important");
+          });
+        }
       });
     }
 
