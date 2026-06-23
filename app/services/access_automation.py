@@ -480,6 +480,9 @@ class ParsedRule:
     inline_layer_name: str = ""                 # its name (for the apply 'layer' param + messages)
     inline_rules: Optional[list] = None
     inline_cleanup: str = ""
+    dynamic_layer: bool = False                 # the referenced layer is a Dynamic Layer (sk182252) —
+                                                # managed out-of-band by other admins -> EXCLUDED from
+                                                # decide() entirely (not descended, not flagged)
 
     @property
     def is_accept(self) -> bool:
@@ -821,6 +824,7 @@ def _parse_rule(e, objdict: dict) -> ParsedRule:
     inline_obj = objdict.get(inline_uid) if inline_uid else None
     inline_name = (inline_obj or {}).get("name", "") if isinstance(inline_obj, dict) else ""
     inline_cleanup = ((inline_obj or {}).get("implicit-cleanup-action", "") or "").lower()
+    inline_dynamic = bool((inline_obj or {}).get("dynamic-layer")) if isinstance(inline_obj, dict) else False
     return ParsedRule(
         uid=e.get("uid", ""),
         number=e.get("rule-number", e.get("number", 0)),
@@ -836,6 +840,7 @@ def _parse_rule(e, objdict: dict) -> ParsedRule:
         src_cx=bool(src_cx), dst_cx=bool(dst_cx), src_negate=src_negate, dst_negate=dst_negate,
         conditional=bool(conditions), conditions=conditions,
         inline_uid=inline_uid, inline_layer_name=inline_name, inline_cleanup=inline_cleanup,
+        dynamic_layer=inline_dynamic,
     )
 
 
@@ -901,6 +906,22 @@ def _provably_disjoint(rel: Relation, unknown: bool) -> bool:
     """A dimension proves the rule is out of the request's path only if the cell was fully resolved
     AND is disjoint. An unknown (negated / unresolved) cell can never prove disjointness."""
     return (not unknown) and rel == Relation.DISJOINT
+
+
+def _cant_cover_dim(rel: Relation, req_any: bool, cell_any: bool, unresolved: bool) -> bool:
+    """PROVE that this rule cell cannot be a superset-or-equal of the request on one dimension — i.e. the
+    rule cannot COVER (already permit) the request. Two provable cases:
+      * the request is ANY on this dimension but the cell is NOT Any — a specific cell (even an opaque one)
+        is a strict subset of Any, so it can never cover an Any request (this is the "rule has a specific
+        destination, so it can't allow a request to Any" case);
+      * the dimension is fully resolved and the request is broader than / not contained in the cell
+        (SUPERSET / OVERLAP / DISJOINT — anything but SUBSET/EQUAL).
+    An UNRESOLVED non-Any dimension proves nothing (the cell might contain the request), so returns False."""
+    if req_any and not cell_any:
+        return True
+    if not unresolved:
+        return rel in (Relation.SUPERSET, Relation.OVERLAP, Relation.DISJOINT)
+    return False
 
 
 def _dim_relation(kind: str, value: str, req_iv, r: ParsedRule, which: str) -> tuple[Relation, bool, bool]:
@@ -1042,6 +1063,18 @@ def _decide(req: AccessRequest, rules: list[ParsedRule], options: "DecideOptions
                           or _provably_disjoint(rel_dst, dst_unknown or dst_approx)
                           or _provably_disjoint(rel_svc, r.svc_unknown or svc_indeterminate))
 
+        # A Dynamic Layer (sk182252) is managed OUT-OF-BAND by other admins -> EXCLUDED from our logic: we
+        # never descend into it, reason about its sub-rules, or flag it (no note — the user asked for it to
+        # be out of the picture). BUT safety still binds: if its parent columns INTERFERE with the request,
+        # the rule diverts that traffic into the out-of-band layer, so we must NOT place the new allow
+        # ABOVE it (first-match would bypass the out-of-band segmentation). It therefore still acts as a
+        # silent placement FLOOR (uncertain_deny -> WIDEN suppressed + bottom placement, guaranteed below
+        # the divert). A provably-disjoint dynamic rule can't affect the request -> skipped entirely.
+        if r.dynamic_layer:
+            if interferes:
+                uncertain_deny = True
+            continue
+
         # Inline layer ("Apply Layer"): the parent rule's columns gate entry into a sub-rulebase that the
         # loader has attached as r.inline_rules. Honour Check Point first-match: if ALL of the request is
         # contained in the parent's match (and the parent is a plain, unconditional rule), every packet
@@ -1118,6 +1151,20 @@ def _decide(req: AccessRequest, rules: list[ParsedRule], options: "DecideOptions
             # possible-deny — see uncertain_deny + placement — so first-match keeps that rule's effect).
             # (A *resolved*, provable covering/partial deny is different — it gets an explicit allow created
             # ABOVE it below; this branch is only the UN-resolvable case, which stays below the rule.)
+            # If this rule provably CANNOT cover the request (e.g. the request destination is Any but the
+            # rule's destination is a specific object, or a resolved dimension shows the request is
+            # broader), then an ACCEPT here can't be the rule that "already permits" it — there is nothing
+            # to flag, so skip it silently. (A DROP that can't fully cover may still block a SUBSET, so it
+            # is still noted + placed-below below; an opaque ACCEPT that COULD cover is still flagged.)
+            cant_cover = (
+                _cant_cover_dim(rel_src, req.src_kind == "ip" and _covers(req_src, ANY_IP),
+                                _covers(r.src, ANY_IP), src_unknown or src_approx)
+                or _cant_cover_dim(rel_dst, req.dst_kind == "ip" and _covers(req_dst, ANY_IP),
+                                   _covers(r.dst, ANY_IP), dst_unknown or dst_approx)
+                or _cant_cover_dim(rel_svc, req_svc.any, r.svc.any, r.svc_unknown or svc_indeterminate))
+            if r.is_accept and cant_cover:
+                continue
+
             why = []
             if src_unknown:
                 why.append("a negated or unresolvable source")
@@ -1331,16 +1378,17 @@ def _pull_items(session, layer_name: str, package: Optional[str], max_rules: int
     return items, objdict
 
 
-def _layer_cleanup_action(session, layer_ref: str) -> str:
-    """An access layer's implicit cleanup action ("drop" | "accept" | ""). Read straight from the rule's
-    object dictionary when present (no extra call); this is the lookup fallback when it wasn't."""
+def _layer_meta(session, layer_ref: str, *, by: str = "uid") -> tuple[str, bool]:
+    """An access layer's ``(implicit-cleanup-action, is-dynamic-layer)``. The cleanup is usually already in
+    the rule's object dictionary (no extra call); this is the lookup fallback. ``dynamic-layer`` (sk182252)
+    marks a layer managed out-of-band -> the caller EXCLUDES it from the engine entirely."""
     if not layer_ref:
-        return ""
+        return "", False
     try:
-        r = session.call("show-access-layer", {"uid": layer_ref})       # VERIFY (accepts uid)
-        return (r.get("implicit-cleanup-action", "") or "").lower()
-    except Exception:  # noqa: BLE001 — best-effort; unknown cleanup just routes the no-match case to REVIEW
-        return ""
+        r = session.call("show-access-layer", {by: layer_ref})          # VERIFY (accepts name or uid)
+        return (r.get("implicit-cleanup-action", "") or "").lower(), bool(r.get("dynamic-layer"))
+    except Exception:  # noqa: BLE001 — best-effort; on error we just don't learn the cleanup / dynamic flag
+        return "", False
 
 
 def _attach_inline_layers(session, rules, package, pull, depth: int, visited: set) -> None:
@@ -1354,6 +1402,23 @@ def _attach_inline_layers(session, rules, package, pull, depth: int, visited: se
     for r in rules:
         if not r.inline_uid:
             continue
+        # Learn whether this is a Dynamic Layer (sk182252) via show-access-layer. CRITICAL: the
+        # ``dynamic-layer`` flag is returned ONLY by show-access-layer — it is NOT in the object dictionary
+        # that show-access-rulebase feeds _parse_rule — so we MUST consult the layer here (the objdict's
+        # cleanup is no substitute, and gating this on inline_cleanup-absence would miss a dynamic layer
+        # whose cleanup happened to be in the dict). One best-effort call per inline rule; it also fills the
+        # cleanup if the object dictionary didn't carry it.
+        if not r.dynamic_layer:
+            cleanup, dyn = _layer_meta(session, r.inline_uid)
+            if cleanup and not r.inline_cleanup:
+                r.inline_cleanup = cleanup
+            if dyn:
+                r.dynamic_layer = True
+        # A Dynamic Layer is managed out-of-band by other admins -> EXCLUDE it: never pull or descend, and
+        # leave inline_rules None + dynamic_layer set so decide() skips the rule entirely.
+        if r.dynamic_layer:
+            r.inline_rules = None
+            continue
         if r.inline_uid in visited:
             r.inline_rules = []                  # cycle -> treat as an empty inline layer (cleanup decides)
             continue
@@ -1361,9 +1426,7 @@ def _attach_inline_layers(session, rules, package, pull, depth: int, visited: se
             sub = pull(r.inline_layer_name or r.inline_uid)
             _attach_inline_layers(session, sub, package, pull, depth - 1, visited | {r.inline_uid})
             r.inline_rules = sub
-            if not r.inline_cleanup:             # not carried in the object dictionary -> look it up once
-                r.inline_cleanup = _layer_cleanup_action(session, r.inline_uid)
-        except Exception:  # noqa: BLE001 — leave inline_rules None -> REVIEW (safe), never assume a grant
+        except Exception:  # noqa: BLE001 — leave inline_rules None, never assume a grant
             r.inline_rules = None
 
 
@@ -1917,10 +1980,23 @@ def _obj_review(res: dict, unresolved: dict, kind: str, base: dict) -> dict:
             "suggestions": names, **res, **base}
 
 
+def _dynamic_layer_block(session, layer: str) -> Optional[dict]:
+    """If ``layer`` is itself a Dynamic Layer (sk182252) — managed out-of-band by other admins — return a
+    refusal dict so the caller stops; otherwise None. Best-effort (a lookup failure just proceeds)."""
+    _, dyn = _layer_meta(session, layer, by="name")
+    if dyn:
+        return {"ok": False, "error": f"“{layer}” is a Dynamic Layer (sk182252) — managed out-of-band by "
+                f"another process, so access automation is disabled for it. Choose a standard layer."}
+    return None
+
+
 def preview(server, secret, req: AccessRequest, layer: str, *, package: Optional[str] = None) -> dict:
     """Read-only: correlate app -> load (cached) -> decide -> describe."""
     try:
         with read_session(server, secret) as s:          # read-only, pooled — no login per preview
+            block = _dynamic_layer_block(s, layer)
+            if block is not None:                         # the chosen layer is managed out-of-band
+                return {**block, "trace": s.trace}
             res, unresolved, kind = _correlate(s, req)
             if unresolved is not None:
                 return _obj_review(res, unresolved, kind, {"cached": False, "trace": s.trace})
@@ -1942,6 +2018,9 @@ def execute(server, secret, req: AccessRequest, layer: str, *, package: Optional
         # fresh rules, locks held only for this commit.
         with MgmtSession(server, secret, session_timeout=write_session_timeout(),
                          session_description="DC-Sim access automation (apply)") as s:
+            block = _dynamic_layer_block(s, layer)
+            if block is not None:             # the chosen layer is a Dynamic Layer (managed out-of-band)
+                return {**block, "applied": False, "published": False, "trace": s.trace}
             res, unresolved, kind = _correlate(s, req)
             if unresolved is not None:        # never apply an unresolved / ambiguous application or service
                 return {"ok": True, "applied": False, "published": False,
