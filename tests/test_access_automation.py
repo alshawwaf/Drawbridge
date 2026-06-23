@@ -194,9 +194,12 @@ def test_decide_create_above_cleanup_for_new_dst():
     assert d.position == {"above": "rC"}            # above the catch-all cleanup, never 'bottom'
 
 
-def test_decide_explicit_deny_is_review_not_override():
+def test_decide_explicit_deny_creates_above_it():
+    # A specific covering deny no longer stops for review — the engine creates the allow ABOVE the deny so
+    # the requested access takes effect (first-match then hits the allow before the block).
     d = aa.decide(AccessRequest(["192.168.9.9/32"], ["172.16.5.20/32"], "tcp", "1521"), [DENY_DB, CLEANUP])
-    assert d.outcome is Outcome.REVIEW and d.target_rule.uid == "r9"
+    assert d.outcome is Outcome.CREATE and d.target_rule.uid == "r9"
+    assert d.position == {"above": "r9"}
 
 
 def test_decide_negated_rule_in_path_notes_and_continues():
@@ -289,12 +292,13 @@ def test_decide_no_op_when_port_already_in_mixed_service_cell():
     assert d.outcome is Outcome.NO_OP   # rule already permits tcp/443 (plus Facebook) for that exact flow
 
 
-def test_decide_partial_drop_in_path_is_review():
-    # a /32 deny inside the /24 request, above the accept -> first-match drops part of it -> REVIEW
+def test_decide_partial_drop_in_path_creates_above_it():
+    # a /32 deny inside the /24 request: it's fully RESOLVED, so we create the allow ABOVE it to make the
+    # full /24 work (first-match hits the allow before the partial deny).
     drop = _rule("d1", 1, "Drop", _host("10.0.0.5"), _host("9.9.9.9"), _tcp(53))
     acc = _rule("a1", 2, "Accept", _net("10.0.0.0/24"), _host("9.9.9.9"), _tcp(53))
     d = aa.decide(AccessRequest(["10.0.0.0/24"], ["9.9.9.9/32"], "tcp", "53"), [drop, acc, CLEANUP])
-    assert d.outcome is Outcome.REVIEW and d.target_rule.uid == "d1"
+    assert d.outcome is Outcome.CREATE and d.target_rule.uid == "d1" and d.position == {"above": "d1"}
 
 
 def test_decide_disjoint_drop_does_not_review():
@@ -304,11 +308,12 @@ def test_decide_disjoint_drop_does_not_review():
 
 
 # --- audit fixes D/E + Any endpoints ----------------------------------------------------------
-def test_decide_non_bottom_catchall_drop_is_review():
-    # an Any/Any/Any DROP that ISN'T the bottom cleanup is an intentional broad block (e.g. lockdown)
+def test_decide_non_bottom_catchall_drop_creates_above_it():
+    # an Any/Any/Any DROP that ISN'T the bottom cleanup is a resolved broad block (e.g. lockdown) -> create
+    # the allow ABOVE it so the requested access takes effect
     lockdown = _rule("rL", 1, "Drop", ANY, ANY, ServiceSet(any=True))
     d = aa.decide(AccessRequest(["10.0.0.5/32"], ["172.16.0.5/32"], "tcp", "443"), [lockdown, CLEANUP])
-    assert d.outcome is Outcome.REVIEW and d.target_rule.uid == "rL"
+    assert d.outcome is Outcome.CREATE and d.target_rule.uid == "rL" and d.position == {"above": "rL"}
 
 
 def test_decide_bottom_cleanup_is_the_create_floor():
@@ -316,11 +321,12 @@ def test_decide_bottom_cleanup_is_the_create_floor():
     assert d.outcome is Outcome.CREATE and d.position == {"above": "rC"}
 
 
-def test_decide_opaque_app_drop_reviews_a_port_request():
-    # an app category/group DROP might match L7 over tcp/443 -> can't prove it doesn't -> REVIEW
+def test_decide_opaque_app_drop_notes_and_creates_below():
+    # an app category/group DROP might match L7 over tcp/443 -> we can't PROVE its service extent, so we
+    # don't override it (no create-above). It's NOTED and the walk continues; the new allow lands BELOW it.
     drop = _rule("rD", 5, "Drop", _host("10.1.1.1"), _host("8.8.8.8"), _app(opaque=True))
     d = aa.decide(AccessRequest(["10.1.1.1/32"], ["8.8.8.8/32"], "tcp", "443"), [drop, CLEANUP])
-    assert d.outcome is Outcome.REVIEW and d.target_rule.uid == "rD"
+    assert d.outcome is Outcome.CREATE and _noted(d, "rD") and d.position == {"above": "rC"}
 
 
 def test_decide_opaque_app_accept_does_not_block_a_port_create():
@@ -396,10 +402,12 @@ def test_ipv6_request_not_covered_by_v4_rule_creates_above_cleanup():
 
 
 def test_ipv6_request_respects_a_v6_deny():
-    # a specific v6 DROP covering the request must NOT be stepped over (the old blocker was the reverse)
+    # a specific, fully-resolved v6 DROP covering the request is overridden by creating the allow ABOVE it
+    # (never silently stepped over — the old blocker was the reverse)
     rules = [_irule(1, ["n6"], ["any"], ["t443"], "drp", _V6_OD),
              _irule(2, ["any"], ["any"], ["any"], "drp", _V6_OD)]
-    assert aa.decide(_r6(), rules).outcome is Outcome.REVIEW
+    d = aa.decide(_r6(), rules)
+    assert d.outcome is Outcome.CREATE and d.position == {"above": "r1"}
 
 
 def test_v4_request_not_covered_by_v6_rule():
@@ -431,10 +439,12 @@ def test_decide_conditional_accept_is_create_not_noop():
     assert d.outcome is Outcome.CREATE and "VPN" in d.reason and "rV" in d.reason
 
 
-def test_decide_conditional_drop_overlapping_is_review():
+def test_decide_conditional_drop_overlapping_notes_and_continues():
+    # a time-restricted DROP only blocks under a column we can't model -> NOTE it and keep going (the new
+    # allow lands below it so it can't leap over the possible block), never a hard stop.
     time_drop = _rule("rT", 5, "Drop", _host("10.1.1.1"), _host("8.8.8.8"), _tcp(443), conditions=("time",))
     d = aa.decide(AccessRequest(["10.1.1.1/32"], ["8.8.8.8/32"], "tcp", "443"), [time_drop, CLEANUP])
-    assert d.outcome is Outcome.REVIEW and d.target_rule.uid == "rT" and "time" in d.reason
+    assert d.outcome is Outcome.CREATE and _noted(d, "rT", "time") and d.position == {"above": "rC"}
 
 
 def test_decide_conditional_accept_is_not_a_widen_target():
@@ -951,8 +961,9 @@ def test_access_automation_detail_renders_form_and_webhook():
     # graph JSON, still exportable to the user's diagram tool (.drawio / .mmd / .dot)
     assert 'id="aa-flow-canvas"' in html and "How it decides" in html
     assert "/access-automation/decision-tree/drawio" in html and "decision-tree/mmd" in html
-    for leaf in ("No-op", "Widen the rule", "Create least-privilege rule", "Review"):
+    for leaf in ("No-op", "Widen the rule", "Create least-privilege rule", "Note & keep going"):
         assert leaf in html        # leaf labels live in the embedded decision-graph JSON
+    assert "Review" not in html    # the flow is reuse-or-create — no policy "review" stop
 
 
 def test_access_automation_diagram_shows_without_credential():
@@ -1078,7 +1089,10 @@ def test_approx_drop_never_under_approximates():
     rules = [_irule(1, ["gw"], ["any"], ["any"], "drp", od),           # deny from a (multi-homable) gateway
              _irule(2, ["any"], ["any"], ["any"], "drp", od)]
     req = AccessRequest(src_cidrs=["10.7.7.7/32"], dst_cidrs=["Any"], application="Facebook")
-    assert aa.decide(req, rules).outcome is Outcome.REVIEW   # can't prove disjoint from an approx deny
+    d = aa.decide(req, rules)
+    # the gateway's true reach is wider than its main IP, so we can't PROVE this deny applies -> we don't
+    # override it (no create-above): it's NOTED and the new allow lands BELOW it.
+    assert d.outcome is Outcome.CREATE and _noted(d, "rule 1") and d.position == {"above": "r2"}
 
 
 def test_malformed_port_reviews_not_crashes():
@@ -1131,11 +1145,13 @@ def test_named_service_widens_exact_two_cells():
 
 def test_service_other_drop_keeps_port_request_in_path():
     # a DROP whose service is service-other (ambiguous protocol) must not be assumed disjoint from a
-    # tcp/443 request -> REVIEW (never step over a possible deny).
+    # tcp/443 request -> we can't prove it applies, so we NOTE it and create the allow BELOW it (never
+    # step over a possible deny by creating above one we can't resolve).
     rules = [_irule(1, ["any"], ["any"], ["gre"], "drp", _SVC_OD),
              _irule(2, ["any"], ["any"], ["any"], "drp", _SVC_OD)]
     req = AccessRequest(src_cidrs=["10.0.0.5/32"], dst_cidrs=["Any"], protocol="tcp", ports="443")
-    assert aa.decide(req, rules).outcome is Outcome.REVIEW
+    d = aa.decide(req, rules)
+    assert d.outcome is Outcome.CREATE and _noted(d, "rule 1") and d.position == {"above": "r2"}
 
 
 # --- SCTP is PORT-based (a real port), not a portless named service like ICMP ---------------------
@@ -1212,13 +1228,13 @@ def _req443():
     return AccessRequest(src_cidrs=["10.0.0.5/32"], dst_cidrs=["Any"], protocol="tcp", ports="443")
 
 
-def test_override_deny_off_reviews_on_off_creates_above():
-    # a specific (non-cleanup) covering DROP
+def test_specific_covering_deny_creates_above_it():
+    # a specific (non-cleanup), fully-resolved covering DROP -> the allow is created ABOVE it so the
+    # requested access takes effect (there is no "review" stop; a deny is overridden by placement)
     rules = [_irule(1, ["h"], ["any"], ["t443"], "drp", _DENY_OD),
              _irule(2, ["any"], ["any"], ["any"], "drp", _DENY_OD)]
-    assert aa.decide(_req443(), rules).outcome is Outcome.REVIEW                      # default: safe
-    d = aa.decide(_req443(), rules, aa.DecideOptions(override_deny=True))
-    assert d.outcome is Outcome.CREATE and d.position == {"above": "r1"}             # opt-in: create above
+    d = aa.decide(_req443(), rules)
+    assert d.outcome is Outcome.CREATE and d.position == {"above": "r1"}
 
 
 def test_ignore_conditions_lets_conditional_accept_cover():
@@ -1268,7 +1284,7 @@ def test_inline_no_match_drop_cleanup_creates_inside_layer():
     d = aa.decide(_req(), [_parent(_NONMATCH_SUB, cleanup="drop"), CLEANUP])
     assert d.outcome is Outcome.CREATE
     assert d.layer == "p1-inline"                          # the change lands INSIDE the inline layer
-    assert "above its drop cleanup" in d.reason
+    assert "above its cleanup" in d.reason
 
 
 def test_inline_no_match_accept_cleanup_is_no_op():
@@ -1276,17 +1292,20 @@ def test_inline_no_match_accept_cleanup_is_no_op():
     assert d.outcome is Outcome.NO_OP and "implicit cleanup (accept)" in d.reason
 
 
-def test_inline_no_match_unknown_cleanup_reviews():
+def test_inline_no_match_unknown_cleanup_creates_inside_layer():
+    # cleanup unknown -> an explicit allow INSIDE the layer grants the request regardless of what the
+    # implicit cleanup would do, so we create inside it (no review stop)
     d = aa.decide(_req(), [_parent(_NONMATCH_SUB, cleanup=""), CLEANUP])
-    assert d.outcome is Outcome.REVIEW and "implicit cleanup is unknown" in d.reason
+    assert d.outcome is Outcome.CREATE and d.layer == "p1-inline" and "above its cleanup" in d.reason
 
 
-def test_inline_partial_match_splits_to_review():
-    # request dst (a /24) is a SUPERSET of the parent's /32 -> traffic splits across layers
+def test_inline_partial_match_splits_notes_and_continues():
+    # request dst (a /24) is a SUPERSET of the parent's /32 -> traffic splits across layers. We don't
+    # second-guess the split: NOTE it and keep going (the new rule lands below the parent).
     req = AccessRequest(src_cidrs=["10.1.0.5/32"], dst_cidrs=["172.16.5.0/24"], protocol="tcp", ports="443")
     sub = [_rule("i1", 1, "Accept", ANY, ANY, _tcp(443))]
     d = aa.decide(req, [_parent(sub), CLEANUP])
-    assert d.outcome is Outcome.REVIEW and "splits across" in d.reason
+    assert d.outcome is Outcome.CREATE and _noted(d, "splits across")
 
 
 def test_inline_widen_targets_a_rule_inside_the_layer():
@@ -1298,19 +1317,21 @@ def test_inline_widen_targets_a_rule_inside_the_layer():
     assert d.target_rule.uid == "i1" and d.layer == "p1-inline"
 
 
-def test_inline_explicit_drop_inside_reviews_then_override_creates():
+def test_inline_explicit_drop_inside_creates_above_it():
+    # an explicit, resolved DROP inside the inline layer covers the request -> create the allow ABOVE that
+    # drop, INSIDE the layer (no review stop)
     sub = [_rule("i1", 1, "Drop", _host("10.1.0.5"), _host("172.16.5.10"), _tcp(443))]
-    assert aa.decide(_req(), [_parent(sub), CLEANUP]).outcome is Outcome.REVIEW
-    d = aa.decide(_req(), [_parent(sub), CLEANUP], aa.DecideOptions(override_deny=True))
+    d = aa.decide(_req(), [_parent(sub), CLEANUP])
     assert d.outcome is Outcome.CREATE and d.layer == "p1-inline"
 
 
-def test_inline_conditional_parent_reviews_unless_ignored():
+def test_inline_conditional_parent_notes_then_ignored_no_ops():
     sub = [_rule("i1", 1, "Accept", _host("10.1.0.5"), _host("172.16.5.10"), _tcp(443))]
     parent = _parent(sub, conditions=("time",))
-    assert aa.decide(_req(), [parent, CLEANUP]).outcome is Outcome.REVIEW
-    d = aa.decide(_req(), [parent, CLEANUP], aa.DecideOptions(ignore_conditions=True))
-    assert d.outcome is Outcome.NO_OP
+    d = aa.decide(_req(), [parent, CLEANUP])
+    assert d.outcome is Outcome.CREATE and _noted(d, "p1")          # noted & continued, not a hard stop
+    d2 = aa.decide(_req(), [parent, CLEANUP], aa.DecideOptions(ignore_conditions=True))
+    assert d2.outcome is Outcome.NO_OP                              # condition ignored -> descends -> allowed
 
 
 def test_inline_parent_disjoint_is_not_entered():
@@ -1724,11 +1745,12 @@ def test_domain_updatable_feed_notes_and_continues():
     assert d.outcome is Outcome.CREATE and _noted(d, "rule 1")
 
 
-def test_domain_any_dest_accept_no_op_and_drop_review():
+def test_domain_any_dest_accept_no_op_and_drop_creates_above():
     accept = [_trule("r1", 1, "Accept", ["any"], ["any"]), _TCLEAN]
     assert aa.decide(_domreq(), accept).outcome is Outcome.NO_OP
     drop = [_trule("r1", 1, "Drop", ["any"], ["any"]), _TCLEAN]   # specific (https) Any/Any drop
-    assert aa.decide(_domreq(), drop).outcome is Outcome.REVIEW
+    d = aa.decide(_domreq(), drop)                                # resolved covering deny -> create above it
+    assert d.outcome is Outcome.CREATE and d.position == {"above": "r1"}
 
 
 def test_domain_widen_adds_to_a_matching_rule_dest():
@@ -1888,12 +1910,13 @@ def test_resolve_domain_creates_with_correct_is_sub_domain():
 
 
 # --- note+continue safety guarantees (2026-06-23: opaque rules no longer hard-stop the flow) ----------
-def test_resolved_covering_deny_still_reviews():
-    # a RESOLVED, provable covering deny is UNCHANGED — it still REVIEWs (override_deny is the opt-in to
-    # auto-create above it). note+continue applies ONLY to opaque / unresolvable rules, never a real block.
+def test_resolved_covering_deny_creates_above_it():
+    # a RESOLVED, provable covering deny is overridden: the allow is created ABOVE it so the access works.
+    # (An UNRESOLVABLE possible-deny is different — it's noted & the allow lands below it; see the approx /
+    # opaque-service / service-other tests.)
     deny = _rule("rd", 1, "Drop", _host("10.0.0.5"), _host("172.16.5.10"), _tcp(443))
     d = aa.decide(AccessRequest(["10.0.0.5/32"], ["172.16.5.10/32"], "tcp", "443"), [deny, CLEANUP])
-    assert d.outcome is Outcome.REVIEW
+    assert d.outcome is Outcome.CREATE and d.position == {"above": "rd"}
 
 
 def test_widen_suppressed_past_opaque_deny_and_created_below_it():
