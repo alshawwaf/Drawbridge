@@ -416,6 +416,11 @@ class AccessRequest:
     src_value: str = ""
     dst_kind: str = "ip"
     dst_value: str = ""
+    # The request's service EXPANDED to the same ServiceSet shape the rule side uses (a services-group or a
+    # tcp/udp/sctp service resolved to its member ports), set by correlation so a group/named-port request
+    # compares against rule cells (which dereference groups to ports) instead of reading DISJOINT. None ->
+    # fall back to the coarse representation below. (Apply still writes req.service — the group's name.)
+    svc_set: Optional[ServiceSet] = None
 
     def src_iv(self):
         return _cidrs_to_iv(self.src_cidrs)
@@ -424,6 +429,8 @@ class AccessRequest:
         return _cidrs_to_iv(self.dst_cidrs)
 
     def svc(self) -> ServiceSet:
+        if self.svc_set is not None:
+            return self.svc_set         # correlation expanded the named service/group to real ports
         if self.application:
             return ServiceSet(apps={self.application})
         if self.service:                # (family, name): family-less (unresolved) fails safe — it won't
@@ -2005,7 +2012,38 @@ def _resolve_svc(session, req: AccessRequest):
     if res.get("match"):
         req.service = res["match"]
         req.service_kind = res.get("match_kind") or ""   # tag the family so the engine can't alias it
+        # Expand a services-GROUP or a tcp/udp/sctp service to the SAME ServiceSet the rule side parses
+        # (groups dereference to member ports), so the request compares correctly against rule cells.
+        # Without this a 'dns' group request read DISJOINT from rule cells holding the same group's ports
+        # -> the engine skipped a DNS inline layer and created a shadowed top-level rule. Portless families
+        # (icmp/other/rpc/…) keep their named token (the rule side keys them by name too) -> no expansion.
+        expanded = _expand_request_service(session, req.service, req.service_kind)
+        if expanded is not None:
+            req.svc_set = expanded
     return res
+
+
+def _expand_request_service(session, name: str, kind: str) -> "Optional[ServiceSet]":
+    """The request's resolved service as the rule side would parse it. A services-GROUP is dereferenced to
+    its members' ports/apps/named; a tcp/udp/sctp service to its port. Returns None for a portless family
+    (icmp/other/rpc/gtp/…) — those already match by name — or on any error (best-effort; the coarse named
+    fallback is safe: a named-vs-port mismatch reads DISJOINT, never a false grant)."""
+    k = (kind or "").lower()
+    try:
+        if k == "group":
+            o = session.call("show-service-group", {"name": name, "details-level": "full"})  # VERIFY
+            members = [m for m in (o.get("members") or []) if isinstance(m, dict)]
+            sset = _parse_svc(members, {})                       # _deref returns an inline member dict as-is
+            guid = o.get("uid")
+            if guid and guid not in sset.group_uids:
+                sset.group_uids.append(guid)                     # remember the group for widen/reuse
+            return sset
+        if k in ("tcp", "udp", "sctp"):
+            o = session.call(f"show-service-{k}", {"name": name})                              # VERIFY
+            return _parse_svc([dict(o, type=f"service-{k}")], {})
+    except MgmtError:
+        return None
+    return None
 
 
 def _correlate(session, req: AccessRequest):

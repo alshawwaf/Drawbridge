@@ -1566,6 +1566,55 @@ def test_override_blocking_deny_off_places_below():
     assert d.outcome is Outcome.CREATE and d.position == {"below": "rd"}                # don't override
 
 
+# ===== services-group / named-service request must MATCH dereferenced rule cells (DNS-layer miss) =====
+def test_services_group_request_descends_into_matching_inline_layer():
+    # a 'dns' services-group request, expanded by correlation to its member ports, matches a rule that
+    # applies a DNS inline layer for the same group -> the engine DESCENDS and creates the rule INSIDE the
+    # layer (above its cleanup), NOT a shadowed top-level rule below the divert. (The live-lab failure.)
+    dns_ports = ServiceSet(by_proto={"tcp": [(53, 53)], "udp": [(53, 53)]})
+    inner = [
+        _rule("d1", 1, "Accept", _host("10.1.1.50"), _host("172.16.5.10"), ServiceSet(any=True)),
+        _rule("d2", 2, "Accept", _host("10.1.1.222"), _host("8.8.8.8"), ServiceSet(any=True)),
+        _rule("d3", 3, "Drop", ANY, ANY, ServiceSet(any=True)),               # the layer's cleanup
+    ]
+    rule7 = _inline("p7", 7, ANY, ANY, dns_ports, inner, name="DNS_Layer")
+    req = AccessRequest(["10.1.1.222/32"], ["Any"])
+    req.svc_set = dns_ports                                                   # as correlation expands "dns"
+    d = aa.decide(req, [rule7, CLEANUP])
+    assert d.outcome is Outcome.CREATE and d.layer == "DNS_Layer"             # created INSIDE the DNS layer
+
+    # without the expansion (the OLD coarse named token) it would NOT descend -> shadowed top-level rule
+    named = AccessRequest(["10.1.1.222/32"], ["Any"]); named.service = "dns"; named.service_kind = "group"
+    assert aa.decide(named, [rule7, CLEANUP]).layer is None
+
+
+class _SvcSession:
+    def __init__(self, group=None, svc=None): self.group, self.svc = group, svc
+    def call(self, cmd, payload):
+        if cmd == "show-service-group": return self.group or {}
+        if cmd.startswith("show-service-"): return self.svc or {}
+        return {}
+
+
+def test_expand_request_service_group_to_member_ports():
+    g = {"uid": "g-dns", "name": "dns", "members": [
+        {"uid": "u1", "type": "service-udp", "name": "domain-udp", "port": "53"},
+        {"uid": "u2", "type": "service-tcp", "name": "domain-tcp", "port": "53"}]}
+    sset = aa._expand_request_service(_SvcSession(group=g), "dns", "group")
+    assert sset.by_proto.get("tcp") and sset.by_proto.get("udp") and "g-dns" in sset.group_uids
+
+
+def test_expand_request_service_tcp_to_port():
+    s = {"uid": "s1", "name": "https", "port": "443"}
+    sset = aa._expand_request_service(_SvcSession(svc=s), "https", "tcp")
+    assert sset.by_proto.get("tcp") == [(443, 443)]
+
+
+def test_expand_request_service_portless_keeps_named():
+    # icmp / other / rpc … already match by name on both sides -> no expansion (returns None)
+    assert aa._expand_request_service(_SvcSession(), "echo-request", "icmp") is None
+
+
 # ================= regression tests for the 2026-06-22 comprehensive audit =================
 # [1 BLOCKER] inline layer: an explicit bottom DROP must not be masked into NO_OP by implicit-accept
 def test_inline_explicit_drop_not_masked_by_implicit_accept():
