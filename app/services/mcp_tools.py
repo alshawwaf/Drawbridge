@@ -60,18 +60,27 @@ def list_access_layers(server_id: int) -> dict:
         return {"error": str(exc)}
 
 
-def _build(source, destination, service, port, protocol, application):
+def _build(source, destination, service, port, protocol, application,
+           source_kind="ip", destination_kind="ip"):
     from . import ticketing
     return ticketing.build_request(source, destination, protocol or "tcp", port or "",
-                                   application=application, service=service)
+                                   application=application, service=service,
+                                   source_kind=source_kind or "ip",
+                                   destination_kind=destination_kind or "ip")
 
 
 def decide_access(server_id: int, source: str, destination: str, layer: str, service: str | None = None,
                   port: str | None = None, protocol: str = "tcp", application: str | None = None,
-                  package: str | None = None) -> dict:
+                  package: str | None = None,
+                  source_kind: str = "ip", destination_kind: str = "ip") -> dict:
     """PREVIEW (read-only) what Drawbridge would do for an access request: returns the outcome
     (no_op / widen / create / review), the reasoning, and — for an unknown service/app — `suggestions`.
-    Writes nothing. This is the primary tool for an agent to reason about a change."""
+    Writes nothing. This is the primary tool for an agent to reason about a change.
+
+    Source/destination default to IP/CIDR/Any; set ``source_kind``/``destination_kind`` to a typed kind
+    (domain / access-role / dynamic-object / updatable-object / security-zone) to reason in that identity
+    space — e.g. does a host have access to the domain ``alshawwaf.ca`` (source_kind stays ip,
+    destination_kind=domain, destination='alshawwaf.ca')."""
     db = SessionLocal()
     try:
         ms, secret = _server_secret(db, server_id)
@@ -81,7 +90,8 @@ def decide_access(server_id: int, source: str, destination: str, layer: str, ser
         db.close()
     from . import access_automation as aa
     try:
-        req = _build(source, destination, service, port, protocol, application)
+        req = _build(source, destination, service, port, protocol, application,
+                     source_kind, destination_kind)
     except ValueError as exc:
         return {"ok": False, "error": str(exc)}
     return aa.preview(ms, secret, req, layer, package=package)
@@ -89,7 +99,8 @@ def decide_access(server_id: int, source: str, destination: str, layer: str, ser
 
 def apply_access(server_id: int, source: str, destination: str, layer: str, service: str | None = None,
                  port: str | None = None, protocol: str = "tcp", application: str | None = None,
-                 package: str | None = None, publish: bool = False, ticket_id: str = "") -> dict:
+                 package: str | None = None, publish: bool = False, ticket_id: str = "",
+                 source_kind: str = "ip", destination_kind: str = "ip") -> dict:
     """APPLY an access request. With publish=false it DRY-RUNS (applies inside a session, then discards —
     nothing is committed) — always allowed. With publish=true it COMMITS to the live server — allowed ONLY
     when an admin has enabled the 'mcp_allow_publish' setting; otherwise it's refused (dry-run instead)."""
@@ -113,7 +124,8 @@ def apply_access(server_id: int, source: str, destination: str, layer: str, serv
         db.close()
     from . import access_automation as aa
     try:
-        req = _build(source, destination, service, port, protocol, application)
+        req = _build(source, destination, service, port, protocol, application,
+                     source_kind, destination_kind)
     except ValueError as exc:
         return {"ok": False, "error": str(exc)}
     return aa.execute(ms, secret, req, layer, package=package, ticket_id=ticket_id, publish=publish)

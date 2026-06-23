@@ -28,7 +28,7 @@ def test_mermaid_is_well_formed():
     assert "-->|yes|" in m and "-->|no|" in m         # labelled branches
     assert "classDef review" in m and "class " in m   # styling applied
     # the resolution sub-step is spelled out in the resolve node
-    assert "exact" in m and "approx" in m and "opaque" in m
+    assert "exact" in m and "approx" in m and "identity" in m
 
 
 def test_drawio_is_valid_xml_with_every_node_and_edge():
@@ -145,9 +145,44 @@ def test_inline_layer_recursion_and_automation_modes_are_drawn():
 
 
 def test_detail_branch_is_self_contained_no_cross_edges():
-    # the inline-layer + automation-mode detail must terminate in its OWN leaves, never draw an edge back
-    # to a CORE (level-0) leaf — those cross-edges were what tangled the expanded diagram.
+    # the inline-layer + automation-mode + typed-matching + materialisation detail must terminate in its
+    # OWN leaves, never draw an edge back to a CORE (level-0) leaf — those cross-edges tangle the diagram.
     level = {n.id: n.level for n in dt.NODES}
     for e in dt.EDGES:
         if level.get(e.src, 0) >= 1:                  # an edge leaving a detail node...
             assert level.get(e.dst, 0) >= 1, f"detail edge {e.src}->{e.dst} reaches a core node"
+
+
+# --- sync guards for the typed (non-IP) source/destination framework -----------------------------
+def test_typed_object_matching_branch_is_drawn():
+    # the identity-space matching detail must stay represented (mirrors the inline-layer guard)
+    ids = {n.id for n in dt.NODES}
+    assert {"kindq", "ipspace", "idspace", "iddomain", "idexact", "iddisjoint", "idupd"} <= ids
+    edges = {(e.src, e.dst) for e in dt.EDGES}
+    assert ("resolve", "kindq") in edges                 # branched off the resolve step
+    assert ("kindq", "ipspace") in edges and ("kindq", "idspace") in edges   # the IP vs identity fork
+    assert ("idspace", "iddomain") in edges and ("idspace", "iddisjoint") in edges
+    assert ("iddomain", "idupd") in edges                # domain-vs-updatable -> review leaf
+    idupd = next(n for n in dt.NODES if n.id == "idupd")
+    assert idupd.kind == "review"
+
+
+def test_object_materialisation_branch_is_drawn():
+    ids = {n.id for n in dt.NODES}
+    assert {"apply", "matIP", "matMk", "matReuse", "matMissing"} <= ids
+    edges = {(e.src, e.dst) for e in dt.EDGES}
+    assert ("create", "apply") in edges and ("doWiden", "apply") in edges   # off both write outcomes
+    assert ("apply", "matIP") in edges and ("apply", "matMk") in edges and ("apply", "matReuse") in edges
+    assert ("matReuse", "matMissing") in edges           # reuse-only-missing -> review leaf
+
+
+def test_every_typed_request_kind_is_named_in_the_tree():
+    # adding a new typed kind to the engine (access_automation.TYPED_KINDS) forces a tree update here:
+    # each kind must surface somewhere in the diagram text, so the visual can't silently omit a feature.
+    from app.services import access_automation as aa
+    text = " ".join((n.label + " " + n.sub) for n in dt.NODES).lower()
+    keyword = {"domain": "domain", "access-role": "role", "dynamic-object": "dynamic",
+               "updatable-object": "updatable", "security-zone": "zone"}
+    assert set(keyword) == set(aa.TYPED_KINDS), "a typed kind has no keyword mapping — update this guard"
+    for kind, kw in keyword.items():
+        assert kw in text, f"typed kind {kind!r} ({kw!r}) is not represented in the decision tree"

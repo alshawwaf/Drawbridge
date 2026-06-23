@@ -41,63 +41,108 @@ class Edge:
 
 
 # The tree — mirrors decide(). CORE flow (level 0, always shown): guard (unsupported/malformed) ->
-# resolve each cell (exact/approx/opaque) -> already permitted? -> denied/unverifiable? -> two cells
-# equal? -> else create. DETAIL (level 1, collapsed on-page until expanded): the inline-layer recursion
-# branch (decide() recurses into an "Apply Layer" sub-rulebase) and the Settings-driven automation modes
-# (override-deny / ignore-conditions). Keep this in lock-step with access_automation.decide().
+# resolve each cell (exact / approx / typed-identity / unresolvable) -> already permitted? ->
+# denied/unverifiable? -> two columns equal? -> else create. DETAIL (level 1, collapsed on-page until
+# expanded): (a) HOW each source/destination is matched — IP-interval space vs typed-object IDENTITY
+# space (domain / role / dynamic / updatable / zone), the cross-kind disjointness and the one opaque
+# case; (b) the inline-layer recursion ("Apply Layer" sub-rulebase); (c) the Settings-driven automation
+# modes (override-deny / ignore-conditions); (d) how the chosen objects are materialised on apply
+# (reuse-or-create vs reuse-only). Keep this in lock-step with access_automation.decide() + _apply().
 NODES: list[Node] = [
-    Node("req", "Access request", "source · destination · service / app", "start", 60, 20),
-    Node("unsup", "Malformed request?", "no concrete service / port", "decision", 60, 130),
-    Node("revU", "Review", "no concrete service to reason about", "review", 420, 130, 240),
-    Node("resolve", "Resolve each cell to its real extent",
-         "exact: host / network / range / group  ·  approx: gateway / cluster / mgmt  ·  opaque → review",
-         "process", 60, 240, 250, 84),
-    Node("revO", "Review", "object with no IP extent", "review", 420, 252, 240),
-    Node("perm", "Already permitted?", "first reachable Accept that covers it", "decision", 60, 374),
-    Node("noop", "No-op", "already allowed — attach the rule", "noop", 420, 374, 240),
-    Node("deny", "Denied or can't verify in path?",
-         "covering / partial deny · unresolved or negated cell · conditional rule", "decision",
-         60, 484, 250, 68),
-    Node("revD", "Review", "a deny, or scope we can't verify", "review", 420, 486, 240),
-    Node("widen", "Two cells equal the request?", "widen the third — add to that cell", "decision",
-         60, 598, 250, 68),
-    Node("doWiden", "Widen the rule", "add the differing source / dest / service", "widen",
-         420, 600, 240),
+    Node("req", "Access request", "source · destination · service / app — each endpoint an IP/CIDR/Any or a typed object",
+         "start", 60, 20, 300, 72),
+    Node("unsup", "Malformed request?", "no concrete service / port, or a typed endpoint that names no object",
+         "decision", 60, 140, 280, 68),
+    Node("revU", "Review", "nothing concrete to reason about", "review", 460, 142, 240),
+    Node("resolve", "Resolve request + each rule cell (top-down, first match wins)",
+         "IP: host / network / range / group (exact) · gateway / cluster / mgmt (approx) · typed object → matched by identity · else unresolvable → review",
+         "process", 60, 256, 320, 104),
+    Node("revO", "Review", "a cell with no computable extent in any space — an over-cap wildcard · an unenumerable group · a malformed or unknown-type object",
+         "review", 460, 268, 280, 84),
+    Node("perm", "Already permitted?", "first reachable Accept covering all 3 columns, before any covering drop",
+         "decision", 60, 400, 300, 68),
+    Node("noop", "No-op", "already allowed — just attach the rule to the ticket", "noop", 460, 402, 250),
+    Node("deny", "Denied, conditional, or can’t verify in path?",
+         "a covering / partial drop · a conditional rule (VPN / time / data / install-on) · a cell whose reach is unknown (negated · unresolvable · a domain meeting an updatable feed) · a non-Accept/Drop action",
+         "decision", 60, 516, 320, 116),
+    Node("revD", "Review", "an intentional deny, or scope we can’t safely verify — hand to a human",
+         "review", 460, 540, 260, 72),
+    Node("widen", "Two columns equal the request?", "the third differs → add the request’s value to THAT rule cell",
+         "decision", 60, 688, 300, 68),
+    Node("doWiden", "Widen the rule", "add the differing source / destination / service to the cell (never a shared group)",
+         "widen", 460, 690, 260, 72),
     Node("create", "Create least-privilege rule",
          "above a blocking / cleanup drop · below a more-specific rule · else bottom", "create",
-         60, 712, 250, 68),
+         60, 804, 300, 72),
+
+    # --- DETAIL tier 1: HOW each source/destination is matched (IP space vs identity space) -------
+    # A self-contained branch off "resolve" explaining the typed-object framework: each object KIND is
+    # its own match space, so cross-kind is provably disjoint (mirrors svc apps-vs-ports). Terminal
+    # process nodes describe "then continues the normal Accept/deny/widen checks above" rather than
+    # drawing an edge back to a core leaf (keeps the detail subtree self-contained).
+    Node("kindq", "How is each source / destination matched?", "by its KIND — an IP/CIDR/Any, or a typed object",
+         "decision", 900, 250, 300, 68, level=1),
+    Node("ipspace", "IP space", "compare IPv4 / IPv6 intervals · host = exact · gateway / cluster / mgmt = approx (under-count — never proven disjoint)",
+         "process", 900, 120, 320, 96, level=1),
+    Node("idspace", "Identity space (typed object)", "matched by OBJECT IDENTITY, not by IP — the policy as written, not runtime DNS",
+         "process", 900, 372, 320, 84, level=1),
+    Node("iddomain", "Domain request", "covered by Any, or a dns-domain object EQUAL-TO / a PARENT-OF the FQDN (.example.com covers www.example.com; an exact object covers only itself)",
+         "decision", 900, 500, 340, 96, level=1),
+    Node("idexact", "Role / dynamic / updatable / zone", "matched by EXACT object name (its own identity)",
+         "process", 1280, 470, 280, 72, level=1),
+    Node("iddisjoint", "Different kinds never collide", "a domain ≠ an IP / role / zone object → provably OUT of the request’s path (can’t satisfy OR block it)",
+         "process", 1280, 600, 340, 96, level=1),
+    Node("idupd", "Review", "a domain meets an updatable feed (e.g. Office365) — the feed may itself contain the FQDN, so coverage can’t be proven",
+         "review", 900, 640, 340, 96, level=1),
 
     # --- DETAIL tier 1: inline-layer recursion ("Apply Layer") -----------------------------------
-    # A SELF-CONTAINED branch off "resolve" with its OWN outcome leaves, so the expanded diagram never
-    # draws long edges back across to the core leaves (that was the tangle). The recursion's own outcomes
-    # mirror the top-level ones — said in the node text rather than re-drawn — so only the genuinely-new
-    # inline-cleanup logic gets its own little subtree.
     Node("inline", "In-path rule applies an inline layer?", "action “Apply Layer” — a sub-rulebase",
-         "decision", 820, 240, 270, 68, level=1),
+         "decision", 900, 800, 280, 68, level=1),
     Node("recurse", "Recurse into the inline layer",
          "re-runs this whole flow — no-op / widen / create / review, same as above", "process",
-         820, 360, 280, 84, level=1),
+         900, 920, 290, 84, level=1),
     Node("inlineEnd", "No inner rule covers it → the layer’s implicit cleanup", "", "decision",
-         820, 490, 280, 68, level=1),
-    Node("inNoop", "No-op", "inline cleanup accepts it", "noop", 760, 620, 240, level=1),
+         900, 1050, 290, 68, level=1),
+    Node("inNoop", "No-op", "inline cleanup accepts it", "noop", 820, 1180, 240, level=1),
     Node("inCreate", "Create inside the inline layer", "above the layer’s drop cleanup", "create",
-         1050, 620, 250, level=1),
+         1120, 1180, 260, level=1),
     Node("revI", "Review", "inline: partial match · conditional parent · unknown cleanup", "review",
-         1160, 240, 250, 84, level=1),
+         1280, 800, 260, 84, level=1),
     # --- DETAIL tier 1: Settings-driven automation modes (own leaf, no cross-edge) ----------------
     Node("opts", "Automation mode (Settings)",
          "override-deny · ignore-conditions: treat VPN / time / data rules as unconditional", "process",
-         60, 850, 320, 84, level=1),
-    Node("odCreate", "Create above the deny", "override-deny mode is on", "create", 420, 858, 240, level=1),
+         60, 940, 340, 84, level=1),
+    Node("odCreate", "Create above the deny", "override-deny mode is on", "create", 460, 948, 250, level=1),
+
+    # --- DETAIL tier 1: object materialisation on apply (reuse-or-create vs reuse-only) -----------
+    Node("apply", "On apply: materialise the objects", "reuse an existing object, else create it — then write the rule",
+         "process", 460, 1080, 300, 72, level=1),
+    Node("matIP", "IP endpoint", "reuse a host / network by IP, else add-host / add-network (a CIDR stays a NETWORK — never narrowed to /32)",
+         "process", 380, 1200, 320, 96, level=1),
+    Node("matMk", "Domain / dynamic-object", "reuse, else add-dns-domain (leading dot = sub-domains) / add-dynamic-object",
+         "process", 740, 1200, 320, 84, level=1),
+    Node("matReuse", "Reuse-only object?", "access-role · security-zone · updatable-object", "decision",
+         1100, 1200, 300, 72, level=1),
+    Node("matMissing", "Review", "a reuse-only object is missing — reported at apply (it can’t be fabricated from a request); define it first (Identity Awareness / topology / CP repository)",
+         "review", 1100, 1330, 340, 96, level=1),
 ]
 
 EDGES: list[Edge] = [
     Edge("req", "unsup"),
     Edge("unsup", "revU", "yes"), Edge("unsup", "resolve", "no"),
-    Edge("resolve", "revO", "opaque object"), Edge("resolve", "perm", "resolved"),
+    Edge("resolve", "revO", "unresolvable cell"), Edge("resolve", "perm", "resolved"),
     Edge("perm", "noop", "yes"), Edge("perm", "deny", "no"),
-    Edge("deny", "revD", "blocked → review"), Edge("deny", "widen", "no"),
+    Edge("deny", "revD", "blocked / unverifiable → review"), Edge("deny", "widen", "no"),
     Edge("widen", "doWiden", "yes"), Edge("widen", "create", "no"),
+
+    # how each endpoint is matched (detail) — IP-interval space vs typed-object identity space
+    Edge("resolve", "kindq", "how each endpoint matches"),
+    Edge("kindq", "ipspace", "IP / CIDR / Any"),
+    Edge("kindq", "idspace", "typed object"),
+    Edge("idspace", "iddomain", "domain"),
+    Edge("idspace", "idexact", "role / dynamic / updatable / zone"),
+    Edge("idspace", "iddisjoint", "vs a different kind"),
+    Edge("iddomain", "idupd", "vs an updatable feed"),
 
     # inline-layer recursion (detail) — a self-contained branch off "resolve" with its OWN leaves
     Edge("resolve", "inline", "applies an inline layer"),
@@ -110,6 +155,14 @@ EDGES: list[Edge] = [
     # automation modes (detail) — the override-deny path turns a blocking-drop REVIEW into a CREATE
     Edge("deny", "opts", "options"),
     Edge("opts", "odCreate", "override-deny on"),
+
+    # object materialisation on apply (detail) — off the widen/create outcomes
+    Edge("doWiden", "apply", "materialise"),
+    Edge("create", "apply", "materialise"),
+    Edge("apply", "matIP", "IP endpoint"),
+    Edge("apply", "matMk", "domain / dynamic"),
+    Edge("apply", "matReuse", "role / zone / updatable"),
+    Edge("matReuse", "matMissing", "missing → review"),
 ]
 
 # The on-page diagram starts collapsed to this tier; deeper nodes expand step-by-step. Downloads/exports

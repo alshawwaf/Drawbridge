@@ -16,6 +16,7 @@ env, never hardcoded.
 from __future__ import annotations
 
 import ipaddress
+import re
 from dataclasses import dataclass
 from typing import Optional
 
@@ -23,9 +24,13 @@ import httpx
 
 from ..config import get_settings
 from . import app_settings
-from .access_automation import AccessRequest
+from .access_automation import AccessRequest, TYPED_KINDS
 
 _TRUE = {"1", "true", "yes", "y", "on", "apply", "publish"}
+
+# A dns-domain label set (RFC-1123-ish): one or more dot-separated labels, a 2+ char TLD. An optional
+# leading dot is preserved — Check Point uses it to mean "this domain AND every sub-domain".
+_DOMAIN_RE = re.compile(r"^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$")
 
 
 @dataclass
@@ -96,28 +101,66 @@ def _norm_endpoint(value) -> str:
     return _norm_cidr(v)
 
 
-def build_request(source, destination, protocol, port, application=None, service=None) -> AccessRequest:
+def _norm_domain(value) -> str:
+    """Validate + normalise a dns-domain request value. Lower-cased, trailing dot stripped; an optional
+    leading dot (sub-domain semantics) is preserved. Raises ValueError on anything that isn't an FQDN."""
+    raw = str(value).strip().lower().rstrip(".")
+    sub = raw.startswith(".")
+    base = raw.lstrip(".")
+    if not _DOMAIN_RE.match(base):
+        raise ValueError(f"'{value}' is not a valid domain (e.g. example.com, or .example.com for "
+                         f"the domain and its sub-domains).")
+    return ("." if sub else "") + base
+
+
+def _resolve_endpoint(value, kind, label) -> tuple[list, str, str]:
+    """Normalise one source/destination by its KIND -> (cidrs, kind, typed_value). An IP endpoint
+    resolves to a CIDR (typed_value empty); a typed endpoint validates its identity (a FQDN for a
+    domain, an object name otherwise) and carries no CIDR. Raises ValueError on anything malformed."""
+    kind = (kind or "ip").strip().lower()
+    if kind == "ip":
+        try:
+            return [_norm_endpoint(value)], "ip", ""
+        except ValueError as exc:
+            raise ValueError(f"Invalid {label}: {exc}")
+    if kind not in TYPED_KINDS:
+        raise ValueError(f"Invalid {label} type {kind!r}.")
+    val = str(value or "").strip()
+    if not val:
+        raise ValueError(f"the {label} is typed as a {kind} but names no object.")
+    if kind == "domain":
+        return [], "domain", _norm_domain(val)
+    # access-role / dynamic-object / updatable-object / security-zone: a Check Point object NAME. CP names
+    # are permissive (spaces, etc.); reject only control characters and absurd lengths.
+    if len(val) > 256 or any(ord(c) < 32 for c in val):
+        raise ValueError(f"Invalid {label} object name.")
+    return [], kind, val
+
+
+def build_request(source, destination, protocol, port, application=None, service=None,
+                  source_kind="ip", destination_kind="ip") -> AccessRequest:
     """Validate + normalise a raw tuple into an AccessRequest. Shared by the UI and the webhook.
     Precedence: `application` (e.g. "Facebook") > `service` (a named non-port service, e.g. "icmp" /
-    "GRE") > protocol+port. Source/destination may be an IP, a CIDR, or 'Any'. Raises ValueError on
-    anything malformed."""
+    "GRE") > protocol+port. Source/destination may be an IP, a CIDR, 'Any', OR a typed (non-IP) object
+    when ``source_kind``/``destination_kind`` is one of the typed kinds (domain / access-role /
+    dynamic-object / updatable-object / security-zone) — then the value is the object's identity (an
+    FQDN for a domain, the object name otherwise). Raises ValueError on anything malformed."""
     if source in (None, "") or destination in (None, ""):
         raise ValueError("source and destination are required.")
-    try:
-        src_cidr, dst_cidr = _norm_endpoint(source), _norm_endpoint(destination)
-    except ValueError as exc:
-        raise ValueError(f"Invalid source/destination: {exc}")
+    s_cidrs, s_kind, s_val = _resolve_endpoint(source, source_kind, "source")
+    d_cidrs, d_kind, d_val = _resolve_endpoint(destination, destination_kind, "destination")
+    common = dict(src_cidrs=s_cidrs, dst_cidrs=d_cidrs,
+                  src_kind=s_kind, src_value=s_val, dst_kind=d_kind, dst_value=d_val)
     application = str(application).strip() if application else ""
     if application:
-        return AccessRequest(src_cidrs=[src_cidr], dst_cidrs=[dst_cidr], application=application)
+        return AccessRequest(**common, application=application)
     service = str(service).strip() if service else ""
     if service:
-        return AccessRequest(src_cidrs=[src_cidr], dst_cidrs=[dst_cidr], service=service)
+        return AccessRequest(**common, service=service)
     protocol = str(protocol or "tcp").lower()
     if protocol not in ("tcp", "udp", "sctp"):   # the port-based protocols; ICMP/GRE/RPC/… go via `service`
         raise ValueError("protocol must be 'tcp', 'udp', or 'sctp' (use a named service otherwise).")
-    return AccessRequest(src_cidrs=[src_cidr], dst_cidrs=[dst_cidr],
-                         protocol=protocol, ports=_validate_port(port))
+    return AccessRequest(**common, protocol=protocol, ports=_validate_port(port))
 
 
 def parse_payload(data: dict) -> TicketRequest:
@@ -148,6 +191,9 @@ def parse_payload(data: dict) -> TicketRequest:
         _first(data, "port", "ports", "service_port", "u_port", default=""),
         _first(data, "application", "app", "u_application"),
         _first(data, "service", "service_name", "u_service"),
+        source_kind=_first(data, "source_kind", "src_kind", "u_source_kind", default="ip"),
+        destination_kind=_first(data, "destination_kind", "dst_kind", "dest_kind",
+                                "u_destination_kind", default="ip"),
     )
     apply_flag = str(_first(data, "apply", "commit", "u_apply", default="")).strip().lower() in _TRUE
     return TicketRequest(

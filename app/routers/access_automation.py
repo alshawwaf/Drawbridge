@@ -37,6 +37,8 @@ class AccessReqBody(BaseModel):
     port: str = ""
     application: str | None = None      # an application-site name (e.g. "Facebook") — overrides everything
     service: str | None = None          # a named non-port service (e.g. "icmp", "GRE") — overrides port
+    source_kind: str = "ip"             # "ip" (default) or a typed kind: domain / access-role /
+    destination_kind: str = "ip"        # dynamic-object / updatable-object / security-zone
     ticket_id: str = ""
     publish: bool = False
     package: str | None = None
@@ -120,7 +122,8 @@ def _run(db: Session, sid: int, user: User, body: AccessReqBody, *, do_apply: bo
         return err
     try:
         req = ticketing.build_request(body.source, body.destination, body.protocol, body.port,
-                                      body.application, body.service)
+                                      body.application, body.service,
+                                      source_kind=body.source_kind, destination_kind=body.destination_kind)
     except ValueError as exc:
         return JSONResponse({"error": str(exc)}, status_code=400)
     if not body.layer:
