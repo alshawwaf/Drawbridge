@@ -349,6 +349,17 @@
     .menu-items .menu-label { display:block; padding:7px 12px 3px; font-size:10px; font-weight:700;
       letter-spacing:.5px; color:var(--faint); text-transform:uppercase; }
     .menu-items .menu-sep { height:1px; background:var(--line); margin:5px 8px; }
+    /* Export dropdown — two-line options with a gradient icon chip (fills on hover). */
+    .export-items { min-width:250px; }
+    .export-opt { display:flex; align-items:center; gap:11px; padding:8px 10px !important; border-radius:9px; }
+    .export-opt:hover, .export-opt:focus { background:var(--accent-soft); }
+    .export-ic { flex:none; width:34px; height:34px; border-radius:9px; display:flex; align-items:center;
+      justify-content:center; background:var(--surface-3); color:var(--accent); transition:background .14s, color .14s; }
+    .export-opt:hover .export-ic, .export-opt:focus .export-ic { background:var(--accent-grad); color:#fff; }
+    .export-txt { display:flex; flex-direction:column; gap:1px; line-height:1.25; }
+    .export-txt b { font-size:13.5px; font-weight:680; color:var(--text); }
+    .export-opt:hover .export-txt b { color:var(--accent); }
+    .export-txt small { font-size:11.5px; color:var(--muted); }
 
     /* ============================ Notifications bell ============================ */
     #notif-bell { position:relative; }

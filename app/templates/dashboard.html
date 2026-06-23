@@ -39,7 +39,6 @@
         <a href="/feeds/new/ioc" data-modal-form="/feeds/new/ioc" data-modal-title="New IoC Feed">IoC Feed</a>
       </div>
     </div>
-    {{ export_menu('feeds') }}
   </div>
 </div>
 
@@ -61,7 +60,7 @@
 <div class="tablewrap">
 <table id="feedtable" data-paginate="10">
   <thead><tr>
-    <th>Name</th>{% if 'type' in vis %}<th>Type</th>{% endif %}{% if 'items' in vis %}<th class="nowrap num">Items</th>{% endif %}{% if 'interval' in vis %}<th class="nowrap num">Interval</th>{% endif %}{% if 'auth' in vis %}<th>Auth</th>{% endif %}{% if 'url' in vis %}<th>Feed URL</th>{% endif %}{% if 'created' in vis %}<th class="nowrap">Created</th>{% endif %}<th style="text-align:right; padding-top:6px; padding-bottom:6px;">{{ columns_menu('feeds', cols, vis, '/feeds', compact=true) }}</th>
+    <th>Name</th>{% if 'type' in vis %}<th>Type</th>{% endif %}{% if 'items' in vis %}<th class="nowrap num">Items</th>{% endif %}{% if 'interval' in vis %}<th class="nowrap num">Interval</th>{% endif %}{% if 'auth' in vis %}<th>Auth</th>{% endif %}{% if 'url' in vis %}<th>Feed URL</th>{% endif %}{% if 'created' in vis %}<th class="nowrap">Created</th>{% endif %}<th style="text-align:right; padding-top:6px; padding-bottom:6px;"><span class="thead-tools">{{ export_menu('feeds') }}{{ columns_menu('feeds', cols, vis, '/feeds', compact=true) }}</span></th>
   </tr></thead>
   <tbody>
   {% for r in rows %}
