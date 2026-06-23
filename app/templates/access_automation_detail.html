@@ -388,6 +388,11 @@ Content-Type: application/json
         if (data.error) { layerSel.innerHTML = '<option>' + esc(data.error) + '</option>'; return; }
         var layers = data.layers || [];
         if (!layers.length) { layerSel.innerHTML = '<option>No access layers found</option>'; return; }
+        // Pin the standard Access Control layer ("Network" / "<package> Network") to the top so it opens
+        // selected — it's the default Check Point layer and the one almost every PoV touches first.
+        var pi = layers.findIndex(function (l) { return /(^|[\s-])network$/i.test(l.name || ''); });
+        if (pi < 0) pi = layers.findIndex(function (l) { return /network/i.test(l.name || ''); });
+        if (pi > 0) { layers = layers.slice(); layers.unshift(layers.splice(pi, 1)[0]); }
         layerSel.innerHTML = layers.map(function (l) { return '<option>' + esc(l.name) + '</option>'; }).join('');
       })
       .catch(function () { layerSel.innerHTML = '<option>Failed to load layers</option>'; });

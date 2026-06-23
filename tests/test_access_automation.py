@@ -1410,6 +1410,24 @@ def test_pull_items_fails_loud_on_truncation():
         aa._pull_items(_Trunc(), "big-layer", None, max_rules=5)
 
 
+# [3b CRITICAL regression] a SECTIONED layer (the standard "Network" layer) wraps its rules in sections,
+# so the TOP-LEVEL rulebase has far fewer items than the rule `total`. The truncation guard must compare
+# total to the CAP, not to len(top-level items) — else every sectioned layer falsely "over the cap".
+def test_pull_items_sectioned_layer_not_falsely_truncated():
+    rules = [{"type": "access-rule", "uid": f"r{i}", "rule-number": i, "name": f"r{i}", "enabled": True,
+              "source": ["Any"], "destination": ["Any"], "service": ["Any"], "action": "Accept"}
+             for i in range(1, 14)]                       # 13 rules
+    section = {"type": "access-section", "uid": "sec", "name": "Section A", "rulebase": rules}
+
+    class _Sectioned:                                     # one page: a single section that wraps all 13
+        def call(self, cmd, payload):
+            return {"rulebase": [section], "objects-dictionary": [], "total": 13, "to": 13}
+
+    items, _ = aa._pull_items(_Sectioned(), "Network", None)   # must NOT raise (13 << cap)
+    flat = [e for e in aa._flatten(items) if e.get("type") == "access-rule"]
+    assert len(flat) == 13                                # all rules recovered from inside the section
+
+
 # [4 MAJOR] WIDEN must not use an approx (under-approximated infra) cell as its EQUAL guard
 def test_widen_excludes_approx_equal_dimension():
     od = {"any": {"uid": "any", "type": "CpmiAnyObject", "name": "Any"},
