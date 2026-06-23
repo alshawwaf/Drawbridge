@@ -36,11 +36,11 @@ def _crypto_or_skip():
 # --- encrypted secret round-trip -----------------------------------------------------------------
 def test_secret_set_get_clear_roundtrip(sdb):
     _crypto_or_skip()
-    assert sdb.get_secret("mcp_token") == ""            # unset
-    sdb.set_secret("mcp_token", "s3cr3t-token")
-    assert sdb.get_secret("mcp_token") == "s3cr3t-token"
-    sdb.clear_secret("mcp_token")
-    assert sdb.get_secret("mcp_token") == ""
+    assert sdb.get_secret("webhook_token") == ""            # unset
+    sdb.set_secret("webhook_token", "s3cr3t-token")
+    assert sdb.get_secret("webhook_token") == "s3cr3t-token"
+    sdb.clear_secret("webhook_token")
+    assert sdb.get_secret("webhook_token") == ""
 
 
 def test_secret_stored_ciphertext_not_plaintext(sdb):
@@ -62,17 +62,17 @@ def test_secret_blank_is_keep_not_clear(sdb):
 
 def test_secret_never_in_all_values_or_defaults(sdb):
     _crypto_or_skip()
-    sdb.set_secret("mcp_token", "leaky")
-    assert "mcp_token" not in sdb.all_values(fresh=True)   # would otherwise be echoed into the form
-    assert "mcp_token" not in sdb.defaults()
-    for k in ("mcp_token", "webhook_token", "servicenow_password"):
+    sdb.set_secret("webhook_token", "leaky")
+    assert "webhook_token" not in sdb.all_values(fresh=True)   # would otherwise be echoed into the form
+    assert "webhook_token" not in sdb.defaults()
+    for k in ("webhook_token", "servicenow_password"):
         assert k not in sdb.all_values()
 
 
 def test_secret_status_reflects_presence(sdb):
     _crypto_or_skip()
     status = sdb.secret_status()
-    assert status == {"mcp_token": False, "webhook_token": False, "servicenow_password": False}
+    assert status == {"webhook_token": False, "servicenow_password": False}
     sdb.set_secret("servicenow_password", "pw")
     assert sdb.secret_status()["servicenow_password"] is True
 
@@ -82,9 +82,9 @@ def test_set_secret_refuses_when_crypto_unavailable(sdb, monkeypatch):
         raise RuntimeError("encryption unavailable")
     monkeypatch.setattr(app_settings.crypto, "encrypt", _boom)
     with pytest.raises(RuntimeError):
-        sdb.set_secret("mcp_token", "should-not-store")
+        sdb.set_secret("webhook_token", "should-not-store")
     with sdb.SessionLocal() as db:
-        assert db.get(AppState, "set:mcp_token") is None    # nothing persisted in cleartext
+        assert db.get(AppState, "set:webhook_token") is None    # nothing persisted in cleartext
 
 
 # --- env-fallback resolvers ----------------------------------------------------------------------
@@ -97,10 +97,10 @@ def test_get_or_env_precedence(sdb, monkeypatch):
 
 def test_get_secret_or_env_precedence(sdb):
     _crypto_or_skip()
-    assert sdb.get_secret_or_env("mcp_token", "env-tok") == "env-tok"   # unset -> env
-    sdb.set_secret("mcp_token", "db-tok")
-    assert sdb.get_secret_or_env("mcp_token", "env-tok") == "db-tok"    # setting wins
-    assert sdb.get_secret_or_env("mcp_token", "") == "db-tok"
+    assert sdb.get_secret_or_env("webhook_token", "env-tok") == "env-tok"   # unset -> env
+    sdb.set_secret("webhook_token", "db-tok")
+    assert sdb.get_secret_or_env("webhook_token", "env-tok") == "db-tok"    # setting wins
+    assert sdb.get_secret_or_env("webhook_token", "") == "db-tok"
 
 
 # --- consumers: webhook scope (fail-closed preserved) --------------------------------------------

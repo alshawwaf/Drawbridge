@@ -141,19 +141,25 @@ def _ok_inner():
     return inner
 
 
-# --- resolve_token precedence: Setting (encrypted) takes priority --------------------------------
-def test_resolve_token_prefers_setting(monkeypatch):
-    from app.services import app_settings
-    monkeypatch.setattr(app_settings, "get_secret", lambda k: "from-setting")
-    assert mcp_server.resolve_token() == "from-setting" and mcp_server.token_configured() is True
-    monkeypatch.setattr(app_settings, "get_secret", lambda k: "")     # unset -> falls back to env (str)
-    assert isinstance(mcp_server.resolve_token(), str)
+# --- auth is API-keys-only: /mcp is enabled by an active mcp-scope key, authorized by verifying it -----
+def test_mcp_enabled_only_when_an_active_mcp_key_exists(monkeypatch):
+    from app.services import api_keys
+    monkeypatch.setattr(api_keys, "any_active", lambda scope="mcp": False)
+    assert mcp_server.mcp_enabled() is False and mcp_server.token_configured() is False
+    monkeypatch.setattr(api_keys, "any_active", lambda scope="mcp": scope == "mcp")
+    assert mcp_server.mcp_enabled() is True and mcp_server.token_configured() is True
 
 
-def test_resolve_token_strips_whitespace(monkeypatch):
-    from app.services import app_settings
-    monkeypatch.setattr(app_settings, "get_secret", lambda k: "  tok-with-newline\n")
-    assert mcp_server.resolve_token() == "tok-with-newline"     # copy-paste artifact stripped
+def test_authorize_mcp_verifies_an_mcp_scope_key(monkeypatch):
+    from app.services import api_keys
+    seen = {}
+    def _verify(presented, scope="mcp"):
+        seen["scope"] = scope
+        return presented == "good-key"
+    monkeypatch.setattr(api_keys, "verify", _verify)
+    assert mcp_server.authorize_mcp("good-key") is True and seen["scope"] == "mcp"
+    assert mcp_server.authorize_mcp("bad") is False
+    assert mcp_server.authorize_mcp("") is False        # empty bearer never authorizes
 
 
 def test_bearer_guard_rejects_websocket_scope():
@@ -190,3 +196,26 @@ def test_tool_catalog_lists_all_tools_with_summaries():
     assert names == set(mcp_server._TOOLS)                       # catalog == registered tools
     assert all(c["summary"] for c in cat)                        # every tool has a one-line summary
     assert "summarize_layer" in names and "analyze_policy" in names   # the CP-style analyze tools
+
+
+# --- generate-and-autofill: the MCP page mints an mcp-scope key and returns its plaintext once ----------
+def test_mcp_guide_generate_key_route(monkeypatch):
+    import types
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from app.db import get_db
+    from app.routers import ui
+    from app.services import api_keys
+
+    monkeypatch.setattr(api_keys, "generate",
+                        lambda name, scope, created_by="": (types.SimpleNamespace(name=name, scope=scope),
+                                                            "SECRET-" + name))
+    app = FastAPI(); app.include_router(ui.router); app.dependency_overrides[get_db] = lambda: None
+
+    monkeypatch.setattr(ui, "get_user_or_none", lambda req, db: None)
+    assert TestClient(app).post("/mcp-guide/key").status_code == 401            # auth required
+
+    monkeypatch.setattr(ui, "get_user_or_none", lambda req, db: types.SimpleNamespace(username="admin"))
+    r = TestClient(app).post("/mcp-guide/key")
+    body = r.json()
+    assert r.status_code == 200 and body["scope"] == "mcp" and body["key"].startswith("SECRET-")

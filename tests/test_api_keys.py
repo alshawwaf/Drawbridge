@@ -113,13 +113,12 @@ def test_active_fails_closed_on_db_error(monkeypatch):
 
 
 # --- the MCP guard accepts an API key OR the legacy token ----------------------------------------
-def test_authorize_mcp_accepts_key_or_legacy(kdb, monkeypatch):
+def test_authorize_mcp_accepts_an_active_mcp_key(kdb):
+    # API keys are the SINGLE auth mechanism for /mcp (no shared bearer token).
     from app import mcp_server
-    monkeypatch.setattr(mcp_server, "resolve_token", lambda: "legacy-tok")
+    assert mcp_server.mcp_enabled() is False                  # no key yet -> endpoint disabled
     _, secret = kdb.generate("agent", "mcp")
-    assert mcp_server.authorize_mcp("legacy-tok") is True     # shared token still works
-    assert mcp_server.authorize_mcp(secret) is True           # an API key works
+    assert mcp_server.mcp_enabled() is True                   # an active mcp key enables it
+    assert mcp_server.authorize_mcp(secret) is True           # the key authorizes
     assert mcp_server.authorize_mcp("nope") is False
-    assert mcp_server.mcp_enabled() is True
-    monkeypatch.setattr(mcp_server, "resolve_token", lambda: "")
-    assert mcp_server.mcp_enabled() is True                   # still enabled via the active key
+    assert mcp_server.authorize_mcp("") is False

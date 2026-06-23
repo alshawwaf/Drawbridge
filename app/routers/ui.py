@@ -61,10 +61,24 @@ def mcp_guide_page(request: Request, db: Session = Depends(get_db)):
     return templates.TemplateResponse(request, "mcp_guide.html", {
         "tools": mcp_server.tool_catalog(),
         "sdk_installed": mcp_server.have_mcp(),
-        "token_set": mcp_server.token_configured(),     # Setting (encrypted) or env var
-        "crypto_ok": app_settings.secret_available(),   # can the token be stored in the portal?
+        "token_set": mcp_server.token_configured(),     # an active mcp-scope API key exists -> /mcp live
         "allow_publish": bool(app_settings.get("mcp_allow_publish")),
     })
+
+
+@router.post("/mcp-guide/key")
+async def mcp_guide_generate_key(request: Request, db: Session = Depends(get_db)):
+    """Generate an mcp-scope API key and RETURN its plaintext once, so the MCP page can drop it straight
+    into the connect-config (no copy/paste, no separate Settings trip). The key is hashed at rest; this
+    response is the only time the secret is shown. This is the single way to enable /mcp."""
+    user = get_user_or_none(request, db)
+    if user is None:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    from ..services import api_keys
+    form = await request.form()
+    name = (form.get("name") or "").strip() or "mcp-agent"
+    row, secret = api_keys.generate(name, "mcp", created_by=user.username)
+    return JSONResponse({"key": secret, "name": row.name, "scope": row.scope})
 
 
 @router.get("/coverage/object")
