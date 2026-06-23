@@ -9,9 +9,18 @@
   </div>
 </div>
 
+<div class="settings-layout">
+  <nav class="settings-nav" aria-label="Settings sections">
+    {% for group in groups.keys() %}
+    <a href="#grp-{{ group | lower | replace(' & ','-') | replace(' / ','-') | replace(' ','-') }}">{{ group }}</a>
+    {% endfor %}
+    <a href="#grp-api-keys">API keys</a>
+  </nav>
+  <div class="settings-main">
+
 <form method="post" action="/settings" id="settings-form">
 {% for group, items in groups.items() %}
-  <div class="card" id="grp-{{ group | lower | replace(' / ','-') | replace(' ','-') }}">
+  <div class="card" id="grp-{{ group | lower | replace(' & ','-') | replace(' / ','-') | replace(' ','-') }}">
     <h2 style="margin-top:0;">{{ group }}</h2>
     {% for s in items %}
       <div class="setrow" style="padding:12px 0;border-top:1px solid var(--line);">
@@ -163,4 +172,25 @@
     longer recognise. Keys are least-privilege by <b>scope</b> — an <code>mcp</code> key can't call the
     REST API and vice-versa.</p>
 </div>
+  </div><!-- /.settings-main -->
+</div><!-- /.settings-layout -->
+
+<script>
+  // Scrollspy: highlight the section nav link for whatever group is currently in view.
+  (function () {
+    var nav = document.querySelector('.settings-nav'); if (!nav) return;
+    var links = {};
+    nav.querySelectorAll('a').forEach(function (a) { links[a.getAttribute('href').slice(1)] = a; });
+    var secs = document.querySelectorAll('.settings-main [id^="grp-"]');
+    if (!('IntersectionObserver' in window) || !secs.length) return;
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (e) {
+        if (!e.isIntersecting) return;
+        Object.keys(links).forEach(function (k) { links[k].classList.remove('active'); });
+        if (links[e.target.id]) links[e.target.id].classList.add('active');
+      });
+    }, { rootMargin: '-72px 0px -55% 0px', threshold: 0 });
+    secs.forEach(function (s) { io.observe(s); });
+  })();
+</script>
 {% endblock %}

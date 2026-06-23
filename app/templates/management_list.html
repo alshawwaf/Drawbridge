@@ -10,7 +10,6 @@
     <p class="ph-sub">Pull, view, edit and export policy from a Management Server or MDS domain over the <code>web_api</code> — secrets AES-256-encrypted, TLS always verified.</p>
   </div>
   <div class="ph-actions">
-    {{ export_menu('management') }}
     <a class="btn" href="/management/new" data-modal-form="/management/new" data-modal-title="New management server">+ New management server</a>
   </div>
 </div>
@@ -23,7 +22,7 @@
 <div class="card" style="padding:6px 6px 2px;">
 <div class="tablewrap">
 <table data-paginate="10">
-  <thead><tr><th>Name</th>{% if 'address' in vis %}<th class="nowrap">Address</th>{% endif %}{% if 'domain' in vis %}<th class="nowrap">Domain</th>{% endif %}{% if 'username' in vis %}<th class="nowrap">Username</th>{% endif %}{% if 'tls' in vis %}<th class="nowrap">TLS</th>{% endif %}{% if 'secret' in vis %}<th class="nowrap">Secret</th>{% endif %}{% if 'created' in vis %}<th class="nowrap">Created</th>{% endif %}<th style="text-align:right; padding-top:6px; padding-bottom:6px;">{{ columns_menu('management', cols, vis, '/management', compact=true) }}</th></tr></thead>
+  <thead><tr><th>Name</th>{% if 'address' in vis %}<th class="nowrap">Address</th>{% endif %}{% if 'domain' in vis %}<th class="nowrap">Domain</th>{% endif %}{% if 'username' in vis %}<th class="nowrap">Username</th>{% endif %}{% if 'tls' in vis %}<th class="nowrap">TLS</th>{% endif %}{% if 'secret' in vis %}<th class="nowrap">Secret</th>{% endif %}{% if 'created' in vis %}<th class="nowrap">Created</th>{% endif %}<th style="text-align:right; padding-top:6px; padding-bottom:6px;"><span class="thead-tools">{{ export_menu('management') }}{{ columns_menu('management', cols, vis, '/management', compact=true) }}</span></th></tr></thead>
   <tbody>
   {% for r in rows %}
     <tr>

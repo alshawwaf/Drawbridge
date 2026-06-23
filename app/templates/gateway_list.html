@@ -10,7 +10,6 @@
     <p class="ph-sub">Saved gateway connection profiles. The password is optional — store it AES-256-encrypted for reuse, or leave it blank to enter each time you apply.</p>
   </div>
   <div class="ph-actions">
-    {{ export_menu('gateways') }}
     <a class="btn" href="/gateways/new" data-modal-form="/gateways/new" data-modal-title="New gateway">+ New gateway</a>
   </div>
 </div>
@@ -26,7 +25,7 @@
 <div class="card" style="padding:6px 6px 2px;">
 <div class="tablewrap">
 <table data-paginate="10">
-  <thead><tr><th>Name</th>{% if 'address' in vis %}<th class="nowrap">Address</th>{% endif %}{% if 'username' in vis %}<th class="nowrap">Username</th>{% endif %}{% if 'tls' in vis %}<th class="nowrap">TLS</th>{% endif %}{% if 'layers' in vis %}<th class="nowrap num">Layers</th>{% endif %}{% if 'created' in vis %}<th class="nowrap">Created</th>{% endif %}<th style="text-align:right; padding-top:6px; padding-bottom:6px;">{{ columns_menu('gateways', cols, vis, '/gateways', compact=true) }}</th></tr></thead>
+  <thead><tr><th>Name</th>{% if 'address' in vis %}<th class="nowrap">Address</th>{% endif %}{% if 'username' in vis %}<th class="nowrap">Username</th>{% endif %}{% if 'tls' in vis %}<th class="nowrap">TLS</th>{% endif %}{% if 'layers' in vis %}<th class="nowrap num">Layers</th>{% endif %}{% if 'created' in vis %}<th class="nowrap">Created</th>{% endif %}<th style="text-align:right; padding-top:6px; padding-bottom:6px;"><span class="thead-tools">{{ export_menu('gateways') }}{{ columns_menu('gateways', cols, vis, '/gateways', compact=true) }}</span></th></tr></thead>
   <tbody>
   {% for r in rows %}
     <tr>
