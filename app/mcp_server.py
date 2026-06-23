@@ -4,9 +4,11 @@ installed ``build_mcp_app()`` returns None and the app simply doesn't mount ``/m
 Drawbridge is unaffected. All tool LOGIC lives in services.mcp_tools (SDK-independent + unit-tested); this
 file is only the thin SDK wrapper + a pure-ASGI bearer-token gate.
 
-Activate: install `mcp` via Artifactory, set DCSIM_MCP_TOKEN, restart. The endpoint mounts at /mcp and an
-agent authenticates with `Authorization: Bearer <DCSIM_MCP_TOKEN>`. Writes are further gated by the
-`mcp_allow_publish` Setting (default OFF). See docs/mcp-n8n.md."""
+Activate: install `mcp` via Artifactory; the endpoint mounts at /mcp whenever the SDK is present and is
+ENABLED by generating an mcp-scope API key (on the MCP page or Settings → API keys). An agent authenticates
+with `Authorization: Bearer <that key>`; create/revoke takes effect with no redeploy. Writes are further
+gated by the `mcp_allow_publish` Setting (default OFF). The standalone `serve()` entrypoint is a separate
+run mode that still uses a DCSIM_MCP_TOKEN env var. See docs/mcp-n8n.md."""
 from __future__ import annotations
 
 import contextlib
@@ -52,28 +54,10 @@ def import_error() -> str:
     return _IMPORT_ERR
 
 
-def resolve_token() -> str:
-    """The current MCP bearer token: the portal Setting (encrypted at rest) takes precedence, with the
-    DCSIM_MCP_TOKEN env var as the fallback. Read PER REQUEST (via _BearerGuard) so an admin can set,
-    rotate, or clear the token from Settings with no redeploy. "" means the endpoint is disabled."""
-    try:
-        from .services import app_settings
-        from .config import get_settings
-        # .strip() so a copy-paste trailing newline/space in the stored token or env var doesn't make
-        # the endpoint require a whitespace-suffixed bearer that no client would send.
-        return (app_settings.get_secret_or_env("mcp_token", get_settings().mcp_token) or "").strip()
-    except Exception:  # noqa: BLE001 — never let a config read break the request path
-        try:
-            from .config import get_settings
-            return (get_settings().mcp_token or "").strip()
-        except Exception:  # noqa: BLE001
-            return ""
-
-
 def mcp_enabled() -> bool:
-    """True when /mcp is live — a legacy token (Setting/env) OR at least one active MCP API key exists."""
-    if resolve_token():
-        return True
+    """True when /mcp is live — i.e. at least one ACTIVE mcp-scope API key exists. API keys are the single
+    auth mechanism (generated on the MCP page or Settings → API keys); set/revoke takes effect with no
+    redeploy. No key -> the endpoint returns 503."""
     try:
         from .services import api_keys
         return api_keys.any_active("mcp")
@@ -82,18 +66,15 @@ def mcp_enabled() -> bool:
 
 
 def token_configured() -> bool:
-    """Back-compat alias for the guide/status page: is /mcp live (token or key)?"""
+    """Back-compat alias for the guide/status page: is /mcp live (an active mcp-scope API key exists)?"""
     return mcp_enabled()
 
 
 def authorize_mcp(presented: str) -> bool:
-    """True if a presented bearer is valid for /mcp — it matches the legacy token (constant-time) OR an
-    active MCP API key. Resolved PER REQUEST so set/rotate/revoke take effect with no redeploy."""
+    """True if a presented bearer is a valid ACTIVE mcp-scope API key (constant-time inside api_keys.verify).
+    Resolved PER REQUEST so create/revoke take effect with no redeploy."""
     if not presented:
         return False
-    legacy = resolve_token()
-    if legacy and hmac.compare_digest(presented, legacy):
-        return True
     try:
         from .services import api_keys
         return api_keys.verify(presented, "mcp")
@@ -126,8 +107,8 @@ class _BearerGuard:
                 enabled = False
             if not enabled:
                 await _send_json(send, 503,
-                                 b'{"error":"MCP disabled - add a key in Settings -> API keys, or set a '
-                                 b'token in Settings -> MCP / agent (or the DCSIM_MCP_TOKEN env var)"}')
+                                 b'{"error":"MCP disabled - generate an mcp-scope API key on the MCP page '
+                                 b'(or Settings -> API keys) to enable /mcp"}')
                 return
             headers = dict(scope.get("headers") or [])
             auth = headers.get(b"authorization", b"").decode("latin-1")

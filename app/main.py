@@ -136,12 +136,12 @@ def create_app() -> FastAPI:
     app.include_router(api_v1.router)   # general REST API for any HTTP client (api-scope key auth)
 
     # MCP server for n8n / LLM agents — mounted at /mcp whenever the SDK is installed (Artifactory).
-    # The bearer token is resolved PER REQUEST (Settings → MCP / agent, with the DCSIM_MCP_TOKEN env var
-    # as fallback): while none is set the endpoint returns 503, and setting one in the portal activates it
-    # with no redeploy. If the SDK is absent the endpoint is simply not mounted; the rest is unaffected.
+    # Auth is a single mechanism: an active mcp-scope API KEY, verified PER REQUEST. While none exists the
+    # endpoint returns 503; generating a key (on the MCP page) activates it with no redeploy. If the SDK is
+    # absent the endpoint is simply not mounted; the rest is unaffected.
     try:
         from . import mcp_server
-        mcp_app = mcp_server.build_mcp_app()   # default guard: MCP token (Setting/env) + active API keys
+        mcp_app = mcp_server.build_mcp_app()   # default guard: active mcp-scope API keys
         if mcp_app is not None:
             app.mount("/mcp", mcp_app)
     except Exception:  # noqa: BLE001 — never let the optional MCP mount break app startup

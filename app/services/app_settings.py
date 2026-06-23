@@ -172,23 +172,16 @@ SETTINGS: list[Setting] = [
             group="Access automation logic"),
 
     # --- MCP / agent ---------------------------------------------------------------------------------
-    # The /mcp endpoint (for n8n / LLM agents) is enabled by DCSIM_MCP_TOKEN. This gates whether an agent
-    # may actually PUBLISH a change to a live SMS. OFF (default): the agent can decide/preview/correlate
-    # and even dry-run-apply (validate then discard), but apply_access(publish=true) is REFUSED — letting
-    # an LLM commit to live policy is high-stakes, so it's an explicit admin opt-in.
-    Setting("mcp_token", "secret", "",
-            "MCP bearer token",
-            "The secret an MCP client sends as `Authorization: Bearer <token>` to reach /mcp. Setting it "
-            "here ENABLES the endpoint with no redeploy; clearing it falls back to the DCSIM_MCP_TOKEN env "
-            "var (so /mcp is disabled only when BOTH are unset). Stored encrypted at rest (AES-256-GCM). "
-            "Like the webhook token it can drive policy writes (when publish is on below), so use a long "
-            "random value and rotate it here whenever you need.",
-            group="MCP / agent", generate=True),
+    # The /mcp endpoint (for n8n / LLM agents) is enabled by an active MCP-scope API KEY (Settings → API
+    # keys, generated right on the MCP page). No separate bearer-token setting — one auth mechanism. This
+    # toggle only gates whether an agent may PUBLISH to a live SMS: OFF (default) -> decide/preview/correlate
+    # and dry-run-apply (validate then discard) work, but apply_access(publish=true) is REFUSED — letting an
+    # LLM commit to live policy is high-stakes, so it's an explicit admin opt-in.
     Setting("mcp_allow_publish", "bool", False,
             "Let the MCP agent publish to live policy",
-            "Allow an MCP/LLM agent (authenticated with the MCP token) to commit + publish rules to a live "
-            "management server. Leave OFF unless you intend agentic changes to reach production — with it "
-            "off, agents can still decide, preview, and dry-run (validate-and-discard).",
+            "Allow an MCP/LLM agent (authenticated with an MCP-scope API key) to commit + publish rules to a "
+            "live management server. Leave OFF unless you intend agentic changes to reach production — with "
+            "it off, agents can still decide, preview, and dry-run (validate-and-discard).",
             group="MCP / agent"),
 
     # --- Ticketing webhook ---------------------------------------------------------------------------
