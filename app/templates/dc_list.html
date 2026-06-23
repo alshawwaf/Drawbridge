@@ -46,11 +46,11 @@
   <tbody>
   {% for r in rows %}
     <tr>
-      <td><a class="feedname" href="/datacenters/{{ r.dc.id }}">{{ r.dc.name }}</a>{% if r.dc.description %}<div class="subsel">{{ r.dc.description }}</div>{% endif %}</td>
+      <td><a class="feedname" href="/datacenters/{{ r.dc.id }}" data-modal-view="/datacenters/{{ r.dc.id }}" data-modal-title="{{ r.dc.name }}">{{ r.dc.name }}</a>{% if r.dc.description %}<div class="subsel">{{ r.dc.description }}</div>{% endif %}</td>
       {% if 'provider' in vis %}<td><span class="pill">{{ r.dc.provider }}</span></td>{% endif %}
       {% if 'inventory' in vis %}<td class="muted">{{ r.summary }}</td>{% endif %}
       {% if 'created' in vis %}<td class="nowrap"><time class="ts mono" data-ts="{{ r.dc.created_at.isoformat() }}">{{ r.dc.created_at.strftime('%Y-%m-%d') }}</time></td>{% endif %}
-      {{ row_actions(links=[{'label':'Open','url':'/datacenters/' ~ r.dc.id}, {'label':'Edit','url':'/datacenters/' ~ r.dc.id ~ '/edit', 'modal':'Edit ' ~ r.dc.name}], delete={'url':'/datacenters/' ~ r.dc.id ~ '/delete', 'name': r.dc.name}) }}
+      {{ row_actions(links=[{'label':'Open','url':'/datacenters/' ~ r.dc.id, 'view': r.dc.name}, {'label':'Edit','url':'/datacenters/' ~ r.dc.id ~ '/edit', 'modal':'Edit ' ~ r.dc.name}], delete={'url':'/datacenters/' ~ r.dc.id ~ '/delete', 'name': r.dc.name}) }}
     </tr>
   {% endfor %}
   </tbody>
