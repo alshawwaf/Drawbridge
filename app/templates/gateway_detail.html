@@ -10,7 +10,7 @@
   </div>
   <div class="ph-actions">
     <a class="btn secondary" href="/gateways/{{ gw.id }}/gaia-export">Export Gaia config →</a>
-    <a class="btn secondary" href="/gateways/{{ gw.id }}/edit">Edit</a>
+    <a class="btn secondary" href="/gateways/{{ gw.id }}/edit" data-modal-form="/gateways/{{ gw.id }}/edit" data-modal-title="Edit gateway">Edit</a>
     <form method="post" action="/gateways/{{ gw.id }}/delete">
       <button class="danger" type="submit" data-confirm="Delete gateway “{{ gw.name }}”?">Delete</button>
     </form>

@@ -73,21 +73,6 @@
     ::selection { background:var(--accent-soft); }
     a { color:var(--accent); }
 
-    /* Branded scrollbars — a gradient thumb on a transparent track. The transparent 2px border +
-       padding-box clip slims the thumb and rounds its ends. WebKit/Blink use the pseudo-elements;
-       Firefox can't do a gradient, so it gets a solid accent thumb via the standard properties (scoped
-       to Firefox only — if set globally, Chrome prefers the standard prop and drops the gradient). */
-    ::-webkit-scrollbar { width:11px; height:11px; }
-    ::-webkit-scrollbar-track { background:transparent; }
-    ::-webkit-scrollbar-corner { background:transparent; }
-    ::-webkit-scrollbar-thumb { border-radius:9px; border:2px solid transparent; background-clip:padding-box;
-      background-image:linear-gradient(180deg, var(--accent) 0%, #7b3ff2 100%); }
-    ::-webkit-scrollbar-thumb:hover { border-width:1px;
-      background-image:linear-gradient(180deg, var(--accent-2) 0%, #8b4ff8 100%); }
-    @supports (-moz-appearance:none) {
-      * { scrollbar-width:thin; scrollbar-color:var(--accent) transparent; }
-    }
-
     /* ============================ Header ============================ */
     header {
       position:sticky; top:0; z-index:50; height:60px; padding:0 26px;
@@ -435,6 +420,23 @@
       box-shadow:none; padding:0; margin:5px 0 0; min-height:0; line-height:1.4; font-size:12px;
       font-weight:650; transform:none; filter:none; }
     button.help-toggle:hover { text-decoration:underline; }
+
+    /* Settings: a sticky in-page section nav on the left (the page is long). */
+    .settings-layout { display:grid; grid-template-columns:208px minmax(0,1fr); gap:26px; align-items:start; }
+    .settings-nav { position:sticky; top:76px; display:flex; flex-direction:column; gap:1px; }
+    .settings-nav a { padding:7px 12px; border-radius:8px; border-left:2px solid transparent; color:var(--muted);
+      text-decoration:none; font-size:13px; font-weight:600; line-height:1.35; transition:background .12s, color .12s; }
+    .settings-nav a:hover { background:var(--hover); color:var(--text); }
+    .settings-nav a.active { color:var(--accent); background:var(--accent-soft); border-left-color:var(--accent); }
+    /* Table-scoped actions (Export + Columns) grouped in the table header. */
+    .thead-tools { display:inline-flex; gap:7px; align-items:center; justify-content:flex-end; }
+    .settings-main { min-width:0; }
+    .settings-main [id^="grp-"] { scroll-margin-top:74px; }
+    @media (max-width:880px) {
+      .settings-layout { grid-template-columns:1fr; }
+      .settings-nav { position:static; flex-direction:row; flex-wrap:wrap; gap:6px; margin-bottom:8px; }
+      .settings-nav a { border-left:none; border:1px solid var(--line); }
+    }
 
     /* ============================ Toast ============================ */
     .toast { position:fixed; bottom:22px; right:22px; background:var(--surface); color:var(--text);

@@ -11,7 +11,7 @@
     <p class="ph-sub">{{ dc.description or "Mock VMware vCenter (vSphere SOAP API)" }}</p>
   </div>
   <div class="ph-actions">
-    <a class="btn secondary" href="/datacenters/{{ dc.id }}/edit">Edit</a>
+    <a class="btn secondary" href="/datacenters/{{ dc.id }}/edit" data-modal-form="/datacenters/{{ dc.id }}/edit" data-modal-title="Edit {{ dc.name }}">Edit</a>
     <form method="post" action="/datacenters/{{ dc.id }}/delete">
       <button class="danger" type="submit" data-confirm="Delete “{{ dc.name }}”? This removes the mock datacenter.">Delete</button>
     </form>
@@ -57,7 +57,7 @@
     <p class="ph-sub">Mock VMware {{ "Global NSX-T (Global Manager / Federation)" if is_global else "NSX-T Manager" }} — Policy Mode REST API</p>
   </div>
   <div class="ph-actions">
-    <a class="btn secondary" href="/datacenters/{{ dc.id }}/edit">Edit</a>
+    <a class="btn secondary" href="/datacenters/{{ dc.id }}/edit" data-modal-form="/datacenters/{{ dc.id }}/edit" data-modal-title="Edit {{ dc.name }}">Edit</a>
     <form method="post" action="/datacenters/{{ dc.id }}/delete">
       <button class="danger" type="submit" data-confirm="Delete “{{ dc.name }}”? This removes the mock datacenter.">Delete</button>
     </form>
@@ -103,7 +103,7 @@
     <p class="ph-sub">{{ dc.description or "Mock Proxmox VE (/api2/json REST)" }}</p>
   </div>
   <div class="ph-actions">
-    <a class="btn secondary" href="/datacenters/{{ dc.id }}/edit">Edit</a>
+    <a class="btn secondary" href="/datacenters/{{ dc.id }}/edit" data-modal-form="/datacenters/{{ dc.id }}/edit" data-modal-title="Edit {{ dc.name }}">Edit</a>
     <form method="post" action="/datacenters/{{ dc.id }}/delete">
       <button class="danger" type="submit" data-confirm="Delete “{{ dc.name }}”? This removes the mock datacenter.">Delete</button>
     </form>
@@ -145,7 +145,7 @@
     <p class="ph-sub">{{ dc.description or "Mock Cisco ACI (APIC REST API)" }}</p>
   </div>
   <div class="ph-actions">
-    <a class="btn secondary" href="/datacenters/{{ dc.id }}/edit">Edit</a>
+    <a class="btn secondary" href="/datacenters/{{ dc.id }}/edit" data-modal-form="/datacenters/{{ dc.id }}/edit" data-modal-title="Edit {{ dc.name }}">Edit</a>
     <form method="post" action="/datacenters/{{ dc.id }}/delete">
       <button class="danger" type="submit" data-confirm="Delete “{{ dc.name }}”? This removes the mock datacenter.">Delete</button>
     </form>
@@ -190,7 +190,7 @@
     <p class="ph-sub">{{ dc.description or "Mock Kubernetes API server (kube-apiserver REST)" }}</p>
   </div>
   <div class="ph-actions">
-    <a class="btn secondary" href="/datacenters/{{ dc.id }}/edit">Edit</a>
+    <a class="btn secondary" href="/datacenters/{{ dc.id }}/edit" data-modal-form="/datacenters/{{ dc.id }}/edit" data-modal-title="Edit {{ dc.name }}">Edit</a>
     <form method="post" action="/datacenters/{{ dc.id }}/delete">
       <button class="danger" type="submit" data-confirm="Delete “{{ dc.name }}”? This removes the mock datacenter.">Delete</button>
     </form>
@@ -237,7 +237,7 @@
     <p class="ph-sub">{{ dc.description or "Mock Nutanix Prism (REST — v3 + v4)" }}</p>
   </div>
   <div class="ph-actions">
-    <a class="btn secondary" href="/datacenters/{{ dc.id }}/edit">Edit</a>
+    <a class="btn secondary" href="/datacenters/{{ dc.id }}/edit" data-modal-form="/datacenters/{{ dc.id }}/edit" data-modal-title="Edit {{ dc.name }}">Edit</a>
     <form method="post" action="/datacenters/{{ dc.id }}/delete">
       <button class="danger" type="submit" data-confirm="Delete “{{ dc.name }}”? This removes the mock datacenter.">Delete</button>
     </form>
@@ -281,7 +281,7 @@
     <p class="ph-sub">{{ dc.description or "Mock OpenStack datacenter (Keystone + Nova + Neutron)" }}</p>
   </div>
   <div class="ph-actions">
-    <a class="btn secondary" href="/datacenters/{{ dc.id }}/edit">Edit</a>
+    <a class="btn secondary" href="/datacenters/{{ dc.id }}/edit" data-modal-form="/datacenters/{{ dc.id }}/edit" data-modal-title="Edit {{ dc.name }}">Edit</a>
     <form method="post" action="/datacenters/{{ dc.id }}/delete">
       <button class="danger" type="submit" data-confirm="Delete “{{ dc.name }}”? This removes the mock datacenter.">Delete</button>
     </form>

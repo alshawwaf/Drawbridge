@@ -10,7 +10,6 @@
     <p class="ph-sub">Mock cloud/datacenter providers Check Point connects to. Point a SmartConsole Data Center object at the portal — it serves the inventory in the provider's own API.</p>
   </div>
   <div class="ph-actions">
-    {{ export_menu('datacenters') }}
     <div class="menu">
       <a href="#" class="btn menu-trigger">+ New Data Center ▾</a>
       <div class="menu-items">
@@ -42,7 +41,7 @@
     {% if 'provider' in vis %}<th>Provider</th>{% endif %}
     {% if 'inventory' in vis %}<th>Inventory</th>{% endif %}
     {% if 'created' in vis %}<th class="nowrap">Created</th>{% endif %}
-    <th style="text-align:right; padding-top:6px; padding-bottom:6px;">{{ columns_menu('datacenters', cols, vis, '/datacenters', compact=true) }}</th>
+    <th style="text-align:right; padding-top:6px; padding-bottom:6px;"><span class="thead-tools">{{ export_menu('datacenters') }}{{ columns_menu('datacenters', cols, vis, '/datacenters', compact=true) }}</span></th>
   </tr></thead>
   <tbody>
   {% for r in rows %}
@@ -51,7 +50,7 @@
       {% if 'provider' in vis %}<td><span class="pill">{{ r.dc.provider }}</span></td>{% endif %}
       {% if 'inventory' in vis %}<td class="muted">{{ r.summary }}</td>{% endif %}
       {% if 'created' in vis %}<td class="nowrap"><time class="ts mono" data-ts="{{ r.dc.created_at.isoformat() }}">{{ r.dc.created_at.strftime('%Y-%m-%d') }}</time></td>{% endif %}
-      {{ row_actions(links=[{'label':'Open','url':'/datacenters/' ~ r.dc.id}, {'label':'Edit','url':'/datacenters/' ~ r.dc.id ~ '/edit'}], delete={'url':'/datacenters/' ~ r.dc.id ~ '/delete', 'name': r.dc.name}) }}
+      {{ row_actions(links=[{'label':'Open','url':'/datacenters/' ~ r.dc.id}, {'label':'Edit','url':'/datacenters/' ~ r.dc.id ~ '/edit', 'modal':'Edit ' ~ r.dc.name}], delete={'url':'/datacenters/' ~ r.dc.id ~ '/delete', 'name': r.dc.name}) }}
     </tr>
   {% endfor %}
   </tbody>

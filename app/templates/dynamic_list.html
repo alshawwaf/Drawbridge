@@ -10,7 +10,6 @@
     <p class="ph-sub">Author Access Control rules here, then push them to a gateway with <code>set-dynamic-content</code> — saved on the portal, reflected on the gateway (no policy install).</p>
   </div>
   <div class="ph-actions">
-    {{ export_menu('layers') }}
     <a class="btn" href="/layers/new">+ New Dynamic Layer</a>
   </div>
 </div>
@@ -35,7 +34,7 @@
 <div class="tablewrap">
 <table id="layertable" data-paginate="10">
   <thead><tr>
-    <th>Name</th>{% if 'gateway' in vis %}<th class="nowrap">Gateway</th>{% endif %}{% if 'gwlayer' in vis %}<th class="nowrap">Gateway layer</th>{% endif %}{% if 'objects' in vis %}<th class="nowrap num">Objects</th>{% endif %}{% if 'rules' in vis %}<th class="nowrap num">Rules</th>{% endif %}{% if 'lastapply' in vis %}<th>Last apply</th>{% endif %}{% if 'created' in vis %}<th class="nowrap">Created</th>{% endif %}<th style="text-align:right; padding-top:6px; padding-bottom:6px;">{{ columns_menu('layers', cols, vis, '/layers', compact=true) }}</th>
+    <th>Name</th>{% if 'gateway' in vis %}<th class="nowrap">Gateway</th>{% endif %}{% if 'gwlayer' in vis %}<th class="nowrap">Gateway layer</th>{% endif %}{% if 'objects' in vis %}<th class="nowrap num">Objects</th>{% endif %}{% if 'rules' in vis %}<th class="nowrap num">Rules</th>{% endif %}{% if 'lastapply' in vis %}<th>Last apply</th>{% endif %}{% if 'created' in vis %}<th class="nowrap">Created</th>{% endif %}<th style="text-align:right; padding-top:6px; padding-bottom:6px;"><span class="thead-tools">{{ export_menu('layers') }}{{ columns_menu('layers', cols, vis, '/layers', compact=true) }}</span></th>
   </tr></thead>
   <tbody>
   {% for r in rows %}
