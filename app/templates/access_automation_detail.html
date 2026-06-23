@@ -26,11 +26,41 @@
       <input id="aa-ticket" placeholder="INC0012345"></label></div>
   </div>
   <div class="row endalign">
-    <div class="grow"><label>Source <span class="muted">(ip, cidr, or Any)</span>
-      <input id="aa-source" placeholder="192.168.9.9"></label></div>
-    <div class="grow"><label>Destination <span class="muted">(ip, cidr, or Any)</span>
-      <input id="aa-dest" placeholder="172.16.5.10"></label></div>
-    <div style="width:170px;"><label>Service type
+    <div class="grow">
+      <label>Source <span class="muted" id="aa-src-hint">(ip, cidr, or Any)</span></label>
+      <div class="row" style="gap:6px; flex-wrap:nowrap; margin-top:2px;">
+        <select id="aa-srctype" class="ep-type" style="width:150px; flex:0 0 auto;">
+          <option value="ip">IP / CIDR / Any</option>
+          <optgroup label="Typed object">
+            <option value="domain">Domain (FQDN)</option>
+            <option value="access-role">Access role</option>
+            <option value="dynamic-object">Dynamic object</option>
+            <option value="updatable-object">Updatable object</option>
+            <option value="security-zone">Security zone</option>
+          </optgroup>
+        </select>
+        <input id="aa-source" class="grow" placeholder="192.168.9.9" autocomplete="off">
+      </div>
+    </div>
+    <div class="grow">
+      <label>Destination <span class="muted" id="aa-dst-hint">(ip, cidr, or Any)</span></label>
+      <div class="row" style="gap:6px; flex-wrap:nowrap; margin-top:2px;">
+        <select id="aa-dsttype" class="ep-type" style="width:150px; flex:0 0 auto;">
+          <option value="ip">IP / CIDR / Any</option>
+          <optgroup label="Typed object">
+            <option value="domain">Domain (FQDN)</option>
+            <option value="access-role">Access role</option>
+            <option value="dynamic-object">Dynamic object</option>
+            <option value="updatable-object">Updatable object</option>
+            <option value="security-zone">Security zone</option>
+          </optgroup>
+        </select>
+        <input id="aa-dest" class="grow" placeholder="172.16.5.10" autocomplete="off">
+      </div>
+    </div>
+  </div>
+  <div class="row endalign" style="margin-top:12px;">
+    <div style="width:200px;"><label>Service type
       <select id="aa-svctype">
         <optgroup label="Port-based">
           <option value="tcp">TCP</option>
@@ -61,6 +91,7 @@
       <datalist id="aa-applist"></datalist></label></div>
   </div>
   <p class="muted" style="margin:2px 0 0; font-size:12px;">Pick the <b>Service type</b> — Check Point isn’t only TCP/UDP. Port-based (TCP/UDP/SCTP) takes a <b>port</b>; ICMP, RPC, DCE-RPC, GTP, Compound/Citrix TCP, “Other” (an IP protocol) and a services group are matched by <b>name</b> (correlated to the real predefined object); Application/Site matches an app. The engine reasons about each kind correctly — distinct protocols never falsely overlap a port.</p>
+  <p class="muted" style="margin:6px 0 0; font-size:12px;">Source and destination aren’t only IPs. Switch either <b>type</b> to a <b>Domain</b> (e.g. <code>alshawwaf.ca</code>, or <code>.alshawwaf.ca</code> for sub-domains), <b>Access role</b>, <b>Dynamic object</b>, <b>Updatable object</b> or <b>Security zone</b> to ask, say, “does host <code>10.1.1.222</code> have access to the domain <code>alshawwaf.ca</code>?”. Each object kind is its own match space, so the engine reasons in <em>identity</em> terms — a domain matches a rule’s domain object (exact or a parent), and is never confused with an IP cell. Domains and dynamic objects are created if missing; access-roles, security-zones and updatable-objects are reused (defined in Identity Awareness / topology / Check Point’s repository).</p>
   <div class="row" style="margin-top:14px; gap:8px;">
     <button type="button" class="btn" id="aa-preview">Preview decision</button>
     <button type="button" class="btn secondary" id="aa-validate" disabled>Dry-run apply (validate)</button>
@@ -100,7 +131,7 @@ Content-Type: application/json
 
 <div class="card">
   <h2 style="margin-top:0;">How it decides — behind the scenes</h2>
-  <p class="muted" style="margin-top:4px;">Every request runs the same first-match decision tree the market leaders use. It reuses a rule that already permits the traffic; widens a rule only when it matches the request exactly in the other two columns (so it never grants access nobody asked for); creates a least-privilege rule when nothing fits; and refuses to touch policy it can’t safely reason about.</p>
+  <p class="muted" style="margin-top:4px;">Every request runs the same first-match decision tree the market leaders use. It reuses a rule that already permits the traffic; widens a rule only when it matches the request exactly in the other two columns (so it never grants access nobody asked for); creates a least-privilege rule when nothing fits; and refuses to touch policy it can’t safely reason about. It compares each source/destination <b>by kind</b> — an IP/CIDR in address space, or a typed object (domain, access-role, dynamic, updatable, security-zone) in its own <b>identity</b> space — so a domain is matched against a rule’s domain object, never confused with an IP. Expand any node below for the detail, or download the whole tree as Mermaid / draw.io / Graphviz.</p>
   <style>
     .dtbar{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin:4px 0 8px;}
     .dtzoom{display:inline-flex;align-items:center;gap:4px;}
@@ -187,6 +218,8 @@ Content-Type: application/json
         layer: layerSel.value || '',
         source: document.getElementById('aa-source').value.trim(),
         destination: document.getElementById('aa-dest').value.trim(),
+        source_kind: document.getElementById('aa-srctype').value,
+        destination_kind: document.getElementById('aa-dsttype').value,
         protocol: 'tcp', port: '', service: '', application: '',
         ticket_id: document.getElementById('aa-ticket').value.trim()
       };
@@ -208,6 +241,24 @@ Content-Type: application/json
       document.getElementById('aa-app-wrap').hidden = t !== 'app';
       if (named) document.getElementById('aa-svc-hint').textContent = SVC_HINTS[t] || 'name';
     }
+    // Source/destination type — adapt the input's hint + placeholder to the chosen object kind so the
+    // user knows what to enter (an IP/CIDR, an FQDN, or a Check Point object name).
+    var EP_META = {
+      ip:                 { hint: '(ip, cidr, or Any)',      ph: '192.168.9.9' },
+      domain:             { hint: '(FQDN — leading dot = sub-domains)', ph: 'alshawwaf.ca' },
+      'access-role':      { hint: '(access-role name)',      ph: 'Finance_Users' },
+      'dynamic-object':   { hint: '(dynamic-object name)',   ph: 'DObj_AppServers' },
+      'updatable-object': { hint: '(updatable-object name)', ph: 'Office365 Services' },
+      'security-zone':    { hint: '(security-zone name)',    ph: 'InternalZone' }
+    };
+    function syncEndpointType(which) {
+      var sel = which === 'src' ? 'aa-srctype' : 'aa-dsttype';
+      var inp = which === 'src' ? 'aa-source' : 'aa-dest';
+      var hint = which === 'src' ? 'aa-src-hint' : 'aa-dst-hint';
+      var m = EP_META[document.getElementById(sel).value] || EP_META.ip;
+      document.getElementById(hint).textContent = m.hint;
+      document.getElementById(inp).setAttribute('placeholder', m.ph);
+    }
     function outcomeBadge(o) {
       var map = {
         no_op:  ['no-op',  'var(--ok-bg)',     'var(--ok)'],
@@ -220,9 +271,14 @@ Content-Type: application/json
     }
     function objLine(label, obj) {
       if (!obj) return '';
-      var verb = obj.exists ? '<span class="pill ok">reuse</span>' : '<span class="pill" style="background:var(--warn-bg);color:var(--warn);">create</span>';
+      var verb;
+      if (obj.exists) verb = '<span class="pill ok">reuse</span>';
+      else if (obj.creatable === false) verb = '<span class="pill" style="background:var(--danger-bg);color:var(--danger);">missing</span>';
+      else verb = '<span class="pill" style="background:var(--warn-bg);color:var(--warn);">create</span>';
+      var extra = obj.ip ? ' <span class="muted">(' + esc(obj.ip) + ')</span>'
+                : (obj.kind && obj.kind !== 'ip' ? ' <span class="muted">(' + esc(obj.kind) + ')</span>' : '');
       return '<tr><td class="nowrap"><b>' + label + '</b></td><td>' + verb +
-             ' <code>' + esc(obj.name) + '</code>' + (obj.ip ? ' <span class="muted">(' + esc(obj.ip) + ')</span>' : '') + '</td></tr>';
+             ' <code>' + esc(obj.name) + '</code>' + extra + '</td></tr>';
     }
     function traceBlock(trace) {
       if (!trace || !trace.length) return '';
@@ -351,11 +407,14 @@ Content-Type: application/json
     });
 
     // Re-preview (and lock apply) whenever an input changes, so apply always matches what's shown.
-    ['aa-layer', 'aa-source', 'aa-dest', 'aa-svctype', 'aa-port', 'aa-svc', 'aa-app', 'aa-ticket'].forEach(function (eid) {
+    ['aa-layer', 'aa-source', 'aa-dest', 'aa-srctype', 'aa-dsttype', 'aa-svctype', 'aa-port', 'aa-svc', 'aa-app', 'aa-ticket'].forEach(function (eid) {
       document.getElementById(eid).addEventListener('change', function () { setActionable(false); });
     });
     document.getElementById('aa-svctype').addEventListener('change', syncSvcType);
+    document.getElementById('aa-srctype').addEventListener('change', function () { syncEndpointType('src'); });
+    document.getElementById('aa-dsttype').addEventListener('change', function () { syncEndpointType('dst'); });
     syncSvcType();                                   // set the initial visible input (TCP -> Port)
+    syncEndpointType('src'); syncEndpointType('dst');   // set the initial endpoint hints/placeholders
 
     // Type-ahead: real Check Point applications / services matching what's typed (debounced).
     // ``kindFn`` (optional) returns the Check Point service kind to filter to, so e.g. picking ICMP only

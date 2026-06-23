@@ -17,9 +17,13 @@ Tufin / AlgoSec demo, driven straight off the customer's own policy.
 
 1. Portal → **Access Automation**. Pick one of your saved **Management Servers** (a stored, encrypted
    credential is required — set one on the server's **Edit** page).
-2. Enter the request: **source**, **destination** (an IP, a CIDR, or `Any`), and the service — either
-   **protocol** (`tcp`/`udp`/`sctp`) + **port**, a named **service** (`icmp`, `GRE`, …), or an
-   **application** site (`Facebook`). Precedence is application > service > protocol+port. Name the
+2. Enter the request: **source**, **destination**, and the service — either **protocol**
+   (`tcp`/`udp`/`sctp`) + **port**, a named **service** (`icmp`, `GRE`, …), or an **application** site
+   (`Facebook`). Precedence is application > service > protocol+port. Each endpoint has a **type**: the
+   default `IP / CIDR / Any`, or a **typed object** — `Domain` (an FQDN, e.g. `alshawwaf.ca`, or
+   `.alshawwaf.ca` for the domain *and* its sub-domains), `Access role`, `Dynamic object`,
+   `Updatable object`, or `Security zone`. So you can ask, e.g., *"does host `10.1.1.222` have access to
+   the domain `alshawwaf.ca`?"* (see [Typed objects](#typed-non-ip-sourcedestination) below). Name the
    **layer** to evaluate (optionally a **package**), and a **ticket id** to stamp on the change.
 3. **Preview** (`POST /access-automation/{sid}/preview`) — read-only. The engine pulls the layer, runs
    `decide()`, and shows the minimal change: *already allowed (no-op)* / *widen rule N's source-or-dest
@@ -44,14 +48,38 @@ object dictionary), never by object name. The four outcomes:
 - **CREATE** — nothing covers it → add a least-privilege Accept (`track: Log`, comment stamped with the
   ticket id), placed `above` the catch-all cleanup drop and `below` any more-specific rule.
 - **REVIEW** — an explicit (non-cleanup) deny covers/overlaps the flow, or a rule in the path is
-  negated / conditional (VPN, time, content, install-on, service-resource) / holds an unresolvable cell
-  (security-zone, dynamic/updatable object, access-role, an opaque app category) → hand to a human. The
+  negated / conditional (VPN, time, content, install-on, service-resource) / holds a truly-unresolvable
+  cell (an over-cap wildcard, an unenumerable group, an opaque app category) → hand to a human. The
   guardrail: the engine **never silently overrides an admin's drop** and never reasons past a rule whose
   real reach it can't prove. Inline ("Apply Layer") rules are pulled and recursed into.
 
 Two admin toggles (Settings) can convert classes of REVIEW into automatic action — `override_deny`
 (create the allow *above* a blocking deny) and `ignore_conditions` — both **off** by default. The live
 decision tree is downloadable as `.drawio` / `.mmd` / `.dot` from `/access-automation/decision-tree/{fmt}`.
+
+## Typed (non-IP) source/destination
+
+A source or destination isn't only an address — it can be a Check Point object that matches by a
+*different identity entirely*: a **dns-domain** matches by FQDN/DNS, an **access-role** by identity, a
+**security-zone** by interface, a **dynamic-object** by gateway-resolved name, an **updatable-object** by
+a Check Point-curated feed. Switch either endpoint's **type** to one of these and the engine reasons in
+that object's own space — the same way it already treats a service request as *ports* OR *an application*
+(never confusing the two).
+
+- **Each kind is its own match space.** A domain request is **provably disjoint** from a rule cell that
+  holds only IP / role / zone objects (an IP object can never *be* a domain object), so it is never
+  blocked or satisfied by one — it matches an `Any` cell, or a dns-domain object **equal to or a parent
+  of** the requested FQDN (`.alshawwaf.ca` covers `alshawwaf.ca` and `www.alshawwaf.ca`). This is
+  object-identity semantics: the engine reasons about the policy *as written*, not about runtime DNS
+  resolution. The one uncertain cross-kind case is a domain request meeting an **updatable-object** cell
+  (a feed like *Office365* can itself contain FQDNs) → that routes to **REVIEW**.
+- **IP requests are unchanged.** A plain IP/CIDR request still treats every typed cell as opaque and
+  never steps past it — the typed feature only adds new reasoning for typed *requests*; it never weakens
+  the IP path.
+- **Apply.** A missing **domain** or **dynamic-object** is created (`add-dns-domain` /
+  `add-dynamic-object`) then placed; **access-role / security-zone / updatable-object** are **reuse-only**
+  — they can't be fabricated from an access request (define them in Identity Awareness / the gateway
+  topology / Check Point's repository first), so a missing one is reported, not invented.
 
 ## Inbound webhook (end-to-end automation)
 
@@ -63,6 +91,8 @@ access request and get back the decision — and, optionally, have it applied an
   is set the endpoint is **disabled (503)** — it never runs unauthenticated.
 - **Body:** vendor-neutral JSON with generous aliases — `server_id` (which saved server), `layer`,
   `source`/`src`, `destination`/`dst`, `protocol`+`port` (or `service` / `application`), optional
+  `source_kind`/`destination_kind` (default `ip`; or `domain` / `access-role` / `dynamic-object` /
+  `updatable-object` / `security-zone` — then the value is the object identity, e.g. an FQDN), optional
   `package`, `ticket_id`, and `apply` (`true` → apply + publish; default → preview only).
 - **Scope:** an optional allowlist (`DCSIM_WEBHOOK_SERVER_IDS` / Settings) restricts the token to
   specific server ids. A *malformed* allowlist **fails closed** (500) rather than degrading to allow-all.

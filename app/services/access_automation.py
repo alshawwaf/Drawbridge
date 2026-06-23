@@ -215,6 +215,90 @@ class ServiceSet:
         return False
 
 
+# --------------------------------------------------------------------------- #
+# Typed (non-IP) source/destination objects
+# --------------------------------------------------------------------------- #
+# A source/destination cell can hold objects that do NOT live in IPv4/IPv6 space — they match by a
+# different identity entirely: a dns-domain matches by FQDN/DNS, an access-role by identity, a
+# security-zone by interface, a dynamic-object by gateway-resolved name, an updatable-object by a
+# Check Point-curated feed. The engine reasons about these the SAME way svc_relation reasons about
+# apps-vs-ports: each kind is its own space, so two different kinds are provably DISJOINT (an IP
+# object can never equal a domain object), with a small set of "opaque" cross-kind cases where one
+# kind's container could plausibly include another (an updatable feed can contain FQDNs).
+#
+# CP object type (lower-cased) -> the TypedExtent field that holds its names.
+_TYPED_KIND = {
+    "dns-domain": "domains",
+    "access-role": "roles",
+    "dynamic-object": "dynamic",
+    "updatable-object": "updatable",
+    "security-zone": "zones",
+}
+# A request's source/destination "kind" -> the TypedExtent field it matches against. "ip" is the
+# default (IPv4/IPv6 interval space) and is handled by the existing relation() path, not here.
+_KIND_FIELD = {
+    "domain": "domains",
+    "access-role": "roles",
+    "dynamic-object": "dynamic",
+    "updatable-object": "updatable",
+    "security-zone": "zones",
+}
+TYPED_KINDS = tuple(_KIND_FIELD)   # the selectable non-IP request kinds, in declaration order
+
+
+@dataclass
+class TypedExtent:
+    """The non-IP objects a source/destination cell references, grouped by identity space. Parallel to
+    the IPv4/IPv6 interval list — a cell can hold both (e.g. a host AND a dns-domain)."""
+    domains: set = field(default_factory=set)     # dns-domain object names, e.g. {".example.com"}
+    roles: set = field(default_factory=set)        # access-role names
+    dynamic: set = field(default_factory=set)      # dynamic-object names
+    updatable: set = field(default_factory=set)    # updatable-object names (CP-curated feeds)
+    zones: set = field(default_factory=set)        # security-zone names
+
+    def add(self, kind: str, name: str) -> None:
+        getattr(self, kind).add(name)
+
+    def any_members(self) -> bool:
+        return bool(self.domains or self.roles or self.dynamic or self.updatable or self.zones)
+
+    def merge(self, o: "TypedExtent") -> None:
+        self.domains |= o.domains
+        self.roles |= o.roles
+        self.dynamic |= o.dynamic
+        self.updatable |= o.updatable
+        self.zones |= o.zones
+
+
+def _domain_norm(name: str) -> tuple[str, bool]:
+    """Normalize a dns-domain name to ``(base_fqdn, includes_subdomains)``. Check Point writes a leading
+    dot (``.example.com``) to mean 'this domain AND every sub-domain'; no dot means the exact FQDN."""
+    n = (name or "").strip().lower().rstrip(".")
+    sub = n.startswith(".")
+    return n.lstrip("."), sub
+
+
+def _domain_covers(cell_name: str, req_fqdn: str) -> bool:
+    """Does a rule cell's dns-domain object grant a requested domain? A sub-domain object (``.x.com``)
+    covers the apex and any sub-domain; an exact object (``x.com``) covers only that FQDN. The REQUEST
+    also carries sub-domain semantics (a leading-dot value asks for the domain *and* its sub-domains),
+    so an EXACT cell can never cover a sub-domain request — only the same exact FQDN."""
+    base, sub = _domain_norm(cell_name)
+    req, req_sub = _domain_norm(req_fqdn)
+    if not base or not req:
+        return False
+    if req == base:
+        return sub or not req_sub      # an exact cell can't cover a "domain + sub-domains" request
+    return bool(sub and req.endswith("." + base))
+
+
+def _domain_equal(cell_name: str, req_fqdn: str) -> bool:
+    """The cell's domain object is EXACTLY the requested domain (same FQDN, same sub-domain semantics)."""
+    cb, cs = _domain_norm(cell_name)
+    rb, rs = _domain_norm(req_fqdn)
+    return cb == rb and cs == rs
+
+
 def _portset_covers(big: dict, small: dict) -> bool:
     for proto, iv in small.items():
         mine = big.get(proto)
@@ -265,12 +349,51 @@ def svc_relation(req: ServiceSet, rule: ServiceSet) -> Relation:
     return Relation.OVERLAP if _portset_overlaps(req.by_proto, rule.by_proto) else Relation.DISJOINT
 
 
+def _typed_other(typed: TypedExtent, keep_field: str) -> bool:
+    """True if the cell holds typed objects of a kind OTHER than ``keep_field`` -- so the cell can't be
+    EXACTLY EQUAL to a single-kind request."""
+    return any(getattr(typed, f) for f in _KIND_FIELD.values() if f != keep_field)
+
+
+def typed_relation(kind: str, value: str, is_any: bool, has_ip: bool,
+                   typed: TypedExtent, cell_complex: bool, negate: bool) -> tuple[Relation, bool]:
+    """Relate a TYPED (non-IP) request — a domain / access-role / dynamic-object / updatable-object /
+    security-zone identity — to ONE rule source/destination cell.
+
+    Returns ``(relation, unknown)``. ``unknown`` is True when the cell's reach for this kind can't be
+    proven (a negated cell, a truly-unresolvable member, or an opaque cross-kind container) -> the rule
+    stays in the path and routes to REVIEW, never silently stepped over.
+
+    Each identity kind is its OWN space (mirroring svc_relation's apps-vs-ports disjointness): a domain
+    request is provably DISJOINT from a cell holding only IP / role / zone / dynamic objects, EQUAL or
+    SUBSET to a cell naming the same (or a parent) domain, and OVERLAP (uncertain) only against an
+    opaque container that could itself include the identity (an updatable feed can contain FQDNs)."""
+    unknown = bool(cell_complex or negate)
+    if is_any:
+        return Relation.SUBSET, unknown            # a specific identity is contained by an Any cell
+    field = _KIND_FIELD[kind]
+    names = getattr(typed, field)
+    if kind == "domain":
+        if any(_domain_covers(c, value) for c in names):
+            exact = any(_domain_equal(c, value) for c in names)
+            cell_only = exact and not has_ip and not _typed_other(typed, field) and len(names) == 1
+            return (Relation.EQUAL if cell_only else Relation.SUBSET), unknown
+        if typed.updatable:                        # an updatable feed could contain this FQDN -> uncertain
+            return Relation.OVERLAP, True
+        return Relation.DISJOINT, unknown
+    # access-role / dynamic-object / updatable-object / security-zone: matched by EXACT object identity.
+    if value in names:
+        cell_only = not has_ip and not _typed_other(typed, field) and len(names) == 1
+        return (Relation.EQUAL if cell_only else Relation.SUBSET), unknown
+    return Relation.DISJOINT, unknown
+
+
 # --------------------------------------------------------------------------- #
 # Request / rule / decision models
 # --------------------------------------------------------------------------- #
 @dataclass
 class AccessRequest:
-    src_cidrs: list[str]      # e.g. ["192.168.9.9/32"]
+    src_cidrs: list[str]      # e.g. ["192.168.9.9/32"] — used only when src_kind == "ip"
     dst_cidrs: list[str]
     protocol: str = "tcp"     # "tcp" | "udp" (ignored when `application`/`service` is set)
     ports: str = ""           # "443" or "8000-8100" (ignored when `application`/`service` is set)
@@ -278,6 +401,13 @@ class AccessRequest:
     service: Optional[str] = None       # a named non-port service (e.g. "echo-request", "GRE") by name
     service_kind: Optional[str] = None  # its protocol family (icmp/icmp6/sctp/other/…) — set by resolve()
     action: str = "Accept"
+    # A TYPED (non-IP) source/destination: kind is "ip" (default — reasons over *_cidrs) or one of
+    # TYPED_KINDS (domain / access-role / dynamic-object / updatable-object / security-zone), in which
+    # case *_value holds the object's identity (a FQDN for domain, the object name otherwise).
+    src_kind: str = "ip"
+    src_value: str = ""
+    dst_kind: str = "ip"
+    dst_value: str = ""
 
     def src_iv(self):
         return _cidrs_to_iv(self.src_cidrs)
@@ -306,11 +436,23 @@ class ParsedRule:
     source_group_uids: list = field(default_factory=list)
     dest_group_uids: list = field(default_factory=list)
     complex: bool = False                       # negation / unresolved -> excluded from reuse
-    # Per-cell "extent unknown": the cell was negated or held an object we could not resolve, so its
-    # real reach is uncertain. Such a cell is never "provably disjoint" -> the rule stays in the path.
+    # Per-cell "extent unknown" FOR AN IP REQUEST: the cell was negated, held a truly-unresolvable
+    # object, OR held a typed (non-IP) object (a domain/role/zone/dynamic/updatable that could resolve
+    # to IPs we can't see). Such a cell is never "provably disjoint" for an IP request -> the rule stays
+    # in the path. (A TYPED request reasons in its own identity space via src_typed/src_cx/src_negate.)
     src_unknown: bool = False
     dst_unknown: bool = False
     svc_unknown: bool = False
+    # The typed (non-IP) objects each cell references + the raw flags a TYPED request reasons over:
+    # src_cx/dst_cx = a TRULY-unresolvable member (over-cap wildcard, unenumerable group, malformed,
+    # unknown type); src_negate/dst_negate = the cell was negated. (src_unknown folds these + typed +
+    # IP-opacity together for the IP path; the typed path uses them separately.)
+    src_typed: TypedExtent = field(default_factory=TypedExtent)
+    dst_typed: TypedExtent = field(default_factory=TypedExtent)
+    src_cx: bool = False
+    dst_cx: bool = False
+    src_negate: bool = False
+    dst_negate: bool = False
     # An infra object (gateway/cluster/mgmt) resolved to its main ipv4-address — an UNDER-approximation
     # of its possibly-multi-homed reach. Trusted to drop an ACCEPT out of the path; never treated as
     # provably-disjoint, so an overlapping/uncertain DROP with such a cell still routes to REVIEW.
@@ -412,29 +554,34 @@ def _deref(ref, objdict: dict) -> dict:
 
 
 def _parse_net(cell, objdict: dict):
-    """Resolve a source/destination cell to IPv4 intervals.
+    """Resolve a source/destination cell to IPv4/IPv6 intervals AND its typed (non-IP) objects.
 
-    -> (ip intervals, complex?, [group uids], approx?).
+    -> (ip intervals, complex?, [group uids], approx?, TypedExtent).
     Resolution is by FIELD, not just type, so any object that exposes a concrete IPv4 extent resolves
     (hosts AND infrastructure objects — gateways, clusters, management/checkpoint-hosts, interoperable
     devices — which carry an ``ipv4-address`` but are not type ``host``).
     Wildcard objects expand to their EXACT interval set (capped — a pathological mask stays opaque), and a
     group-with-exclusion resolves to include∖except when both are exact.
-    - ``complex`` = the cell held something with NO computable IPv4 extent (security-zone, dynamic-object,
-      updatable-object, access-role, dns-domain, an over-cap wildcard, a group-with-exclusion whose
-      'except' isn't provably exact, or a negated cell upstream) -> the rule's reach is unknown -> REVIEW.
+    - ``TypedExtent`` = the non-IP objects the cell references, grouped by identity space (dns-domain,
+      access-role, dynamic-object, updatable-object, security-zone). These are captured (not lumped into
+      ``complex``) so a TYPED request can be reasoned about; an IP request still treats them as opaque
+      (see _parse_rule's src_unknown), preserving the never-step-past-unknown-reach invariant.
+    - ``complex`` = the cell held something with NO computable extent of ANY known kind (an over-cap
+      wildcard, a group-with-exclusion whose 'except' isn't provably exact, an unenumerable group, a
+      malformed address, or an object of an unrecognised type) -> the rule's reach is unknown -> REVIEW.
     - ``approx`` = we resolved an object to its main ``ipv4-address`` but its TRUE reach may exceed that
       single IP (a gateway/cluster can be multi-homed). It is an under-approximation, never an over-
       approximation, so it's safe to drop an ACCEPT out of the path; but decide() never treats an approx
       cell as 'provably disjoint', so an overlapping/uncertain DROP stays in the path -> REVIEW (we must
       never under-approximate a deny)."""
-    iv, groups, cx, approx = [], [], False, False
+    iv, groups, cx, approx, typed = [], [], False, False, TypedExtent()
     for ref in cell or []:
         o = _deref(ref, objdict)
         t = (o.get("type") or "").lower()
         name = (o.get("name") or "").lower()
+        raw_name = o.get("name") or ""
         if t == "cpmianyobject" or name == "any":
-            return ANY_IP, False, groups, False
+            return ANY_IP, False, groups, False, typed
         if t == "group":
             groups.append(o.get("uid", ""))
             mem = o.get("members")
@@ -444,11 +591,12 @@ def _parse_net(cell, objdict: dict):
                 # An explicitly-empty group (members: []) is different: a real empty set, kept disjoint.
                 cx = True
                 continue
-            sub_iv, sub_cx, _, sub_ap = _parse_net(mem, objdict)
+            sub_iv, sub_cx, _, sub_ap, sub_typed = _parse_net(mem, objdict)
             iv.extend(sub_iv)
             cx = cx or sub_cx
             approx = approx or sub_ap
-            if mem and not sub_iv and not sub_cx:
+            typed.merge(sub_typed)
+            if mem and not sub_iv and not sub_cx and not sub_typed.any_members():
                 cx = True   # a non-empty member list that resolved to nothing (all unresolvable) -> unknown
             continue
         if t == "group-with-exclusion":
@@ -457,8 +605,9 @@ def _parse_net(cell, objdict: dict):
             if not inc or not exc:
                 cx = True                            # can't see both halves -> unknown extent -> REVIEW
                 continue
-            b_iv, b_cx, _, b_ap = _parse_net([inc], objdict)   # the included set
-            e_iv, e_cx, _, e_ap = _parse_net([exc], objdict)   # the excluded set
+            b_iv, b_cx, _, b_ap, b_typed = _parse_net([inc], objdict)   # the included set
+            e_iv, e_cx, _, e_ap, _ = _parse_net([exc], objdict)         # the excluded set
+            typed.merge(b_typed)                     # surface typed objects from the included half
             # Subtract EXACTLY only when the excluded set is provably exact: an under-stated 'except'
             # (approx/unknown) would OVER-state include∖except -> over-grant. The base may be approx (an
             # under-approximation stays an under-approximation after subtraction -> safe).
@@ -468,6 +617,16 @@ def _parse_net(cell, objdict: dict):
                 iv.extend(_subtract(b_iv, e_iv))
                 approx = approx or b_ap
             continue
+        # A typed (non-IP) object — a domain / access-role / dynamic-object / updatable-object /
+        # security-zone. Capture its name in its identity space rather than discarding it as 'complex'.
+        # Most carry no IP extent, so we record and move on; an updatable-object MAY also expose resolved
+        # IP ranges, so it falls through to the IP extraction below as well (its IPs are an extra, safe
+        # under-approximation, never replacing the feed semantics).
+        kind = _TYPED_KIND.get(t)
+        if kind:
+            typed.add(kind, raw_name or o.get("uid", ""))
+            if kind != "updatable":
+                continue
         # Resolve every IPv4 AND IPv6 extent the object exposes (a dual-stack host carries both) -> each
         # maps to its own band via _net_interval / _addr_point, so v4 and v6 never collide.
         matched = False
@@ -511,9 +670,9 @@ def _parse_net(cell, objdict: dict):
             # (-> REVIEW) instead of crashing the whole layer pull. Mirrors _ports_to_iv / lookup_host
             # tolerance; fail closed (the rule stays in the path), never silently disjoint.
             cx = matched = True
-        if not matched:                              # zone / dynamic / updatable / role / domain / wildcard
-            cx = True
-    return _merge(iv), cx, groups, approx
+        if not matched and not kind:                 # an unrecognised object type with no computable
+            cx = True                                # extent of any known kind -> unknown -> REVIEW
+    return _merge(iv), cx, groups, approx, typed
 
 
 def _parse_port(spec):
@@ -624,17 +783,21 @@ def _rule_conditions(e: dict, objdict: dict) -> tuple:
 
 
 def _parse_rule(e, objdict: dict) -> ParsedRule:
-    src, src_cx, src_groups, src_ap = _parse_net(e.get("source", []), objdict)
-    dst, dst_cx, dst_groups, dst_ap = _parse_net(e.get("destination", []), objdict)
+    src, src_cx, src_groups, src_ap, src_typed = _parse_net(e.get("source", []), objdict)
+    dst, dst_cx, dst_groups, dst_ap, dst_typed = _parse_net(e.get("destination", []), objdict)
     svc = _parse_svc(e.get("service", []), objdict)
     action = e.get("action")
     if isinstance(action, str):
         action = (objdict.get(action) or {}).get("name", action)
     elif isinstance(action, dict):
         action = action.get("name", "")
-    # A cell's extent is "unknown" if it was negated OR held an object we could not resolve to IPs/ports.
-    src_unknown = bool(src_cx or e.get("source-negate"))
-    dst_unknown = bool(dst_cx or e.get("destination-negate"))
+    src_negate = bool(e.get("source-negate"))
+    dst_negate = bool(e.get("destination-negate"))
+    # For an IP request a cell's extent is "unknown" if it was negated, held a truly-unresolvable object,
+    # OR held a typed (non-IP) object — a domain/role/zone/dynamic/updatable could resolve to IPs we
+    # can't see, so an IP request must never step past it (preserves the pre-typed behaviour exactly).
+    src_unknown = bool(src_cx or src_negate or src_typed.any_members())
+    dst_unknown = bool(dst_cx or dst_negate or dst_typed.any_members())
     svc_unknown = bool(svc.complex or e.get("service-negate"))
     conditions = _rule_conditions(e, objdict)
     # Inline layer: action "Apply Layer" + an `inline-layer` reference (uid or inline dict). Record the
@@ -657,6 +820,8 @@ def _parse_rule(e, objdict: dict) -> ParsedRule:
         complex=bool(src_unknown or dst_unknown or svc_unknown),
         src_unknown=src_unknown, dst_unknown=dst_unknown, svc_unknown=svc_unknown,
         src_approx=src_ap, dst_approx=dst_ap,
+        src_typed=src_typed, dst_typed=dst_typed,
+        src_cx=bool(src_cx), dst_cx=bool(dst_cx), src_negate=src_negate, dst_negate=dst_negate,
         conditional=bool(conditions), conditions=conditions,
         inline_uid=inline_uid, inline_layer_name=inline_name, inline_cleanup=inline_cleanup,
     )
@@ -726,6 +891,30 @@ def _provably_disjoint(rel: Relation, unknown: bool) -> bool:
     return (not unknown) and rel == Relation.DISJOINT
 
 
+def _dim_relation(kind: str, value: str, req_iv, r: ParsedRule, which: str) -> tuple[Relation, bool, bool]:
+    """Relate ONE request dimension (source or destination) to rule ``r``'s cell on that side, dispatching
+    on the request's kind. Returns ``(relation, unknown, approx)`` — the same shape for IP and typed
+    requests so decide() reasons uniformly.
+
+    - IP request: the established IPv4/IPv6 interval relation; ``unknown``/``approx`` are the cell's
+      precomputed IP-path flags (a typed object in the cell already made src_unknown True -> the rule
+      stays in the path, exactly as before typing).
+    - Typed request (domain / role / zone / dynamic / updatable): reasoned in that identity space via
+      typed_relation(); ``approx`` is always False (an identity is exact, not an under-approximation)."""
+    cell_ip = r.src if which == "source" else r.dst
+    if kind == "ip":
+        unknown = r.src_unknown if which == "source" else r.dst_unknown
+        approx = r.src_approx if which == "source" else r.dst_approx
+        return relation(req_iv, cell_ip), unknown, approx
+    typed = r.src_typed if which == "source" else r.dst_typed
+    cell_cx = r.src_cx if which == "source" else r.dst_cx
+    negate = r.src_negate if which == "source" else r.dst_negate
+    is_any = _covers(cell_ip, ANY_IP)
+    has_ip = bool(cell_ip) and not is_any
+    rel, unknown = typed_relation(kind, value, is_any, has_ip, typed, cell_cx, negate)
+    return rel, unknown, False
+
+
 @dataclass(frozen=True)
 class DecideOptions:
     """Admin-tunable automation aggressiveness (built from Settings by the caller; decide() stays pure).
@@ -762,6 +951,24 @@ def decide(req: AccessRequest, rules: list[ParsedRule], options: "DecideOptions"
             "coverage; needs human review",
         )
 
+    # Guard 3 -- a typed (non-IP) source/destination must name a concrete identity, and an IP source/
+    # destination must resolve to a concrete extent. An empty value on either side can't be reasoned
+    # about (a typed cell with no name, or an IP cell that resolved to nothing) -> fail loud, not NO_OP.
+    for label, kind, value, iv in (("source", req.src_kind, req.src_value, req_src),
+                                   ("destination", req.dst_kind, req.dst_value, req_dst)):
+        if kind != "ip" and not (value or "").strip():
+            return Decision(
+                Outcome.REVIEW,
+                f"the {label} is typed as a {kind} but names no object -- cannot reason about "
+                f"coverage; needs human review",
+            )
+        if kind == "ip" and not iv:
+            return Decision(
+                Outcome.REVIEW,
+                f"the {label} resolves to no concrete IP extent -- cannot reason about coverage; "
+                f"needs human review",
+            )
+
     covering_drop: Optional[ParsedRule] = None   # the catch-all cleanup that floors placement
     widen_target: Optional[ParsedRule] = None    # reachable accept EQUAL in 2 dims, differing in the 3rd
     widen_field: Optional[str] = None            # the dimension to extend: source | destination | service
@@ -773,9 +980,18 @@ def decide(req: AccessRequest, rules: list[ParsedRule], options: "DecideOptions"
         if not r.enabled:
             continue
 
-        rel_src = relation(req_src, r.src)
-        rel_dst = relation(req_dst, r.dst)
+        # Relate each dimension to the rule cell, dispatching on the request's kind (IP vs typed). The
+        # effective *_unknown / *_approx come back per-request so the rest of decide() reads uniformly;
+        # complex_eff is this rule's "extent unknown for THIS request" (replaces the IP-only r.complex).
+        rel_src, src_unknown, src_approx = _dim_relation(req.src_kind, req.src_value, req_src, r, "source")
+        rel_dst, dst_unknown, dst_approx = _dim_relation(req.dst_kind, req.dst_value, req_dst, r, "destination")
         rel_svc = svc_relation(req_svc, r.svc)
+        # The rule's "extent unknown for THIS request" (replaces the IP-only r.complex). For a fully-IP
+        # request this equals the stored r.complex (so the never-reason-past-an-unresolved-rule safety
+        # net is unchanged); a TYPED request instead trusts the per-dimension unknowns, so a cell whose
+        # only "complexity" was a typed object of the matching kind is now reasoned about, not REVIEW'd.
+        all_ip = req.src_kind == "ip" and req.dst_kind == "ip"
+        complex_eff = bool(src_unknown or dst_unknown or r.svc_unknown or (all_ip and r.complex))
 
         # A rule is out of the request's path only if it is PROVABLY disjoint on some dimension. A cell
         # whose extent we could not resolve (zone, dynamic-object, negation, unknown service) is never
@@ -787,8 +1003,8 @@ def decide(req: AccessRequest, rules: list[ParsedRule], options: "DecideOptions"
         # never be PROVEN disjoint — fold it into the per-cell "unknown". An ACCEPT with an approx cell
         # that doesn't otherwise match simply isn't acted on (harmless); a DROP stays in the path so a
         # possibly-wider deny is never silently stepped over.
-        interferes = not (_provably_disjoint(rel_src, r.src_unknown or r.src_approx)
-                          or _provably_disjoint(rel_dst, r.dst_unknown or r.dst_approx)
+        interferes = not (_provably_disjoint(rel_src, src_unknown or src_approx)
+                          or _provably_disjoint(rel_dst, dst_unknown or dst_approx)
                           or _provably_disjoint(rel_svc, r.svc_unknown or svc_indeterminate))
 
         # Inline layer ("Apply Layer"): the parent rule's columns gate entry into a sub-rulebase that the
@@ -808,7 +1024,7 @@ def decide(req: AccessRequest, rules: list[ParsedRule], options: "DecideOptions"
                     f"{', '.join(r.conditions)} (a dimension the engine doesn't model) -- needs review",
                     target_rule=r,
                 )
-            if r.complex or not _is_subset(rel_src, rel_dst, rel_svc):
+            if complex_eff or not _is_subset(rel_src, rel_dst, rel_svc):
                 return Decision(
                     Outcome.REVIEW,
                     f"the request only partially matches rule {r.number} ({r.name}); its traffic splits "
@@ -855,25 +1071,34 @@ def decide(req: AccessRequest, rules: list[ParsedRule], options: "DecideOptions"
                 sub.layer = sub.layer or name
             return sub
 
-        if (r.complex or svc_uncertain or not r.is_resolved_action) and interferes:
+        if (complex_eff or svc_uncertain or not r.is_resolved_action) and interferes:
             # Name the SPECIFIC reason this rule can't be reasoned about, rather than listing every
-            # possibility — e.g. an unresolvable destination object (a domain/DNS, dynamic, updatable,
-            # access-role or security-zone object) reads very differently from an inline layer.
+            # possibility — e.g. an unresolvable destination object reads very differently from an
+            # inline layer. The trailing note adapts to the request kind: for an IP request it points
+            # the user at the typed-object feature (request access by domain/role/zone to reason about
+            # those); for a typed request it explains what's still opaque in that identity space.
             why = []
-            if r.src_unknown:
+            if src_unknown:
                 why.append("a negated or unresolvable source")
-            if r.dst_unknown:
+            if dst_unknown:
                 why.append("a negated or unresolvable destination")
             if svc_uncertain or r.svc_unknown:
                 why.append("a negated or unresolvable service/application")
             if not r.is_resolved_action:
                 why.append(f"a non-Accept/Drop action (“{r.action or 'unknown'}”)")
             detail = "; ".join(why) or "an unresolvable match condition"
+            if req.src_kind == "ip" and req.dst_kind == "ip":
+                note = ("Unresolvable objects include domain/DNS, dynamic, updatable, access-role and "
+                        "security-zone objects — request the access by object type to reason about "
+                        "those; inline layers are evaluated.")
+            else:
+                note = ("For a typed request this usually means a negated cell, an updatable feed that "
+                        "may itself contain the object, or an over-broad wildcard; inline layers are "
+                        "evaluated.")
             return Decision(
                 Outcome.REVIEW,
                 f"rule {r.number} ({r.name}) lies in the traffic path but has {detail}, so its real reach "
-                f"can't be computed — needs human review. (Unresolvable objects include domain/DNS, "
-                f"dynamic, updatable, access-role and security-zone objects; inline layers are evaluated.)",
+                f"can't be computed — needs human review. ({note})",
                 target_rule=r,
             )
 
@@ -898,7 +1123,7 @@ def decide(req: AccessRequest, rules: list[ParsedRule], options: "DecideOptions"
 
         # Past here, any rule we reuse / widen / anchor on is fully resolved (complex+interfering rules
         # already returned REVIEW above; complex+provably-disjoint rules are excluded explicitly below).
-        fully_covers = not r.complex and _is_subset(rel_src, rel_dst, rel_svc)
+        fully_covers = not complex_eff and _is_subset(rel_src, rel_dst, rel_svc)
 
         # (1) already permitted? first covering ACCEPT before any covering DROP wins.
         if fully_covers and r.is_accept and covering_drop is None:
@@ -932,7 +1157,7 @@ def decide(req: AccessRequest, rules: list[ParsedRule], options: "DecideOptions"
         # flow (e.g. a /32 deny inside a /24 request, or an overlapping range). We can neither grant the
         # request (it would override that intentional partial block) nor split it into allowed/denied
         # sub-flows -> REVIEW. (A fully-covering deny is handled above; the catch-all cleanup is excluded.)
-        if (r.is_drop and not r.complex and covering_drop is None
+        if (r.is_drop and not complex_eff and covering_drop is None
                 and interferes and not fully_covers and not _is_catchall(r)):
             if options.override_deny:
                 return Decision(
@@ -955,15 +1180,15 @@ def decide(req: AccessRequest, rules: list[ParsedRule], options: "DecideOptions"
         # other cells. If a rule's source is {win_client, win_server} and only win_server was requested,
         # widening its destination would also grant win_client -> over-grant. Requiring equality (and
         # adding to the cell, never to a shared group) means we grant precisely src x dst x svc.
-        if (widen_target is None and r.is_accept and not r.complex and not svc_indeterminate
+        if (widen_target is None and r.is_accept and not complex_eff and not svc_indeterminate
                 and not r.conditional and covering_drop is None):
             # A non-differing dimension may serve as the "must be EQUAL" guard ONLY if it is a real,
             # exact extent. An approx cell (an infra object resolved to its main IP — true reach may be
             # wider) that reads EQUAL is an UNDER-approximation: widening the third dimension would grant
             # it combined with the cell's unseen extra addresses -> over-grant. Exclude approx from eq so
             # such a rule falls through to CREATE/REVIEW instead of widening.
-            eq = {"source": rel_src == Relation.EQUAL and not r.src_approx,
-                  "destination": rel_dst == Relation.EQUAL and not r.dst_approx,
+            eq = {"source": rel_src == Relation.EQUAL and not src_approx,
+                  "destination": rel_dst == Relation.EQUAL and not dst_approx,
                   "service": rel_svc == Relation.EQUAL}
             cov = {"source": _dim_covered(rel_src), "destination": _dim_covered(rel_dst),
                    "service": _dim_covered(rel_svc)}
@@ -974,7 +1199,7 @@ def decide(req: AccessRequest, rules: list[ParsedRule], options: "DecideOptions"
                     widen_target, widen_field = r, field
 
         # Placement lower bound: a fully-resolved rule strictly MORE specific than req (don't shadow it).
-        if not r.complex and _is_proper_superset(rel_src, rel_dst, rel_svc):
+        if not complex_eff and _is_proper_superset(rel_src, rel_dst, rel_svc):
             lower_anchor = r
 
     if widen_target is not None:
@@ -1186,6 +1411,116 @@ def resolve_endpoint(session, cidr: str) -> str:
     return name
 
 
+# CP object type per typed request kind (for show-objects lookup) + whether it may be CREATED from an
+# access request. Identity objects that must be defined elsewhere — an access-role (Identity Awareness),
+# a security-zone (gateway topology), a CP-curated updatable-object — are REUSE-ONLY: a clear error if
+# missing, never silently fabricated (an empty one would grant nothing and mislead the user).
+_TYPED_OBJ = {
+    "domain":           {"type": "dns-domain",       "creatable": True},
+    "dynamic-object":   {"type": "dynamic-object",   "creatable": True},
+    "access-role":      {"type": "access-role",      "creatable": False},
+    "security-zone":    {"type": "security-zone",    "creatable": False},
+    "updatable-object": {"type": "updatable-object", "creatable": False},
+}
+
+
+def _find_dns_domain(session, value: str) -> tuple[Optional[str], bool]:
+    """Look for a dns-domain object matching a domain request -> ``(reusable_name, name_clash)``.
+
+    A CP dns-domain object name ALWAYS starts with a dot for BOTH kinds; ``is-sub-domain`` (a boolean) is
+    what distinguishes "the domain + its sub-domains" (a leading-dot request value) from "the exact FQDN".
+    So we may reuse an existing object ONLY when its name AND its is-sub-domain flag match the request's
+    intent — reusing a sub-domain object for an exact request would silently grant ``*.fqdn`` (over-grant).
+    Because names are unique, a same-name object with the OPPOSITE flag is a ``name_clash``: the intended
+    object can be neither reused nor created -> resolve() fails loud rather than over/under-granting."""
+    want = ("." + value.lstrip(".")).lower()
+    req_sub = value.startswith(".")
+    found = session.call("show-objects", {"filter": value.lstrip("."), "type": "dns-domain",
+                                          "limit": 25})  # VERIFY
+    clash = False
+    for o in found.get("objects", []):
+        if (o.get("name") or "").lower() != want:
+            continue
+        if bool(o.get("is-sub-domain")) == req_sub:
+            return o["name"], False
+        clash = True
+    return None, clash
+
+
+def lookup_typed_object(session, kind: str, value: str) -> Optional[str]:
+    """Existing object name for a typed (non-IP) request endpoint, or None. A domain matches by its
+    canonical dotted name AND its is-sub-domain semantics (see _find_dns_domain); the others by exact name."""
+    if kind == "domain":
+        name, _ = _find_dns_domain(session, value)
+        return name
+    found = session.call("show-objects", {"filter": value, "type": _TYPED_OBJ[kind]["type"],
+                                          "limit": 25})  # VERIFY
+    for o in found.get("objects", []):
+        if (o.get("name") or "") == value:
+            return o["name"]
+    return None
+
+
+def resolve_typed_object(session, kind: str, value: str) -> str:
+    """Reuse-or-create the object for a typed request endpoint. Domains and dynamic-objects are created
+    when missing; access-roles / security-zones / updatable-objects are REUSE-ONLY (a clear error if
+    absent). A dns-domain is reused only when its is-sub-domain semantics match the request (else a
+    same-name/opposite-flag clash is reported, never silently widened to ``*.fqdn``)."""
+    if kind == "domain":
+        reuse, clash = _find_dns_domain(session, value)
+        if reuse:
+            return reuse
+        name = "." + value.lstrip(".")                 # CP dns-domain names always start with a dot
+        req_sub = value.startswith(".")
+        if clash:
+            raise MgmtError(
+                f"a dns-domain object named {name} already exists with the opposite is-sub-domain "
+                f"setting; this request needs is-sub-domain={str(req_sub).lower()} — resolve the naming "
+                f"conflict on the server first.")
+        session.call("add-dns-domain", {"name": name, "is-sub-domain": req_sub})  # VERIFY
+        return name
+    existing = lookup_typed_object(session, kind, value)
+    if existing:
+        return existing
+    if not _TYPED_OBJ[kind]["creatable"]:
+        raise MgmtError(
+            f"{kind} '{value}' was not found on this server. It can't be created from an access request — "
+            f"define it first (an access-role in Identity Awareness, a security-zone in the gateway "
+            f"topology, or an updatable-object from Check Point's repository), then re-run.")
+    session.call("add-dynamic-object", {"name": value})  # VERIFY
+    return value
+
+
+def typed_object_preview(session, kind: str, value: str) -> dict:
+    """Read-only: the object execute() would place for a typed endpoint + whether it already exists."""
+    try:
+        ex = lookup_typed_object(session, kind, value)
+    except MgmtError:
+        ex = None
+    name = ex or (("." + value.lstrip(".")) if kind == "domain" else value)
+    return {"name": name, "exists": bool(ex), "kind": kind, "creatable": _TYPED_OBJ[kind]["creatable"]}
+
+
+def _resolve_endpoint_object(session, req: "AccessRequest", side: str) -> str:
+    """Reuse-or-create the object for one request endpoint (source/destination), dispatching on its kind."""
+    kind = req.src_kind if side == "source" else req.dst_kind
+    if kind == "ip":
+        cidrs = req.src_cidrs if side == "source" else req.dst_cidrs
+        return resolve_endpoint(session, cidrs[0])
+    value = req.src_value if side == "source" else req.dst_value
+    return resolve_typed_object(session, kind, value)
+
+
+def _endpoint_object_preview(session, req: "AccessRequest", side: str) -> dict:
+    kind = req.src_kind if side == "source" else req.dst_kind
+    if kind == "ip":
+        cidr = (req.src_cidrs if side == "source" else req.dst_cidrs)[0]
+        ex = lookup_endpoint(session, cidr)
+        return {"ip": cidr, "exists": bool(ex),
+                "name": ex or _endpoint_name(ipaddress.ip_network(cidr, strict=False))}
+    return typed_object_preview(session, kind, req.src_value if side == "source" else req.dst_value)
+
+
 def lookup_service(session, protocol: str, port: str) -> Optional[str]:
     """Existing service object name for this exact port/proto (incl. predefined), or None."""
     proto = protocol.lower()
@@ -1285,19 +1620,14 @@ def build_preview(session, decision: Decision, req: AccessRequest, rules: list[P
     if decision.outcome in (Outcome.NO_OP, Outcome.REVIEW):
         return out
 
-    def _obj(cidr):
-        ex = lookup_endpoint(session, cidr)
-        return {"ip": cidr, "exists": bool(ex),
-                "name": ex or _endpoint_name(ipaddress.ip_network(cidr, strict=False))}
-
     if decision.outcome == Outcome.WIDEN:
         field = decision.widen_field or "source"
         obj = (_svc_object_preview(session, req) if field == "service"
-               else _obj(req.src_cidrs[0] if field == "source" else req.dst_cidrs[0]))
+               else _endpoint_object_preview(session, req, field))
         out["widen"] = {"field": field, "object": obj, "via": f"rule {field} cell"}
     elif decision.outcome == Outcome.CREATE:
-        out["source"] = _obj(req.src_cidrs[0])
-        out["destination"] = _obj(req.dst_cidrs[0])
+        out["source"] = _endpoint_object_preview(session, req, "source")
+        out["destination"] = _endpoint_object_preview(session, req, "destination")
         out["service"] = _svc_object_preview(session, req)
         out["position"] = _position_human(decision.position, _rules_for_layer(decision, rules))
         if (decision.position or {}).get("_anomaly"):
@@ -1311,8 +1641,9 @@ def _apply(session, decision: Decision, req: AccessRequest, layer: str,
     # decide() reasons over the FULL request (all of src_cidrs/dst_cidrs, merged), but the materialization
     # below writes one object per endpoint. The public build_request() always yields single-element lists;
     # a directly-built multi-CIDR request would otherwise silently apply LESS than was reasoned (only the
-    # first CIDR). Fail loud instead — split into one request per CIDR. (Caught as a clean error.)
-    if len(req.src_cidrs) != 1 or len(req.dst_cidrs) != 1:
+    # first CIDR). Fail loud instead — split into one request per CIDR. (Caught as a clean error.) A typed
+    # endpoint carries no CIDR (one named object), so the guard only applies to IP endpoints.
+    if (req.src_kind == "ip" and len(req.src_cidrs) != 1) or (req.dst_kind == "ip" and len(req.dst_cidrs) != 1):
         raise MgmtError("multi-CIDR source/destination is not supported on apply — "
                         "submit one request per source and destination CIDR")
     # The change targets the inline layer when the decision landed inside one (decision.layer); otherwise
@@ -1324,8 +1655,7 @@ def _apply(session, decision: Decision, req: AccessRequest, layer: str,
     if decision.outcome == Outcome.WIDEN:
         field = decision.widen_field or "source"
         obj_name = (_resolve_svc_object(session, req) if field == "service"
-                    else resolve_endpoint(session, req.src_cidrs[0] if field == "source"
-                                          else req.dst_cidrs[0]))
+                    else _resolve_endpoint_object(session, req, field))
         out.update(widen_field=field, widen_object=obj_name)
         # Add to the rule's CELL, never to a shared group — modifying a group widens EVERY rule that
         # references it. decide() guarantees the other two cells equal the request exactly, so this
@@ -1337,8 +1667,8 @@ def _apply(session, decision: Decision, req: AccessRequest, layer: str,
         return out
 
     # CREATE
-    src_name = resolve_endpoint(session, req.src_cidrs[0])
-    dst_name = resolve_endpoint(session, req.dst_cidrs[0])
+    src_name = _resolve_endpoint_object(session, req, "source")
+    dst_name = _resolve_endpoint_object(session, req, "destination")
     svc_name = _resolve_svc_object(session, req)
     from . import naming
     payload = {

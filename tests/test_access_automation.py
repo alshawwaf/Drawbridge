@@ -1611,3 +1611,238 @@ def test_find_permissive_flags_any_dimensions():
     assert [p["rule"] for p in perm] == [1] and perm[0]["any_dimensions"] == ["source"]
     # CLEANUP is a Drop -> never flagged as a permissive accept
     assert all(p["rule"] != 99 for p in perm)
+
+
+# ============================================================================================= #
+# Typed (non-IP) source/destination framework — domain / access-role / dynamic / updatable / zone
+# ============================================================================================= #
+_TYPED_OD = {
+    "any":   {"uid": "any", "type": "CpmiAnyObject", "name": "Any"},
+    "dom":   {"uid": "dom", "type": "dns-domain", "name": ".alshawwaf.ca"},      # domain + sub-domains
+    "domx":  {"uid": "domx", "type": "dns-domain", "name": ".evil.com"},
+    "role":  {"uid": "role", "type": "access-role", "name": "Finance_Users"},
+    "dyn":   {"uid": "dyn", "type": "dynamic-object", "name": "DObj_App"},
+    "upd":   {"uid": "upd", "type": "updatable-object", "name": "Office365"},
+    "zone":  {"uid": "zone", "type": "security-zone", "name": "InternalZone"},
+    "dmz":   {"uid": "dmz", "type": "network", "name": "dmz", "subnet4": "172.16.5.0", "mask-length4": 24},
+    "h222":  {"uid": "h222", "type": "host", "name": "cli", "ipv4-address": "10.1.1.222"},
+    "https": {"uid": "https", "type": "service-tcp", "name": "https", "port": "443"},
+}
+
+
+def _trule(uid, num, action, src, dst, svc=("https",)):
+    return aa._parse_rule({"uid": uid, "rule-number": num, "name": uid, "enabled": True,
+                           "action": action, "source": list(src), "destination": list(dst),
+                           "service": list(svc)}, _TYPED_OD)
+
+
+_TCLEAN = _trule("rC", 99, "Drop", ["any"], ["any"], ["any"])
+
+
+def _domreq(dst="alshawwaf.ca", src="10.1.1.222/32"):
+    return AccessRequest([src], [], "tcp", "443", dst_kind="domain", dst_value=dst)
+
+
+# --- parse: typed objects are captured, not lumped into complex (but IP path still treats opaque) ---
+def test_parse_captures_typed_objects_without_complex():
+    r = _trule("r1", 1, "Accept", ["any"], ["dom"])
+    assert r.dst_typed.domains == {".alshawwaf.ca"}
+    assert r.dst_cx is False                         # not truly-unresolvable
+    assert r.dst_unknown is True                     # IP-path: a typed cell stays opaque (preserves safety)
+    assert r.complex is True
+
+
+def test_parse_role_zone_dynamic_updatable_routed_to_their_sets():
+    r = _trule("r1", 1, "Accept", ["role", "dyn"], ["upd", "zone"])
+    assert r.src_typed.roles == {"Finance_Users"} and r.src_typed.dynamic == {"DObj_App"}
+    assert r.dst_typed.updatable == {"Office365"} and r.dst_typed.zones == {"InternalZone"}
+    assert r.src_cx is False and r.dst_cx is False
+
+
+# --- domain request matching ---
+def test_domain_request_no_op_when_covered_by_parent():
+    rules = [_trule("r1", 1, "Accept", ["any"], ["dom"]), _TCLEAN]
+    assert aa.decide(_domreq("alshawwaf.ca"), rules).outcome is Outcome.NO_OP
+
+
+def test_domain_subdomain_is_subset_no_op():
+    rules = [_trule("r1", 1, "Accept", ["any"], ["dom"]), _TCLEAN]
+    assert aa.decide(_domreq("www.alshawwaf.ca"), rules).outcome is Outcome.NO_OP
+
+
+def test_domain_create_when_no_rule_covers():
+    rules = [_trule("r1", 1, "Accept", ["any"], ["dom"]), _TCLEAN]
+    d = aa.decide(_domreq("not-covered.com"), rules)
+    assert d.outcome is Outcome.CREATE
+
+
+def test_domain_disjoint_from_ip_only_drop():
+    # A Drop whose destination is an IP network must NOT block a DOMAIN request (different identity
+    # space — object semantics, mirroring apps-vs-ports). The domain request proceeds to CREATE.
+    rules = [_trule("r1", 1, "Drop", ["any"], ["dmz"]), _TCLEAN]
+    assert aa.decide(_domreq("alshawwaf.ca"), rules).outcome is Outcome.CREATE
+
+
+def test_domain_review_on_updatable_feed():
+    # An updatable feed (Office365, …) can itself contain FQDNs -> can't prove coverage -> REVIEW.
+    rules = [_trule("r1", 1, "Accept", ["any"], ["upd"]), _TCLEAN]
+    assert aa.decide(_domreq("alshawwaf.ca"), rules).outcome is Outcome.REVIEW
+
+
+def test_domain_any_dest_accept_no_op_and_drop_review():
+    accept = [_trule("r1", 1, "Accept", ["any"], ["any"]), _TCLEAN]
+    assert aa.decide(_domreq(), accept).outcome is Outcome.NO_OP
+    drop = [_trule("r1", 1, "Drop", ["any"], ["any"]), _TCLEAN]   # specific (https) Any/Any drop
+    assert aa.decide(_domreq(), drop).outcome is Outcome.REVIEW
+
+
+def test_domain_widen_adds_to_a_matching_rule_dest():
+    # src (host) and svc EQUAL, dst is a DIFFERENT domain -> widen the destination cell with our domain.
+    rules = [_trule("r1", 1, "Accept", ["h222"], ["domx"]), _TCLEAN]
+    d = aa.decide(_domreq("alshawwaf.ca"), rules)
+    assert d.outcome is Outcome.WIDEN and d.widen_field == "destination"
+
+
+# --- safety: an IP request is unchanged by typed cells (still REVIEW, never stepped past) ---
+def test_ip_request_still_reviews_on_typed_dest_cell():
+    rules = [_trule("r1", 1, "Accept", ["any"], ["dom"]), _TCLEAN]
+    ipreq = AccessRequest(["10.1.1.222/32"], ["203.0.113.5/32"], "tcp", "443")
+    assert aa.decide(ipreq, rules).outcome is Outcome.REVIEW
+
+
+# --- access-role / zone / dynamic exact-identity matching ---
+def test_access_role_exact_match_no_op_and_mismatch_create():
+    rules = [_trule("r1", 1, "Accept", ["any"], ["role"]), _TCLEAN]
+    hit = AccessRequest(["10.1.1.222/32"], [], "tcp", "443",
+                        dst_kind="access-role", dst_value="Finance_Users")
+    assert aa.decide(hit, rules).outcome is Outcome.NO_OP
+    miss = AccessRequest(["10.1.1.222/32"], [], "tcp", "443",
+                         dst_kind="access-role", dst_value="HR_Users")
+    assert aa.decide(miss, rules).outcome is Outcome.CREATE
+
+
+def test_role_request_disjoint_from_domain_drop():
+    # An access-role request is a different identity than a dns-domain -> a domain Drop doesn't block it.
+    rules = [_trule("r1", 1, "Drop", ["any"], ["dom"]), _TCLEAN]
+    rolereq = AccessRequest(["10.1.1.222/32"], [], "tcp", "443",
+                            dst_kind="access-role", dst_value="Finance_Users")
+    assert aa.decide(rolereq, rules).outcome is Outcome.CREATE
+
+
+def test_negated_typed_cell_is_review():
+    neg = aa._parse_rule({"uid": "rn", "rule-number": 1, "name": "rn", "enabled": True, "action": "Accept",
+                          "source": ["any"], "destination": ["dom"], "destination-negate": True,
+                          "service": ["https"]}, _TYPED_OD)
+    assert aa.decide(_domreq("alshawwaf.ca"), [neg, _TCLEAN]).outcome is Outcome.REVIEW
+
+
+def test_typed_request_empty_value_is_review():
+    req = AccessRequest(["10.1.1.222/32"], [], "tcp", "443", dst_kind="domain", dst_value="")
+    assert aa.decide(req, [_TCLEAN]).outcome is Outcome.REVIEW
+
+
+# --- build_request typed validation ---
+def test_build_request_domain_valid_and_normalised():
+    req = tk.build_request("10.1.1.222", "ALSHAWWAF.CA", "tcp", "443", destination_kind="domain")
+    assert req.dst_kind == "domain" and req.dst_value == "alshawwaf.ca" and req.dst_cidrs == []
+    sub = tk.build_request("10.1.1.222", ".alshawwaf.ca", "tcp", "443", destination_kind="domain")
+    assert sub.dst_value == ".alshawwaf.ca"          # leading dot preserved (sub-domain semantics)
+
+
+def test_build_request_rejects_bad_domain_and_kind():
+    with pytest.raises(ValueError):
+        tk.build_request("10.1.1.222", "not a domain!", "tcp", "443", destination_kind="domain")
+    with pytest.raises(ValueError):
+        tk.build_request("10.1.1.222", "x", "tcp", "443", destination_kind="bogus-kind")
+    with pytest.raises(ValueError):
+        tk.build_request("10.1.1.222", "", "tcp", "443", destination_kind="domain")
+
+
+def test_build_request_role_name_passthrough():
+    req = tk.build_request("10.1.1.222", "Finance Users", "tcp", "443", destination_kind="access-role")
+    assert req.dst_kind == "access-role" and req.dst_value == "Finance Users"
+
+
+# --- apply: reuse/create the typed object + place it ---
+def test_execute_create_materialises_domain_object(monkeypatch):
+    calls = []
+    monkeypatch.setattr(aa, "MgmtSession", _fake_session_factory(calls))
+    monkeypatch.setattr(aa, "load_layer", lambda s, layer, package=None: [_TCLEAN])
+    res = aa.execute(object(), "secret", _domreq("alshawwaf.ca"), "Network",
+                     ticket_id="INC9", publish=True)
+    assert res["ok"] and res["outcome"] == "create" and res["published"] is True
+    cmds = [c for c, _ in calls]
+    assert "add-dns-domain" in cmds and "add-access-rule" in cmds
+    dom = next(p for c, p in calls if c == "add-dns-domain")
+    assert dom["name"] == ".alshawwaf.ca" and dom["is-sub-domain"] is False
+    rule = next(p for c, p in calls if c == "add-access-rule")
+    assert rule["destination"] == ".alshawwaf.ca"
+
+
+def test_resolve_typed_object_reuse_only_kind_errors_when_missing():
+    s = _fake_session_factory([])(object(), "x")     # show-objects returns nothing -> not found
+    with pytest.raises(aa.MgmtError):
+        aa.resolve_typed_object(s, "access-role", "Finance_Users")
+    with pytest.raises(aa.MgmtError):
+        aa.resolve_typed_object(s, "security-zone", "InternalZone")
+
+
+def test_typed_object_preview_marks_non_creatable_missing():
+    s = _fake_session_factory([])(object(), "x")
+    p = aa.typed_object_preview(s, "access-role", "Finance_Users")
+    assert p["exists"] is False and p["creatable"] is False and p["kind"] == "access-role"
+    pd = aa.typed_object_preview(s, "domain", "alshawwaf.ca")
+    assert pd["creatable"] is True and pd["name"] == ".alshawwaf.ca"
+
+
+# --- domain sub-domain semantics (adversarial-review findings) -----------------------------------
+def test_domain_exact_cell_does_not_cover_subdomain_request():
+    # FINDING 1: an EXACT domain object (no leading dot) must NOT cover a "domain + sub-domains" request
+    # (a leading-dot value) — that was a false NO_OP. The reverse direction stays covered.
+    od = dict(_TYPED_OD, domf={"uid": "domf", "type": "dns-domain", "name": "alshawwaf.ca"})  # exact, no dot
+    rule = aa._parse_rule({"uid": "r1", "rule-number": 1, "name": "r1", "enabled": True, "action": "Accept",
+                           "source": ["any"], "destination": ["domf"], "service": ["https"]}, od)
+    sub_req = AccessRequest(["10.1.1.222/32"], [], "tcp", "443", dst_kind="domain", dst_value=".alshawwaf.ca")
+    assert aa.decide(sub_req, [rule, _TCLEAN]).outcome is Outcome.CREATE          # not falsely NO_OP
+    exact_req = AccessRequest(["10.1.1.222/32"], [], "tcp", "443", dst_kind="domain", dst_value="alshawwaf.ca")
+    assert aa.decide(exact_req, [rule, _TCLEAN]).outcome is Outcome.NO_OP         # exact still covered
+
+
+def test_domain_covers_helper_directionality():
+    assert aa._domain_covers(".x.com", "x.com")          # sub cell covers the apex
+    assert aa._domain_covers(".x.com", "www.x.com")      # sub cell covers a sub-domain
+    assert aa._domain_covers("x.com", "x.com")           # exact == exact
+    assert aa._domain_covers(".x.com", ".x.com")         # sub == sub
+    assert not aa._domain_covers("x.com", ".x.com")      # exact cell can't cover a sub-domain request
+    assert not aa._domain_covers("x.com", "www.x.com")   # exact cell can't cover a sub-domain
+    assert not aa._domain_covers(".x.com", "evilx.com")  # suffix that isn't a sub-domain boundary
+
+
+class _DomSession:
+    """A minimal session whose show-objects returns a fixed dns-domain object list (for apply tests)."""
+    def __init__(self, objs):
+        self.objs, self.calls = objs, []
+
+    def call(self, cmd, payload=None, **k):
+        self.calls.append((cmd, payload or {}))
+        return {"objects": self.objs} if cmd == "show-objects" else {}
+
+
+def test_resolve_domain_reuses_only_matching_is_sub_domain():
+    # FINDING 2: a broad sub-domain object must NOT be reused for an EXACT request (would grant *.example.com)
+    s = _DomSession([{"name": ".example.com", "type": "dns-domain", "is-sub-domain": True}])
+    with pytest.raises(aa.MgmtError):
+        aa.resolve_typed_object(s, "domain", "example.com")      # exact request, only a sub object -> clash
+    assert not any(c == "add-dns-domain" for c, _ in s.calls)    # never silently widened
+    s2 = _DomSession([{"name": ".example.com", "type": "dns-domain", "is-sub-domain": True}])
+    assert aa.resolve_typed_object(s2, "domain", ".example.com") == ".example.com"   # sub request reuses it
+    assert not any(c == "add-dns-domain" for c, _ in s2.calls)
+
+
+def test_resolve_domain_creates_with_correct_is_sub_domain():
+    s = _DomSession([])
+    assert aa.resolve_typed_object(s, "domain", "example.com") == ".example.com"
+    assert next(p for c, p in s.calls if c == "add-dns-domain") == {"name": ".example.com", "is-sub-domain": False}
+    s2 = _DomSession([])
+    aa.resolve_typed_object(s2, "domain", ".example.com")
+    assert next(p for c, p in s2.calls if c == "add-dns-domain")["is-sub-domain"] is True
