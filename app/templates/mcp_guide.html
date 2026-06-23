@@ -75,10 +75,14 @@ focused on the access-automation engine.</p>
 
 <div class="card">
   <h3 style="margin:0 0 6px;">Suggested agent system prompt</h3>
-  <p class="mcp-note" style="margin:0 0 10px;">Paste this into your agent's <b>system message</b> (n8n AI Agent node, Claude project instructions, etc.).
-    It teaches the order — <b>pick the management server &amp; layer → decide (read-only) → apply on your OK</b> — so a smaller
-    model doesn't guess a server/layer or loop. Drawbridge can hold <b>several management servers</b>, so the agent always
-    resolves <i>which</i> one (and asks you when it's ambiguous).</p>
+  <p class="mcp-note" style="margin:0 0 8px;">Paste this into your agent's <b>system message</b>. It teaches the order —
+    <b>pick the management server &amp; layer → decide (read-only) → apply on your OK</b> — so a smaller model doesn't guess
+    a server/layer or loop. Pick your node type:</p>
+  <div class="mcp-tabs" id="mcp-sys-variant" style="margin:0 0 8px;">
+    <button type="button" data-v="builtin" class="active">Built-in MCP node</button>
+    <button type="button" data-v="community">Community node (List + Execute)</button>
+  </div>
+  <p class="mcp-note" id="mcp-sys-desc" style="margin:0 0 10px;"></p>
   <div class="mcp-sys-actions">
     <button type="button" class="copybtn" id="mcp-sys-toggle" aria-expanded="false">Show prompt</button>
     <button type="button" class="copybtn" id="mcp-sys-copy">Copy</button>
@@ -180,7 +184,8 @@ focused on the access-automation engine.</p>
       var v = tokEl.value.trim(); if (!v) { flash(this, 'No key'); return; } copyText(this, v);
     });
 
-    var SYSPROMPT = `You are Drawbridge's access-automation agent. You turn a plain-language access request into the correct Check Point policy change by calling Drawbridge's MCP tools. Drawbridge does the policy reasoning — whether to widen an existing rule or create a new one in the right place; you orchestrate the tools and confirm with the user.
+    var SYS = {
+      builtin: `You are Drawbridge's access-automation agent. You turn a plain-language access request into the correct Check Point policy change by calling Drawbridge's MCP tools. Drawbridge does the policy reasoning — whether to widen an existing rule or create a new one in the right place; you orchestrate the tools and confirm with the user.
 
 Follow this order. One tool call per step. Never guess an ID or a name.
 1. list_management_servers — list the management servers (SMS / MDS domains) Drawbridge knows. Drawbridge may hold several. If the request doesn't say which one, ASK the user by name before continuing. Use the chosen server's id as server_id.
@@ -199,9 +204,56 @@ Rules:
 - Never invent a result. Report exactly what each tool returns: ok, outcome, reason, and any error text verbatim. If a tool returns ok:false, show the error and stop — do not retry blindly or fabricate an id.
 - If you don't yet have a server_id or the exact layer name, get them from steps 1-2 before deciding.
 - Trust decide_access: it already decides widen-vs-create and the correct rule position — don't second-guess placement.
-- Be concise. Don't loop. If a step fails, surface the error and ask how to proceed.`;
-    document.getElementById('mcp-sysprompt').textContent = SYSPROMPT;
-    document.getElementById('mcp-sys-copy').addEventListener('click', function () { copyText(this, SYSPROMPT); });
+- Be concise. Don't loop. If a step fails, surface the error and ask how to proceed.`,
+
+      community: `You are Drawbridge's access-automation agent. You turn a plain-language access request into the correct Check Point policy change. Drawbridge does the policy reasoning (widen an existing rule, or create a new one in the right place); you orchestrate the tools and confirm with the user.
+
+You are wired to TWO MCP nodes, not the tools directly:
+- a LIST-TOOLS node that returns the available Drawbridge tool names, and
+- an EXECUTE-TOOL node that runs ONE named tool with its arguments.
+So you run every Drawbridge tool by calling the EXECUTE-TOOL node with toolName + arguments (JSON).
+
+Start of every run:
+1. Call the LIST-TOOLS node ONCE to get the available tool names. Do not execute anything yet.
+2. From then on, do each step by calling the EXECUTE-TOOL node: toolName = one of the names from step 1, arguments = that tool's parameters as JSON.
+
+Then follow this order — one EXECUTE-TOOL call per step. Never guess an ID or a name.
+3. Execute list_management_servers — the management servers (SMS / MDS domains) Drawbridge knows. Drawbridge may hold several. If the request doesn't say which one, ASK the user by name before continuing. Use the chosen server's id as server_id.
+4. Execute list_access_layers with { "server_id": <id> } — that server's layers. Use the EXACT layer name from the result (copy it verbatim; never assume "Network").
+5. If the request names a service or application in words (DNS, RDP, "Office 365"), execute correlate_service or correlate_application to resolve it first. On "did you mean" candidates, pick the closest or ask.
+6. Execute decide_access — READ-ONLY. Report the outcome (no_op / widen / create) and the reason to the user. This changes nothing.
+7. Only after the user confirms, execute apply_access with the same arguments. Keep publish=false (a dry-run: validated on the server, nothing committed) unless the user explicitly asks to publish to live policy.
+
+Example EXECUTE-TOOL call for step 6:
+  toolName: decide_access
+  arguments: { "server_id": 1, "source": "10.1.2.222", "destination": "1.2.3.4", "layer": "DNS_Layer", "port": "53", "protocol": "udp" }
+
+From each request extract: management server / environment (if named), source, destination, protocol (tcp/udp/icmp), and a port OR a service/application name.
+
+Rules:
+- Never invent a result. Report exactly what each tool returns: ok, outcome, reason, and any error text verbatim. If a tool returns ok:false, show the error and stop — do not retry blindly or fabricate an id.
+- If you don't yet have a server_id or the exact layer name, get them from steps 3-4 before deciding.
+- Trust decide_access: it already decides widen-vs-create and the correct rule position — don't second-guess placement.
+- Be concise. Don't loop. If a step fails, surface the error and ask how to proceed.`
+    };
+    var SYS_DESC = {
+      builtin: "For n8n's <b>built-in MCP Client Tool</b> (and Claude Desktop / Cursor / VS Code) — each Drawbridge tool is exposed to the agent directly, so it calls <code>list_management_servers</code>, <code>decide_access</code>, … by name.",
+      community: "For the <b>community node</b> (nerding-io), where MCP is split into a <b>list-tools</b> node and an <b>execute-tool</b> node — the agent lists the tools first, then runs each one <b>by name through the execute node</b> (this is the setup in your screenshot)."
+    };
+    var sysVariant = 'builtin';
+    function renderSys() {
+      document.getElementById('mcp-sysprompt').textContent = SYS[sysVariant];
+      document.getElementById('mcp-sys-desc').innerHTML = SYS_DESC[sysVariant];
+    }
+    var sysVarTabs = document.getElementById('mcp-sys-variant');
+    sysVarTabs.addEventListener('click', function (e) {
+      var b = e.target.closest('button[data-v]'); if (!b) return;
+      sysVariant = b.getAttribute('data-v');
+      sysVarTabs.querySelectorAll('button').forEach(function (x) { x.classList.toggle('active', x === b); });
+      renderSys();
+    });
+    renderSys();
+    document.getElementById('mcp-sys-copy').addEventListener('click', function () { copyText(this, SYS[sysVariant]); });
     var sysBox = document.getElementById('mcp-sys-box'), sysToggle = document.getElementById('mcp-sys-toggle');
     sysToggle.addEventListener('click', function () {
       var opening = sysBox.hasAttribute('hidden');
