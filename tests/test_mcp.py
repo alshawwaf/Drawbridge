@@ -99,6 +99,22 @@ def test_bearer_guard_rejects_without_token():
     assert status2 == 401
 
 
+def test_bearer_guard_distinguishes_missing_vs_invalid_bearer():
+    # The 401 body must say WHICH problem it is, so a client log points at the fix:
+    #  - no header at all -> a proxy/client dropped it (the n8n "empty bearer" symptom)
+    #  - a bearer arrived but the key is bad/expired/wrong-scope
+    guard = mcp_server._BearerGuard(_ok_inner(), lambda p: p == "s3cret", lambda: True)
+    s_missing, b_missing = _drive(guard, [])                                  # header absent
+    assert s_missing == 401 and b"no Authorization header" in b_missing
+    s_scheme, b_scheme = _drive(guard, [(b"authorization", b"Token abc")])     # wrong scheme
+    assert s_scheme == 401 and b"Bearer scheme" in b_scheme
+    s_bad, b_bad = _drive(guard, [(b"authorization", b"Bearer nope")])         # bad key
+    assert s_bad == 401 and b"not a valid active mcp-scope" in b_bad
+    # a trailing newline on the header value must not break an otherwise-valid key
+    s_ok, _ = _drive(guard, [(b"authorization", b"Bearer s3cret\n")])
+    assert s_ok == 200
+
+
 def test_bearer_guard_allows_with_token():
     passed = {"hit": False}
 

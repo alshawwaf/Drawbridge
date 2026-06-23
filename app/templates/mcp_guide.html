@@ -110,8 +110,11 @@ focused on the access-automation engine.</p>
           type: 'http', url: url, headers: { Authorization: auth } } } }, null, 2),
           hint: 'Put this in <code>.vscode/mcp.json</code> (GitHub Copilot Chat → MCP).' };
       }
-      return { code: 'URL:    ' + url + '\nHeader: Authorization: ' + auth,
-        hint: 'In the n8n <b>MCP Client Tool</b> node, set the endpoint URL and add the Authorization header. Transport: Streamable HTTP (or SSE).' };
+      return { code: 'HTTP Stream URL\n' + url + '\n\nAdditional Headers  (one NAME=VALUE per line)\nAuthorization=' + auth,
+        hint: 'Transport: <b>HTTP Streamable</b>, and use the <b>trailing-slash</b> URL above. Two different n8n nodes exist: ' +
+              '<b>(a) the built-in MCP Client Tool</b> — set <b>Authentication = Bearer Auth</b> and paste just the key as the token (n8n adds <code>Authorization: Bearer …</code> for you); ' +
+              '<b>(b) the community node</b> (nerding-io, the credential literally named “MCP Client (HTTP Streamable) API”) — paste the line above into <b>Additional Headers</b>. ' +
+              'That field parses <code>NAME=VALUE</code> per line, so it must be <code>Authorization=Bearer&nbsp;…</code> with an <b>equals sign</b> — a colon (<code>Authorization:&nbsp;Bearer&nbsp;…</code>) is <b>silently dropped</b> and you get a 401 with no header at all.' };
     }
     function render() { var c = cfg(); snip.textContent = c.code; hint.innerHTML = c.hint; }
     tabs.addEventListener('click', function (e) {

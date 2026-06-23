@@ -111,15 +111,33 @@ class _BearerGuard:
                                  b'(or Settings -> API keys) to enable /mcp"}')
                 return
             headers = dict(scope.get("headers") or [])
-            auth = headers.get(b"authorization", b"").decode("latin-1")
-            presented = auth[7:] if auth.startswith("Bearer ") else ""
+            auth = headers.get(b"authorization", b"").decode("latin-1").strip()
+            # Distinguish the failure modes so the client log says WHAT to fix, not just "401":
+            #  - header absent  -> the request reached us without it; almost always the CLIENT isn't
+            #    attaching it, or a reverse proxy dropped it on a redirect/forward (NOT a bad key).
+            #  - wrong scheme   -> present but not "Bearer ...".
+            #  - key rejected   -> a bearer arrived but isn't a valid active mcp-scope key. The same
+            #    message for every bad/expired/revoked/wrong-scope key (no existence oracle).
+            if not auth:
+                await _send_json(send, 401,
+                                 b'{"error":"Unauthorized - no Authorization header reached the server. '
+                                 b'Set Authorization: Bearer <mcp-key> on the client, and POST the '
+                                 b'trailing-slash URL /mcp/ so a proxy redirect cannot strip it."}')
+                return
+            if not auth.startswith("Bearer "):
+                await _send_json(send, 401,
+                                 b'{"error":"Unauthorized - Authorization must use the Bearer scheme: '
+                                 b'Authorization: Bearer <mcp-key>"}')
+                return
+            presented = auth[7:].strip()   # tolerate a stray trailing newline/space from a client header field
             try:
                 ok = bool(presented) and bool(self._verify(presented))
             except Exception:  # noqa: BLE001
                 ok = False
             if not ok:
                 await _send_json(send, 401,
-                                 b'{"error":"Unauthorized - send Authorization: Bearer <token-or-key>"}')
+                                 b'{"error":"Unauthorized - the bearer is not a valid active mcp-scope API '
+                                 b'key (confirm it is not revoked/expired and was generated with mcp scope)"}')
                 return
             await self.app(scope, receive, send)
             return
