@@ -206,6 +206,18 @@ def test_build_mcp_app_mounts_when_sdk_present():
     assert set(mcp_server._TOOLS) <= set(dir(mcp_tools))   # every advertised tool exists
 
 
+def test_mcp_transport_disables_localhost_host_allowlist():
+    # FastMCP auto-enables a DNS-rebinding Host allowlist (127.0.0.1:* / localhost:*) for its default
+    # localhost host, which 421s every request that arrives through a reverse proxy as Host: <domain>.
+    # _new_server must turn that off so the mounted /mcp works behind any proxy (auth is _BearerGuard).
+    if not mcp_server.have_mcp():
+        import pytest
+        pytest.skip("mcp SDK not installed")
+    srv = mcp_server._new_server()
+    sec = srv.settings.transport_security
+    assert sec is not None and sec.enable_dns_rebinding_protection is False
+
+
 def test_tool_catalog_lists_all_tools_with_summaries():
     cat = mcp_server.tool_catalog()
     names = {c["name"] for c in cat}

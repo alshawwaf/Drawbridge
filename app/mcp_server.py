@@ -150,13 +150,40 @@ class _BearerGuard:
         # unknown scope type: do not forward to the inner app unguarded
 
 
+def _open_host_security():
+    """A TransportSecuritySettings that turns OFF the SDK's DNS-rebinding Host/Origin allowlist.
+
+    Why we must: FastMCP defaults its ``host`` to 127.0.0.1, and for a localhost host it AUTO-ENABLES DNS
+    rebinding protection with ``allowed_hosts=["127.0.0.1:*","localhost:*","[::1]:*"]``. Mounted in the
+    portal behind a TLS-terminating reverse proxy, every real request arrives with ``Host: <your-domain>``
+    — not in that allowlist — so the transport rejects it with HTTP 421 "Invalid Host header" BEFORE any
+    tool runs (it works on localhost, fails through the proxy). Why it's safe to disable: /mcp is a remote,
+    BEARER-authenticated API (``_BearerGuard`` is the real access control) sitting behind a proxy that owns
+    the Host header. DNS-rebinding protection defends *localhost* servers a victim's browser can reach by a
+    rebound name; against a token-gated remote endpoint a rebind yields nothing without the bearer. Returns
+    None if the SDK predates the class (then we just don't pass it — older SDKs have no auto-allowlist)."""
+    try:
+        from mcp.server.transport_security import TransportSecuritySettings
+        return TransportSecuritySettings(enable_dns_rebinding_protection=False)
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def _new_server():
     # stateless_http=True makes each tool call independent -> no persistent session-manager lifespan, which
     # is what lets the app mount cleanly inside FastAPI. streamable_http_path="/" puts the handler at the
-    # mount root so the endpoint is /mcp (not /mcp/mcp — FastMCP defaults its own path to /mcp). Degrade
-    # gracefully if an SDK version doesn't accept one of these kwargs.
-    for kwargs in ({"stateless_http": True, "streamable_http_path": "/"},
-                   {"stateless_http": True}, {}):
+    # mount root so the endpoint is /mcp (not /mcp/mcp — FastMCP defaults its own path to /mcp).
+    # transport_security disables the localhost Host allowlist that otherwise 421s every proxied request
+    # (see _open_host_security). Degrade gracefully if an SDK version doesn't accept one of these kwargs:
+    # try the richest kwargs first, then drop transport_security, then the bare forms.
+    sec = _open_host_security()
+    attempts = []
+    if sec is not None:
+        attempts += [{"stateless_http": True, "streamable_http_path": "/", "transport_security": sec},
+                     {"stateless_http": True, "transport_security": sec},
+                     {"transport_security": sec}]
+    attempts += [{"stateless_http": True, "streamable_http_path": "/"}, {"stateless_http": True}, {}]
+    for kwargs in attempts:
         try:
             return FastMCP("Drawbridge", **kwargs)
         except TypeError:
