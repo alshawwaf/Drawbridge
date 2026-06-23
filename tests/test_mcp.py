@@ -59,6 +59,35 @@ def test_apply_dry_run_always_allowed(monkeypatch):
     assert out["ok"] is True and seen["publish"] is False
 
 
+# --- a server can be referenced by id OR name/host; an unmatched ref lists the options ----------------
+def test_resolve_server_by_id_name_host_and_helpful_error():
+    import types
+    from app.services import mcp_tools
+    srv = types.SimpleNamespace(id=7, name="HQ-Management", host="10.1.3.40", domain="")
+
+    class _DB:
+        def get(self, _model, sid):
+            return srv if sid == 7 else None
+        def query(self, _model):
+            class _Q:
+                def all(_self):
+                    return [srv]
+            return _Q()
+
+    db = _DB()
+    assert mcp_tools._resolve_server(db, 7) is srv            # numeric id
+    assert mcp_tools._resolve_server(db, "7") is srv          # digit string
+    assert mcp_tools._resolve_server(db, "hq-management") is srv   # name, case-insensitive
+    assert mcp_tools._resolve_server(db, "10.1.3.40") is srv  # host
+    assert mcp_tools._resolve_server(db, "HQ") is srv         # unique partial match on name
+    try:
+        mcp_tools._resolve_server(db, "nope")
+        assert False, "expected ValueError"
+    except ValueError as exc:
+        msg = str(exc)
+        assert "id 7 = HQ-Management" in msg and "list_management_servers" in msg   # error lists the options
+
+
 # --- an unexpected (non-MgmtError) failure comes back STRUCTURED, never an opaque MCP "Internal error" ---
 def test_decide_access_wraps_unexpected_engine_error(monkeypatch):
     _fake_server(monkeypatch)
