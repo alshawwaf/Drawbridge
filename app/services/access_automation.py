@@ -1006,13 +1006,13 @@ def _placement(covering_drop, lower_anchor) -> dict:
 _INLINE_MAX_DEPTH = 4     # inline layers can nest; cap the recursion (a cycle guard backs this up)
 
 
-def _pull_items(session, layer_name: str, package: Optional[str], max_rules: int = 5000) -> tuple:
+def _pull_items(session, layer_name: str, package: Optional[str], max_rules: int = 50000) -> tuple:
     """One layer's raw rulebase items + object dictionary (paged), the pull pattern decide() relies on."""
     items: list[dict] = []
     objdict: dict = {}
     total, offset = 0, 0
     while offset < max_rules:
-        payload = {"name": layer_name, "limit": 100, "offset": offset,
+        payload = {"name": layer_name, "limit": 500, "offset": offset,
                    "use-object-dictionary": True, "details-level": "full",
                    "dereference-group-members": True}   # resolve group cells to member IPs (see decide())
         if package:
@@ -1030,7 +1030,9 @@ def _pull_items(session, layer_name: str, package: Optional[str], max_rules: int
         offset = to
     # FAIL LOUD on truncation: a partial rulebase (cleanup + denies past the cap missing) would make
     # decide() under-deny (step over a covering DROP it never loaded). Never decide on a truncated view.
-    if total and total > len(items):
+    # Compare total to the CAP, not len(items): `total` is the rule count, `items` is the TOP-LEVEL
+    # rulebase (sections wrap rules), so `total > len(items)` falsely tripped on any sectioned layer.
+    if total and total > max_rules:
         raise MgmtError(f"access layer “{layer_name}” has {total} rules, over the {max_rules} cap; "
                         f"refusing to decide on a truncated rulebase — raise the cap or split the layer")
     return items, objdict
@@ -1073,7 +1075,7 @@ def _attach_inline_layers(session, rules, package, pull, depth: int, visited: se
 
 
 def load_layer(session, layer_name: str, package: Optional[str] = None,
-               max_rules: int = 5000) -> list[ParsedRule]:
+               max_rules: int = 50000) -> list[ParsedRule]:
     """Pull a layer with full object details (same pattern as mgmt_api.pull_for_export) and parse
     every rule into value-resolved intervals, attaching any inline-layer sub-rulebases."""
     def _pull(name: str) -> list[ParsedRule]:

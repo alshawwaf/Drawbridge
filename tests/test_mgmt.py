@@ -658,3 +658,30 @@ def test_form_tpl_returns_fragment_on_header():
     assert mgmt._form_tpl(full) == "management_form.html"
     assert gateways._form_tpl(frag) == "_gateway_form.html"
     assert gateways._form_tpl(full) == "gateway_form.html"
+
+
+# CRITICAL regression: the standard "Network" layer groups rules into SECTIONS, so the top-level
+# rulebase has far fewer items than the rule `total`. _raw_pull must gate truncation on the CAP, not on
+# len(top-level items) — `total > len(items)` falsely refused every sectioned layer ("13 rules over cap").
+def test_raw_pull_sectioned_layer_not_falsely_truncated():
+    rules = [{"type": "access-rule", "uid": f"r{i}", "rule-number": i} for i in range(1, 14)]   # 13 rules
+    section = {"type": "access-section", "uid": "sec", "name": "Section A", "rulebase": rules}
+
+    class _Sectioned:
+        def call(self, command, payload=None, **k):
+            if command == "show-access-rulebase":
+                return {"rulebase": [section], "objects-dictionary": [], "total": 13, "to": 13}
+            return {}
+    raw = mgmt_api._raw_pull(_Sectioned(), "Network", None, 50000)   # must NOT raise (13 << cap)
+    assert raw["total"] == 13 and len(raw["items"]) == 1            # one top-level section, all rules inside
+
+    class _Huge:                                                    # genuinely over-cap → still fails loud
+        def call(self, command, payload=None, **k):
+            off = (payload or {}).get("offset", 0)
+            return {"rulebase": [{"type": "access-rule", "uid": f"r{off}"}],
+                    "objects-dictionary": [], "total": 200, "to": off + 1}
+    try:
+        mgmt_api._raw_pull(_Huge(), "big", None, 5)
+        assert False, "expected MgmtError for a genuinely over-cap layer"
+    except mgmt_api.MgmtError:
+        pass

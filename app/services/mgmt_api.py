@@ -518,7 +518,7 @@ def _raw_pull(session: "MgmtSession", layer: str, package, max_rules: int) -> di
     objdict: dict = {}
     total, offset = 0, 0
     while offset < max_rules:
-        payload = {"name": layer, "limit": 100, "offset": offset,
+        payload = {"name": layer, "limit": 500, "offset": offset,
                    "use-object-dictionary": True, "details-level": "full",
                    # Expand group members to full objects so the engine can resolve a group cell to IPs
                    # (an unresolved group reads as "extent unknown" and routes every overlap to REVIEW).
@@ -539,13 +539,16 @@ def _raw_pull(session: "MgmtSession", layer: str, package, max_rules: int) -> di
     # Fail loud on truncation so a partial rulebase is never cached or reasoned over (a missing cleanup
     # / deny past the cap would make the access-automation engine under-deny). Raising here also means a
     # truncated pull never reaches cached_raw's store, closing the sticky-cache hole.
-    if total and total > len(items):
+    # Compare total to the CAP, not to len(items): `total` counts rules, but `items` is the TOP-LEVEL
+    # rulebase (sections wrap their rules), so a sectioned layer — e.g. the standard "Network" layer —
+    # has far fewer top-level items than rules. `total > len(items)` wrongly tripped on every such layer.
+    if total and total > max_rules:
         raise MgmtError(f"layer “{layer}” has {total} rules, over the {max_rules} cap; refusing to "
-                        f"serve a truncated rulebase")
+                        f"serve a truncated rulebase — raise the cap or split the layer")
     return {"items": items, "objdict": objdict, "total": total}
 
 
-def cached_raw(session: "MgmtSession", server, layer: str, package=None, max_rules: int = 5000) -> dict:
+def cached_raw(session: "MgmtSession", server, layer: str, package=None, max_rules: int = 50000) -> dict:
     """Raw rulebase pull for ``layer`` ({items, objdict, total, cached}), reusing a process cache that is
     invalidated by the published-revision token. ``session`` is an already-open read session."""
     from . import app_settings
@@ -595,7 +598,7 @@ def pull_layers(server, secret: str) -> dict:
         return {"layers": [{"name": l.get("name"), "uid": l.get("uid")} for l in layers], "trace": s.trace}
 
 
-def pull_rulebase(server, secret: str, layer: str, max_rules: int = 5000) -> dict:
+def pull_rulebase(server, secret: str, layer: str, max_rules: int = 50000) -> dict:
     """Pull a layer's access rulebase with its object dictionary and resolve every cell to names. Uses
     the revision-based policy cache. Returns {layer, rows, total, shown, cached, trace}."""
     with read_session(server, secret) as s:
@@ -633,7 +636,7 @@ def _collect_export_objects(objdict: dict) -> dict:
     return by_type
 
 
-def pull_for_export(server, secret: str, layer: str, max_rules: int = 5000) -> dict:
+def pull_for_export(server, secret: str, layer: str, max_rules: int = 50000) -> dict:
     """Pull a layer's rulebase with FULL object details, returning the structured rows plus the
     referenced objects grouped by type. Feeds ``mgmt_export.generate`` — no rendering here."""
     with read_session(server, secret) as s:
