@@ -122,7 +122,7 @@ EDGES: list[Edge] = [
     Edge("resolve", "noteO", "opaque rule"), Edge("noteO", "perm", "continue"),
     Edge("resolve", "perm", "resolved"),
     Edge("perm", "noop", "yes"), Edge("perm", "deny", "no"),
-    Edge("deny", "revD", "yes → review"), Edge("deny", "widen", "no"),
+    Edge("deny", "revD", "yes"), Edge("deny", "widen", "no"),
     Edge("widen", "doWiden", "yes"), Edge("widen", "create", "no"),
 
     # how each endpoint is matched (detail) — IP-interval space vs typed-object identity space
