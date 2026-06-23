@@ -51,9 +51,6 @@ class Edge:
 NODES: list[Node] = [
     Node("req", "Access request", "source · destination · service / app — each endpoint an IP/CIDR/Any or a typed object",
          "start", 60, 20, 300, 72),
-    Node("unsup", "Malformed request?", "no concrete service / port, or a typed endpoint that names no object",
-         "decision", 60, 140, 280, 68),
-    Node("revU", "Review", "nothing concrete to reason about", "review", 460, 142, 240),
     Node("resolve", "Resolve request + each rule cell (top-down, first match wins)",
          "IP: host / network / range / group (exact) · gateway / cluster / mgmt (approx) · typed object → matched by identity · else opaque → note & continue",
          "process", 60, 256, 320, 104),
@@ -128,8 +125,7 @@ NODES: list[Node] = [
 ]
 
 EDGES: list[Edge] = [
-    Edge("req", "unsup"),
-    Edge("unsup", "revU", "yes"), Edge("unsup", "resolve", "no"),
+    Edge("req", "resolve"),
     Edge("resolve", "noteO", "opaque rule"), Edge("noteO", "perm", "continue"),
     Edge("resolve", "perm", "resolved"),
     Edge("perm", "noop", "yes"), Edge("perm", "deny", "no"),
@@ -302,22 +298,26 @@ def _bfs_depth() -> dict:
 
 
 def default_visible() -> set:
-    """Node ids shown before the user expands anything — the first DEFAULT_DEPTH+1 levels of the tree."""
-    depth = _bfs_depth()
-    return {n.id for n in NODES if depth[n.id] <= DEFAULT_DEPTH}
+    """Node ids shown before the user expands anything — the CORE flow (level 0). Collapse is by detail
+    TIER (Node.level), not BFS depth: the whole first-match spine (resolve → permitted? → deny? → widen?
+    → create, plus the note-&-continue leaf and the outcome leaves) shows at once, and each DETAIL branch
+    (identity matching, inline-layer recursion, automation modes, object materialisation) sits behind a
+    '＋ N more' stub until expanded."""
+    return {n.id for n in NODES if n.level == 0}
 
 
 def to_graph() -> dict:
-    """The tree as data for the on-page collapsible renderer: every node (with its BFS depth + the
-    pre-formatted Mermaid declaration) and edge, plus the per-theme %%{init}%% directive and classDefs.
-    The client shows depths 0..default_depth, puts a '＋ more' stub where a visible node has hidden
-    children, and reveals the next level on click. The Mermaid TEXT is still produced by THIS module's
-    node/edge declarations (no format drift). Static engine metadata only (no request-derived data)."""
+    """The tree as data for the on-page collapsible renderer: every node (its detail ``level`` + BFS
+    ``depth`` + the pre-formatted Mermaid declaration) and edge, plus the per-theme %%{init}%% directive
+    and classDefs. The client shows level 0, puts a '＋ more' stub where a visible node has hidden
+    children, and reveals them on click. The Mermaid TEXT is still produced by THIS module's node/edge
+    declarations (no format drift). Static engine metadata only (no request-derived data)."""
     depth = _bfs_depth()
     return {
         "start": next((n.id for n in NODES if n.kind == "start"), NODES[0].id if NODES else ""),
         "default_depth": DEFAULT_DEPTH,
-        "nodes": [{"id": n.id, "kind": n.kind, "depth": depth[n.id], "mm": _mm_node_decl(n)} for n in NODES],
+        "nodes": [{"id": n.id, "kind": n.kind, "level": n.level, "depth": depth[n.id],
+                   "mm": _mm_node_decl(n)} for n in NODES],
         "edges": [{"src": e.src, "dst": e.dst, "mm": _mm_edge_decl(e)} for e in EDGES],
         "themes": {"dark":  {"init": _mm_init(True),  "classDefs": _mm_classdefs(True)},
                    "light": {"init": _mm_init(False), "classDefs": _mm_classdefs(False)}},
