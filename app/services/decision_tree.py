@@ -75,7 +75,7 @@ NODES: list[Node] = [
     Node("doWiden", "Widen the rule", "add the differing source / destination / service to the cell (never a shared group)",
          "widen", 430, 760, 260, 72),
     Node("create", "Create least-privilege rule",
-         "above a blocking / cleanup drop · below a more-specific rule · BELOW any opaque possible-deny that was passed · else bottom", "create",
+         "above a blocking / cleanup drop · an APPLICATION is carved out ABOVE a rule that blocks it (CP identifies the app; other traffic still hits the rule) · below a more-specific rule · BELOW any opaque possible-deny · else bottom. Every choice here is tunable in Settings → Access automation logic.", "create",
          40, 760, 320, 84),
 
     # --- DETAIL tier 1: HOW each source/destination is matched (IP space vs identity space) -------

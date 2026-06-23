@@ -889,6 +889,13 @@ def _svc_indeterminate(req_svc: ServiceSet, rule_svc: ServiceSet) -> bool:
     if (req_svc.by_proto and (rule_svc.apps or rule_svc.opaque)
             and not _portset_covers(rule_svc.by_proto, req_svc.by_proto)):
         return True
+    # SYMMETRIC case: an APPLICATION request meeting a rule that carries L4 ports (tcp/udp/sctp) — App
+    # Control identifies the app over those ports, so we can NEVER prove the rule doesn't match the app.
+    # (Without this, an app request treated a tcp/443 DROP as disjoint and stepped over it -> a false
+    # NO_OP claiming the app is allowed when the gateway is actually dropping it.) Keeps the rule in the
+    # path so a DROP is handled (carved out above) rather than invisibly skipped.
+    if req_svc.apps and rule_svc.by_proto and not rule_svc.any:
+        return True
     return False
 
 
@@ -950,13 +957,24 @@ def _dim_relation(kind: str, value: str, req_iv, r: ParsedRule, which: str) -> t
 
 @dataclass(frozen=True)
 class DecideOptions:
-    """Admin-tunable automation behaviour (built from Settings by the caller; decide() stays pure).
+    """Admin-tunable decision/placement behaviour (built from Settings by the caller; decide() stays pure).
 
-    The engine never hard-stops for a policy "review": it reuses a rule, widens one, or CREATES a least-
-    privilege allow (placing it ABOVE a blocking deny when one is in the path, so the access takes effect).
-    The one remaining knob tunes how conditional rules are read."""
-    ignore_conditions: bool = False    # evaluate VPN/time/data/install-on-scoped rules as if uncondi-
-                                       # tional (a conditional ACCEPT can cover; a conditional DENY blocks)
+    These are the knobs that let an operator TUNE the engine from the portal without touching code — every
+    judgment call in decide() that has a defensible alternative is one of these. Each default is the
+    current, recommended behaviour, so an unset/blank config decides exactly as before. ``_decide_options()``
+    builds this from app_settings (the 'Access automation logic' group)."""
+    ignore_conditions: bool = False        # treat VPN/time/data/install-on-scoped rules as unconditional
+                                           # (a conditional ACCEPT can then cover; a conditional DROP blocks)
+    app_carveout: bool = True              # an APPLICATION request blocked by an in-path rule -> CREATE the
+                                           # app-Accept ABOVE it (CP carves out just that app); off -> note +
+                                           # place below (conservative, but the new rule may be shadowed)
+    override_blocking_deny: bool = True    # a resolved covering/partial DENY -> CREATE the allow ABOVE it so
+                                           # the access works; off -> note it + place the new rule BELOW
+                                           # (never override an admin's deny; may not achieve the request)
+    prefer_widen: bool = True              # reuse by widening an existing rule's cell when possible; off ->
+                                           # always CREATE a fresh least-privilege rule (never widen)
+    emit_notes: bool = True                # attach advisory 'possible match — review later' notes; off ->
+                                           # quiet mode (placement safety is unchanged, only the notes drop)
 
 
 def decide(req: AccessRequest, rules: list[ParsedRule], options: "DecideOptions" = None) -> Decision:
@@ -974,7 +992,9 @@ def decide(req: AccessRequest, rules: list[ParsedRule], options: "DecideOptions"
     options = options or DecideOptions()
     notes: list[str] = []
     decision = _decide(req, rules, options, notes)
-    if notes:
+    # ``emit_notes`` off = quiet mode: drop the advisory notes (placement/uncertain_deny safety is decided
+    # inside _decide and is unaffected — only the human-facing advisories are suppressed).
+    if options.emit_notes and notes:
         decision.notes = list(notes) + [n for n in (decision.notes or []) if n not in notes]
     return decision
 
@@ -1074,6 +1094,36 @@ def _decide(req: AccessRequest, rules: list[ParsedRule], options: "DecideOptions
             if interferes:
                 uncertain_deny = True
             continue
+
+        # L7 (application) CARVE-OUT — the precise way to ACHIEVE an application allow-request that an
+        # in-path rule would block. Per CP column-based matching, a broad L4 (port) DROP, or an opaque
+        # app-category/group DROP, that lies in the request's path matches on the SYN and DROPS the app
+        # today; a Facebook-Accept placed BELOW it is shadowed (a dead rule). Creating the app-Accept
+        # ABOVE the blocking rule is correct AND safe: CP holds the connection, identifies the app and
+        # accepts it, while every OTHER connection on that scope still falls through to the rule — a single
+        # application carved out, never an over-grant. (Tunable: app_carveout off -> fall through to the
+        # conservative note + place-below path instead.) Only a real application request qualifies; a port
+        # request above a port-drop would grant the whole port -> not a carve-out, so it is excluded.
+        if (req_svc.apps and r.is_drop and interferes
+                and covering_drop is None and not (_is_catchall(r) and i == last_enabled)):
+            if options.app_carveout:
+                return Decision(
+                    Outcome.CREATE,
+                    f"rule {r.number} ({r.name}) may block the requested application; creating the allow "
+                    f"ABOVE it so Check Point carves out the application (all other traffic still matches "
+                    f"that rule)",
+                    target_rule=r, position={"above": r.uid},
+                )
+            # Carve-out OFF: place BELOW + flag, and STOP. We must NOT continue here — per CP this drop
+            # matches the app on the blocked port, so letting a lower Accept be read as a NO_OP would be a
+            # false "already permitted". The new rule below won't take effect for traffic this rule blocks.
+            return Decision(
+                Outcome.CREATE,
+                f"rule {r.number} ({r.name}) may block the requested application; per policy not carved out "
+                f"— the new rule is placed below it and will not take effect for traffic that rule blocks "
+                f"(review)",
+                target_rule=r, position={"below": r.uid},
+            )
 
         # Inline layer ("Apply Layer"): the parent rule's columns gate entry into a sub-rulebase that the
         # loader has attached as r.inline_rules. Honour Check Point first-match: if ALL of the request is
@@ -1241,6 +1291,17 @@ def _decide(req: AccessRequest, rules: list[ParsedRule], options: "DecideOptions
         if fully_covers and r.is_drop and covering_drop is None:
             if _is_catchall(r) and i == last_enabled:
                 covering_drop = r        # the real bottom cleanup -> placement floor
+            elif not options.override_blocking_deny:
+                # Tunable: the operator chose NOT to override an admin's deny. Place the new rule BELOW it
+                # and STOP (returning here avoids a lower Accept being read as a NO_OP — first-match, the
+                # deny wins). The rule won't take effect until the deny is changed; the reason says so.
+                return Decision(
+                    Outcome.CREATE,
+                    f"traffic is denied by rule {r.number} ({r.name}); per policy the deny is NOT "
+                    f"overridden — the new rule is placed below it and will not take effect until that rule "
+                    f"is changed (review)",
+                    target_rule=r, position={"below": r.uid},
+                )
             else:
                 # A *specific* covering deny currently blocks the request. This tool's job is to make the
                 # requested access work, so we CREATE the least-privilege allow directly ABOVE that deny
@@ -1259,6 +1320,17 @@ def _decide(req: AccessRequest, rules: list[ParsedRule], options: "DecideOptions
         # cleanup is excluded.)
         if (r.is_drop and not complex_eff and covering_drop is None
                 and interferes and not fully_covers and not _is_catchall(r)):
+            if not options.override_blocking_deny:
+                # Tunable: don't override the deny. Place below it — first-match still drops the part this
+                # rule covers, and the new rule grants the rest. STOP (return) so a lower Accept isn't read
+                # as a NO_OP.
+                return Decision(
+                    Outcome.CREATE,
+                    f"rule {r.number} ({r.name}) partially denies the requested scope; per policy the deny "
+                    f"is NOT overridden — the new rule is placed below it (grants only the part the deny "
+                    f"doesn't block)",
+                    target_rule=r, position={"below": r.uid},
+                )
             # An overlapping deny blocks PART of the requested scope. Create the allow ABOVE it so the full
             # request takes effect (first-match hits the allow before this partial deny).
             return Decision(
@@ -1275,8 +1347,8 @@ def _decide(req: AccessRequest, rules: list[ParsedRule], options: "DecideOptions
         # other cells. If a rule's source is {win_client, win_server} and only win_server was requested,
         # widening its destination would also grant win_client -> over-grant. Requiring equality (and
         # adding to the cell, never to a shared group) means we grant precisely src x dst x svc.
-        if (widen_target is None and r.is_accept and not complex_eff and not svc_indeterminate
-                and not r.conditional and covering_drop is None):
+        if (options.prefer_widen and widen_target is None and r.is_accept and not complex_eff
+                and not svc_indeterminate and not r.conditional and covering_drop is None):
             # A non-differing dimension may serve as the "must be EQUAL" guard ONLY if it is a real,
             # exact extent. An approx cell (an infra object resolved to its main IP — true reach may be
             # wider) that reads EQUAL is an UNDER-approximation: widening the third dimension would grant
@@ -1954,10 +2026,17 @@ def _correlate(session, req: AccessRequest):
 
 
 def _decide_options() -> "DecideOptions":
-    """Build the engine's automation options from the admin's Settings (best-effort)."""
+    """Build the engine's decision/placement knobs from the admin's Settings (best-effort). Each Setting is
+    registered with the same default as DecideOptions, so an unconfigured portal decides exactly as before."""
     try:
         from . import app_settings
-        return DecideOptions(ignore_conditions=bool(app_settings.get("aa_ignore_conditions")))
+        return DecideOptions(
+            ignore_conditions=bool(app_settings.get("aa_ignore_conditions")),
+            app_carveout=bool(app_settings.get("aa_app_carveout")),
+            override_blocking_deny=bool(app_settings.get("aa_override_blocking_deny")),
+            prefer_widen=bool(app_settings.get("aa_prefer_widen")),
+            emit_notes=bool(app_settings.get("aa_emit_notes")),
+        )
     except Exception:  # noqa: BLE001
         return DecideOptions()
 

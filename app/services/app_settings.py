@@ -134,14 +134,42 @@ SETTINGS: list[Setting] = [
             "Name for a rule the engine creates. Placeholder: {ticket}. With no ticket id (and a "
             "ticket-based template) the rule is left unnamed and Check Point auto-names it.",
             group="Access automation", max=120),
-    # Automation behaviour. The engine is reuse-or-create: it never stops for a policy "review" (a
-    # blocking deny just gets the new allow placed ABOVE it). This one knob tunes conditional rules.
+    # --- Decision / placement logic (tune the engine from here — no code) ----------------------------
+    # Each knob maps to one judgment call in the reuse-or-create engine; defaults are the recommended
+    # behaviour, so leaving them as-is decides exactly as documented. (See the "How it decides" diagram.)
+    Setting("aa_app_carveout", "bool", True,
+            "Carve out an application above a blocking rule",
+            "When an APPLICATION request (e.g. Facebook) is blocked by a rule in its path (a broad L4 "
+            "port Drop, or an app-category Drop), create the new app-Accept ABOVE that rule. Check Point "
+            "then identifies the app and accepts it while all other traffic still hits the blocking rule "
+            "— a precise carve-out that actually achieves the request. OFF: place the new rule below and "
+            "just flag it (conservative, but the rule may be shadowed and not take effect).",
+            group="Access automation logic"),
+    Setting("aa_override_blocking_deny", "bool", True,
+            "Override a blocking deny by placement",
+            "When an existing Drop already blocks the request, create the new allow ABOVE it so the access "
+            "takes effect (the deny still applies to everything else). OFF: never override an admin's "
+            "deny — place the new rule below it (it won't take effect until the deny is changed) and flag "
+            "it for review.",
+            group="Access automation logic"),
+    Setting("aa_prefer_widen", "bool", True,
+            "Reuse a rule by widening it when possible",
+            "Prefer adding the request's value to an existing matching rule's cell (no new rule) when a "
+            "rule matches exactly in the other two columns. OFF: always create a fresh least-privilege "
+            "rule instead of widening a shared one.",
+            group="Access automation logic"),
+    Setting("aa_emit_notes", "bool", True,
+            "Show advisory 'review later' notes",
+            "Attach the advisory 'possible match — review later' notes (opaque/conditional rules in the "
+            "path, etc.). OFF: quiet mode — the notes are hidden. Placement safety is unchanged either way; "
+            "only the advisories are suppressed.",
+            group="Access automation logic"),
     Setting("aa_ignore_conditions", "bool", False,
             "Evaluate conditional rules as unconditional",
             "Treat rules scoped by a column the engine doesn't model (VPN community/direction, time, "
             "data/content, install-on) as if that condition weren't there — so a conditional Accept can "
-            "count as covering and a conditional Drop as blocking, instead of routing to review.",
-            group="Access automation"),
+            "count as covering and a conditional Drop as blocking.",
+            group="Access automation logic"),
 
     # --- MCP / agent ---------------------------------------------------------------------------------
     # The /mcp endpoint (for n8n / LLM agents) is enabled by DCSIM_MCP_TOKEN. This gates whether an agent
