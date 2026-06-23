@@ -21,6 +21,8 @@
     overflow:auto; font-size:12.5px; line-height:1.5; margin:0; color:var(--text);
     font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
   .mcp-cfg pre.one { white-space:pre-wrap; word-break:break-all; }   /* single-line value wraps, never scrolls */
+  .mcp-cfg pre.wrap { white-space:pre-wrap; overflow-wrap:break-word; padding:14px; }   /* prose: wrap, no h-scroll */
+  .mcp-sys-actions { display:flex; gap:8px; flex-wrap:wrap; }
   .mcp-keyhead { font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.03em; margin:0 0 4px; }
   .mcp-tokrow { display:flex; align-items:center; gap:10px; margin:0 0 10px; flex-wrap:wrap; }
   /* override the global input{width:100%} so the field doesn't eat the row and wrap the buttons */
@@ -77,9 +79,12 @@ focused on the access-automation engine.</p>
     It teaches the order — <b>pick the management server &amp; layer → decide (read-only) → apply on your OK</b> — so a smaller
     model doesn't guess a server/layer or loop. Drawbridge can hold <b>several management servers</b>, so the agent always
     resolves <i>which</i> one (and asks you when it's ambiguous).</p>
-  <div class="mcp-cfg">
-    <button type="button" class="copybtn" id="mcp-sys-copy" style="position:absolute;right:8px;top:8px;">Copy</button>
-    <pre id="mcp-sysprompt"></pre>
+  <div class="mcp-sys-actions">
+    <button type="button" class="copybtn" id="mcp-sys-toggle" aria-expanded="false">Show prompt</button>
+    <button type="button" class="copybtn" id="mcp-sys-copy">Copy</button>
+  </div>
+  <div class="mcp-cfg" id="mcp-sys-box" hidden style="margin-top:10px;">
+    <pre id="mcp-sysprompt" class="wrap"></pre>
   </div>
 </div>
 
@@ -197,6 +202,13 @@ Rules:
 - Be concise. Don't loop. If a step fails, surface the error and ask how to proceed.`;
     document.getElementById('mcp-sysprompt').textContent = SYSPROMPT;
     document.getElementById('mcp-sys-copy').addEventListener('click', function () { copyText(this, SYSPROMPT); });
+    var sysBox = document.getElementById('mcp-sys-box'), sysToggle = document.getElementById('mcp-sys-toggle');
+    sysToggle.addEventListener('click', function () {
+      var opening = sysBox.hasAttribute('hidden');
+      if (opening) sysBox.removeAttribute('hidden'); else sysBox.setAttribute('hidden', '');
+      this.textContent = opening ? 'Hide prompt' : 'Show prompt';
+      this.setAttribute('aria-expanded', String(opening));
+    });
     var genBtn = document.getElementById('mcp-gen'), genHint = document.getElementById('mcp-genhint');
     genBtn.addEventListener('click', function () {
       genBtn.disabled = true; var old = genBtn.textContent; genBtn.textContent = 'Generating…';
