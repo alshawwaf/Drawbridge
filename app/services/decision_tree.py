@@ -49,70 +49,76 @@ class Edge:
 # recursion ("Apply Layer" sub-rulebase); (c) the Settings-driven ignore-conditions mode; (d) how the
 # chosen objects are materialised on apply (reuse-or-create vs reuse-only). Keep this in lock-step with
 # access_automation.decide() + _apply().
+# Layout is a TIDY GRID (hand-placed coords; the on-page renderer reads x/y directly). CORE = a clean two-
+# column spine: left column (x=40) holds the decision chain req→resolve→perm→deny→create stacked by row;
+# the right column (x=430) holds each row's outcome/branch (noteO, noop, widen, doWiden) aligned to its
+# decision. deny→create runs straight down the spine (no skip-edge over widen). DETAIL clusters sit in
+# their own well-separated regions: identity-matching as a left→right tree (top-right), the inline + opts
+# nodes in an x=900 column, and the apply/materialise fan along the bottom. Keep new nodes on this grid.
 NODES: list[Node] = [
+    # --- CORE spine (left column x=40) + its row-aligned outcomes (right column x=430) ------------
     Node("req", "Access request", "source · destination · service / app — each endpoint an IP/CIDR/Any or a typed object",
-         "start", 60, 20, 300, 72),
+         "start", 40, 40, 300, 72),
     Node("resolve", "Resolve request + each rule cell (top-down, first match wins)",
          "IP: host / network / range / group (exact) · gateway / cluster / mgmt (approx) · typed object → matched by identity · else opaque → note & continue",
-         "process", 60, 256, 320, 104),
+         "process", 40, 200, 320, 104),
     Node("noteO", "Note & keep going", "anything we can’t fully resolve — an OPAQUE rule (updatable feed · negated / unparsable cell · non-Accept/Drop action), a CONDITIONAL rule (VPN / time / data / install-on), or a request that SPLITS across an inline layer — is flagged “review later”, NOT stopped. The walk continues; the new rule is placed BELOW it so it can’t leap over a possible block.",
-         "note", 460, 264, 320, 116),
+         "note", 430, 196, 320, 116),
     Node("perm", "Already permitted?", "first reachable Accept covering all 3 columns, before any covering drop",
-         "decision", 60, 400, 300, 68),
-    Node("noop", "No-op", "already allowed — just attach the rule to the ticket", "noop", 460, 402, 250),
+         "decision", 40, 400, 300, 68),
+    Node("noop", "No-op", "already allowed — just attach the rule to the ticket", "noop", 430, 402, 250),
     Node("deny", "Resolved deny covering the path?",
          "a covering / partial DROP we can fully resolve → CREATE the allow ABOVE it so the access works (first-match then hits the allow). A conditional / opaque possible-deny is NOT here — it’s noted & passed, above.",
-         "decision", 60, 516, 320, 104),
+         "decision", 40, 540, 320, 104),
     Node("widen", "Two columns equal the request?", "the third differs → add the request’s value to THAT rule cell (suppressed if an opaque possible-deny was passed)",
-         "decision", 60, 700, 300, 84),
+         "decision", 430, 552, 300, 84),
     Node("doWiden", "Widen the rule", "add the differing source / destination / service to the cell (never a shared group)",
-         "widen", 460, 706, 260, 72),
+         "widen", 430, 760, 260, 72),
     Node("create", "Create least-privilege rule",
          "above a blocking / cleanup drop · below a more-specific rule · BELOW any opaque possible-deny that was passed · else bottom", "create",
-         60, 820, 320, 84),
+         40, 760, 320, 84),
 
     # --- DETAIL tier 1: HOW each source/destination is matched (IP space vs identity space) -------
-    # A self-contained branch off "resolve" explaining the typed-object framework: each object KIND is
-    # its own match space, so cross-kind is provably disjoint (mirrors svc apps-vs-ports). Terminal
-    # process nodes describe "then continues the normal Accept/deny/widen checks above" rather than
-    # drawing an edge back to a core leaf (keeps the detail subtree self-contained).
+    # A self-contained branch off "resolve", laid out left→right: kindq → {ipspace, idspace} →
+    # {iddomain, idexact, iddisjoint} → idupd. Each object KIND is its own match space, so cross-kind is
+    # provably disjoint (mirrors svc apps-vs-ports). Terminal nodes describe "then continues the normal
+    # checks above" rather than drawing an edge back to a core leaf (keeps the subtree self-contained).
     Node("kindq", "How is each source / destination matched?", "by its KIND — an IP/CIDR/Any, or a typed object",
-         "decision", 900, 250, 300, 68, level=1),
+         "decision", 900, 120, 300, 68, level=1),
     Node("ipspace", "IP space", "compare IPv4 / IPv6 intervals · host = exact · gateway / cluster / mgmt = approx (under-count — never proven disjoint)",
-         "process", 900, 120, 320, 96, level=1),
+         "process", 1300, 30, 320, 96, level=1),
     Node("idspace", "Identity space (typed object)", "matched by OBJECT IDENTITY, not by IP — the policy as written, not runtime DNS",
-         "process", 900, 372, 320, 84, level=1),
+         "process", 1300, 210, 320, 84, level=1),
     Node("iddomain", "Domain request", "covered by Any, or a dns-domain object EQUAL-TO / a PARENT-OF the FQDN (.example.com covers www.example.com; an exact object covers only itself)",
-         "decision", 900, 500, 340, 96, level=1),
+         "decision", 1700, 150, 340, 96, level=1),
     Node("idexact", "Role / dynamic / updatable / zone", "matched by EXACT object name (its own identity)",
-         "process", 1280, 470, 280, 72, level=1),
+         "process", 1700, 300, 280, 72, level=1),
     Node("iddisjoint", "Different kinds never collide", "a domain ≠ an IP / role / zone object → provably OUT of the request’s path (can’t satisfy OR block it)",
-         "process", 1280, 600, 340, 96, level=1),
+         "process", 1700, 432, 340, 96, level=1),
     Node("idupd", "Note & keep going", "a domain meets an updatable feed (e.g. Office365) — it may contain the FQDN, so it’s flagged “review later” and the walk continues (never a hard stop)",
-         "note", 900, 640, 340, 96, level=1),
+         "note", 2100, 150, 340, 96, level=1),
 
-    # --- DETAIL tier 1: inline-layer recursion ("Apply Layer") -----------------------------------
+    # --- DETAIL tier 1: inline-layer recursion + automation mode (x=900 column, below kindq) ------
     Node("inline", "In-path rule applies an inline layer?", "action “Apply Layer” — a sub-rulebase",
-         "decision", 900, 800, 280, 68, level=1),
+         "decision", 900, 340, 280, 68, level=1),
     Node("recurse", "Descend into the inline layer",
          "re-runs this whole flow INSIDE it — its own no-op / widen / create, plus the layer’s implicit cleanup. Only a request that SPLITS across the inline + parent layers is left for a human.",
-         "process", 900, 928, 330, 116, level=1),
-    # --- DETAIL tier 1: Settings-driven automation mode (own leaf, no cross-edge) -----------------
+         "process", 1300, 470, 330, 116, level=1),
     Node("opts", "Automation mode (Settings): ignore-conditions",
          "optionally treat VPN / time / data / install-on rules as unconditional — a conditional Accept then counts as covering and a conditional Drop as a resolved block (create above it), instead of being noted & passed",
-         "process", 60, 940, 360, 96, level=1),
+         "process", 900, 560, 360, 96, level=1),
 
-    # --- DETAIL tier 1: object materialisation on apply (reuse-or-create vs reuse-only) -----------
+    # --- DETAIL tier 1: object materialisation on apply — a fan along the bottom -------------------
     Node("apply", "On apply: materialise the objects", "reuse an existing object, else create it — then write the rule",
-         "process", 460, 1080, 300, 72, level=1),
+         "process", 430, 940, 300, 72, level=1),
     Node("matIP", "IP endpoint", "reuse a host / network by IP, else add-host / add-network (a CIDR stays a NETWORK — never narrowed to /32)",
-         "process", 380, 1200, 320, 96, level=1),
+         "process", 40, 1100, 320, 96, level=1),
     Node("matMk", "Domain / dynamic-object", "reuse, else add-dns-domain (leading dot = sub-domains) / add-dynamic-object",
-         "process", 740, 1200, 320, 84, level=1),
+         "process", 430, 1100, 320, 84, level=1),
     Node("matReuse", "Reuse-only object?", "access-role · security-zone · updatable-object", "decision",
-         1100, 1200, 300, 72, level=1),
+         820, 1100, 300, 72, level=1),
     Node("matMissing", "Note: define it first", "a reuse-only object that’s missing can’t be fabricated from a request — create it once (Identity Awareness / topology / CP repository), then re-run",
-         "note", 1100, 1330, 340, 96, level=1),
+         "note", 820, 1244, 340, 96, level=1),
 ]
 
 EDGES: list[Edge] = [

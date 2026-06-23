@@ -603,8 +603,9 @@ Content-Type: application/json
       return 'M' + p[0] + ',' + p[1] + ' C' + c1[0] + ',' + c1[1] + ' ' + c2[0] + ',' + c2[1] + ' ' + q[0] + ',' + q[1];
     }
 
-    // per-node position overrides from user drag — persisted per browser so a custom layout survives reload
-    var LSKEY = 'dt-layout-v1', override = {};
+    // per-node position overrides from user drag — persisted per browser so a custom layout survives reload.
+    // Bump the version when the DEFAULT layout changes so a stale saved arrangement doesn't mask the new one.
+    var LSKEY = 'dt-layout-v2', override = {};
     try { override = JSON.parse(localStorage.getItem(LSKEY) || '{}') || {}; } catch (e) { override = {}; }
     function saveOverride() { try { localStorage.setItem(LSKEY, JSON.stringify(override)); } catch (e) {} }
     function nodeX(n) { return (override[n.id] && override[n.id].x != null) ? override[n.id].x : n.x; }
