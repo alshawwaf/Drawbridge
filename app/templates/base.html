@@ -403,7 +403,6 @@
        rounded top corners, which is what left a white notch when the whole modal was the scroll area). */
     #form-modal .modal { max-width:670px; text-align:left; padding:0; overflow:hidden;
       display:flex; flex-direction:column; }
-    #form-modal.fm-wide .modal { max-width:880px; }   /* a read view (detail) needs more room than a form */
     #form-modal .fm-head { flex:none; z-index:3; display:flex; align-items:center; gap:12px;
       margin:0; padding:8px 14px 8px 22px; color:#fff;
       background:linear-gradient(100deg, var(--accent) 0%, #c026d3 46%, #7b3ff2 100%);
@@ -744,8 +743,7 @@
       }
       function open(url, title, view) {
         titleEl.textContent = title || '';
-        fm.classList.toggle('fm-wide', !!view);     // a read view needs more room than a form
-        fmIsView = !!view;
+        fmIsView = !!view;     // view and form share one width — opening Edit from a view never resizes
         bodyEl.innerHTML = '<p class="muted">Loading…</p>';
         fm.hidden = false;
         fetch(url, { headers: { 'X-Fragment': '1' } })
