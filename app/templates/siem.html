@@ -10,7 +10,6 @@
     <p class="ph-sub">Point Check Point's <b>Log Exporter</b> at the portal and watch the logs land here — live proof that gateway logs reach the SIEM. Parses <b>CEF</b>, <b>LEEF</b>, <b>JSON</b>, <b>key=value</b> field lists (Splunk / LogRhythm / Generic / RSA), and plain syslog over TCP/UDP.</p>
   </div>
   <div class="ph-actions">
-    {{ export_menu('siem') }}
     <span class="livewrap">
       {% if not enabled %}<span class="livedot off"></span><span>Listener off</span>
       {% elif paused %}<span class="livedot" style="background:#f5a623; box-shadow:0 0 0 3px rgba(245,166,35,.18);"></span><span>Paused — dropping logs</span>
@@ -62,6 +61,7 @@ cp_log_export restart name <span class="cmd-name">dcsim-siem-cef-udp</span></pre
   <button class="chip {{ 'active' if key == '' else '' }}" type="button" data-fmt="{{ key }}">{{ label }}</button>
   {% endfor %}
   <span class="grow"></span>
+  {{ export_menu('siem') }}
   <label class="ctl">Show
     <select id="siem-page-size">{% for n in page_sizes %}<option value="{{ n }}" {{ 'selected' if n == page_size else '' }}>{{ n }}</option>{% endfor %}</select>
   </label>

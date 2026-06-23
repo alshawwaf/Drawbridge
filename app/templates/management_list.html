@@ -26,7 +26,7 @@
   <tbody>
   {% for r in rows %}
     <tr>
-      <td><a class="feedname cellclip" href="/management/{{ r.ms.id }}" title="{{ r.ms.name }}">{{ r.ms.name }}</a></td>
+      <td><a class="feedname cellclip" href="/management/{{ r.ms.id }}" title="{{ r.ms.name }}" data-modal-view="/management/{{ r.ms.id }}" data-modal-title="{{ r.ms.name }}">{{ r.ms.name }}</a></td>
       {% if 'address' in vis %}<td><code class="cellclip mono" title="{{ r.ms.host }}:{{ r.ms.port }}">{{ r.ms.host }}:{{ r.ms.port }}</code></td>{% endif %}
       {% if 'domain' in vis %}<td class="nowrap">{{ r.ms.domain or '—' }}</td>{% endif %}
       {% if 'username' in vis %}<td class="nowrap">{{ r.ms.username or '—' }}</td>{% endif %}
@@ -34,7 +34,8 @@
       {% if 'secret' in vis %}<td class="nowrap">{% if r.has_secret %}<span class="pill ok">saved</span>{% else %}<span class="pill faint">none</span>{% endif %}</td>{% endif %}
       {% if 'created' in vis %}<td class="nowrap"><time class="ts mono" data-ts="{{ r.ms.created_at.isoformat() }}">{{ r.ms.created_at.strftime('%Y-%m-%d') }}</time></td>{% endif %}
       {{ row_actions(
-           links=[{'label':'Edit','url':'/management/' ~ r.ms.id ~ '/edit', 'modal':'Edit management server'}],
+           links=[{'label':'Open','url':'/management/' ~ r.ms.id, 'view': r.ms.name},
+                  {'label':'Edit','url':'/management/' ~ r.ms.id ~ '/edit', 'modal':'Edit management server'}],
            menu=[{'label':'Test connection','attrs':'data-test="/management/'|safe ~ r.ms.id ~ '/test" data-name="'|safe ~ (r.ms.name | e) ~ '"'|safe}],
            delete={'url':'/management/' ~ r.ms.id ~ '/delete', 'name': r.ms.name}
          ) }}

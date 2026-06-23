@@ -2,9 +2,11 @@
 
 CloudGuard authenticates with a service-account **bearer token** and calls ``GET /api`` then
 ``GET /api/v1/{nodes,pods,services,endpoints}``. We serve those at the **root** (apex single-tenant,
-resolving the most-recently created Kubernetes datacenter). The kube-apiserver default port is **6443**;
-since the portal answers on 443 the admin enters ``<host>:443``. Token routes (``/k8s/<token>/...``)
-are kept for direct testing. Every call is in the Activity log.
+resolving the most-recently created Kubernetes datacenter). The kube-apiserver default port is 6443, but
+the connector parses this field with ``new URL()`` — so the admin enters the full URL ``https://<host>``
+(scheme required, **no** port; a bare ``host:443`` fails with “unknown protocol”). It then connects on
+443 (the portal's port). Token routes (``/k8s/<token>/...``) are kept for direct testing. Every call is
+in the Activity log.
 
 **Routing:** ``/api/v1/...`` is shared with the NSX-T family mock (which has an ``/api/v1/{rest}``
 catch-all). The Kubernetes paths (``/api/v1/nodes|pods|services|endpoints`` and ``GET /api``) are
