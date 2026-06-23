@@ -38,7 +38,7 @@ def _secret_info(key: str) -> bytes:
 @dataclass(frozen=True)
 class Setting:
     key: str
-    kind: str                       # "bool" | "int" | "str" | "secret"
+    kind: str                       # "bool" | "int" | "str" | "secret" | "choice"
     default: Union[bool, int, str]
     label: str
     help: str
@@ -46,6 +46,7 @@ class Setting:
     min: int = 0
     max: int = 0                    # for "str": max length (0 → default cap)
     generate: bool = False          # secret-only: offer a "Generate" button (a strong random token)
+    choices: tuple = ()             # choice-only: ((value, label), …) rendered as a <select>; value validated
 
 
 SETTINGS: list[Setting] = [
@@ -137,6 +138,20 @@ SETTINGS: list[Setting] = [
     # --- Decision / placement logic (tune the engine from here — no code) ----------------------------
     # Each knob maps to one judgment call in the reuse-or-create engine; defaults are the recommended
     # behaviour, so leaving them as-is decides exactly as documented. (See the "How it decides" diagram.)
+    # A PROFILE bundles all the knobs into one choice; "Custom" hands control back to the toggles below.
+    Setting("aa_profile", "choice", "balanced",
+            "Behavior profile",
+            "A one-click preset for how aggressively the engine reshapes policy. Conservative: never "
+            "touch existing rules or override a deny (always create a new rule, place it below any block, "
+            "flag it). Balanced (recommended): reuse/widen where exact, carve apps and override denies by "
+            "placement so the access works, conditions respected, advisories on. Aggressive: same as "
+            "Balanced plus treat conditional rules as unconditional and stay quiet (no advisory notes). "
+            "Custom: ignore the profile and use the individual toggles below.",
+            group="Access automation logic",
+            choices=(("balanced", "Balanced — recommended default"),
+                     ("conservative", "Conservative — never modify or override existing rules"),
+                     ("aggressive", "Aggressive — fewest rules, least friction"),
+                     ("custom", "Custom — use the individual toggles below"))),
     Setting("aa_app_carveout", "bool", True,
             "Carve out an application above a blocking rule",
             "When an APPLICATION request (e.g. Facebook) is blocked by a rule in its path (a broad L4 "
@@ -251,6 +266,9 @@ def defaults() -> dict:
 def _coerce(s: Setting, raw):
     if s.kind == "bool":
         return str(raw) == "1"
+    if s.kind == "choice":
+        v = "" if raw is None else str(raw)
+        return v if v in {c[0] for c in s.choices} else s.default   # unknown value -> default (fail safe)
     if s.kind == "str":
         return ("" if raw is None else str(raw))[: (s.max or 200)]
     try:
@@ -264,7 +282,7 @@ def _to_text(s: Setting, value) -> str:
     if s.kind == "bool":
         truthy = value is True or str(value).strip().lower() in ("1", "true", "on", "yes")
         return "1" if truthy else "0"
-    if s.kind == "str":
+    if s.kind in ("str", "choice"):
         return _coerce(s, value)
     return str(_coerce(s, str(value)))
 

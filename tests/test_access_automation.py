@@ -1611,6 +1611,47 @@ def test_override_blocking_deny_off_places_below():
     assert d.outcome is Outcome.CREATE and d.position == {"below": "rd"}                # don't override
 
 
+# --- behavior PROFILES bundle the knobs (one-click presets); custom falls back to the toggles -----
+def test_decide_options_resolves_named_profiles(monkeypatch):
+    from app.services import app_settings
+    store = {}
+    monkeypatch.setattr(app_settings, "get", lambda k: store.get(k))
+
+    store["aa_profile"] = "balanced"                       # == the recommended defaults
+    o = aa._decide_options()
+    assert (o.app_carveout, o.override_blocking_deny, o.prefer_widen, o.emit_notes, o.ignore_conditions) \
+        == (True, True, True, True, False)
+
+    store["aa_profile"] = "conservative"                   # never modify/override; always create-below, flag
+    o = aa._decide_options()
+    assert (o.app_carveout, o.override_blocking_deny, o.prefer_widen, o.emit_notes, o.ignore_conditions) \
+        == (False, False, False, True, False)
+
+    store["aa_profile"] = "aggressive"                      # fewest rules, ignore conditions, quiet
+    o = aa._decide_options()
+    assert o.prefer_widen and o.app_carveout and o.override_blocking_deny and o.ignore_conditions \
+        and not o.emit_notes
+
+
+def test_decide_options_custom_uses_individual_toggles(monkeypatch):
+    from app.services import app_settings
+    store = {"aa_profile": "custom", "aa_app_carveout": False, "aa_override_blocking_deny": True,
+             "aa_prefer_widen": False, "aa_emit_notes": True, "aa_ignore_conditions": True}
+    monkeypatch.setattr(app_settings, "get", lambda k: store.get(k))
+    o = aa._decide_options()
+    assert (o.app_carveout, o.override_blocking_deny, o.prefer_widen, o.emit_notes, o.ignore_conditions) \
+        == (False, True, False, True, True)
+
+
+def test_choice_setting_coercion_fails_safe_to_default():
+    from app.services import app_settings as A
+    s = A._BY_KEY["aa_profile"]
+    assert s.kind == "choice" and s.default == "balanced"
+    assert A._coerce(s, "aggressive") == "aggressive"        # valid choice kept
+    assert A._coerce(s, "nonsense") == "balanced"            # unknown value -> default (fail safe)
+    assert A._coerce(s, None) == "balanced"
+
+
 # ===== services-group / named-service request must MATCH dereferenced rule cells (DNS-layer miss) =====
 def test_services_group_request_descends_into_matching_inline_layer():
     # a 'dns' services-group request, expanded by correlation to its member ports, matches a rule that
