@@ -108,7 +108,39 @@ def aa_detail(sid: int, request: Request, db: Session = Depends(get_db)):
                                       {"ms": ms, "has_secret": mgmt_creds.has_secret(db, ms),
                                        "decision_graph_json": json.dumps(
                                            decision_tree.to_graph()).replace("<", "\\u003c"),
+                                       "aa_options_json": json.dumps(_aa_option_state()).replace("<", "\\u003c"),
                                        "flash": _pop_flash(request)})
+
+
+_AA_OPTION_KEYS = ("aa_app_carveout", "aa_override_blocking_deny", "aa_prefer_widen",
+                   "aa_emit_notes", "aa_ignore_conditions")
+
+
+def _aa_option_state() -> dict:
+    """The current EFFECTIVE decision knobs (after the active profile resolves) + the active profile name —
+    drives the click-to-toggle pills on the decision diagram."""
+    o = aa._decide_options()
+    return {"profile": str(app_settings.get("aa_profile") or "custom"),
+            "values": {"aa_app_carveout": o.app_carveout, "aa_override_blocking_deny": o.override_blocking_deny,
+                       "aa_prefer_widen": o.prefer_widen, "aa_emit_notes": o.emit_notes,
+                       "aa_ignore_conditions": o.ignore_conditions}}
+
+
+class AAOptionBody(BaseModel):
+    key: str
+    value: bool
+
+
+@router.post("/access-automation/decision-option")
+def aa_decision_option(body: AAOptionBody, request: Request, db: Session = Depends(get_db)):
+    """Click-to-toggle a decision knob straight from the diagram. Sets the knob AND switches the profile to
+    Custom (so the toggle takes effect — a named profile would otherwise override it). Data-only (no code)."""
+    if get_user_or_none(request, db) is None:
+        raise HTTPException(status_code=401, detail="authentication required")
+    if body.key not in _AA_OPTION_KEYS:
+        return JSONResponse({"error": "unknown option"}, status_code=400)
+    app_settings.save({body.key: bool(body.value), "aa_profile": "custom"})
+    return {"ok": True, **_aa_option_state()}
 
 
 def _run(db: Session, sid: int, user: User, body: AccessReqBody, *, do_apply: bool):
