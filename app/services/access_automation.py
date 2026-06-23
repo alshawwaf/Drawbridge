@@ -987,6 +987,24 @@ class DecideOptions:
                                            # quiet mode (placement safety is unchanged, only the notes drop)
 
 
+def _widen_above_block(widen_target: ParsedRule, widen_field: str, blocker: ParsedRule) -> "Decision":
+    """A WIDEN preferred over creating a NEW rule above an in-path block: ``widen_target`` is a clean
+    reachable ACCEPT (EQUAL to the request in two dimensions) that ALREADY sits above ``blocker`` in the
+    top-down walk, so extending its third dimension grants the request there by first-match and the block
+    is moot — the same effect as a create-above carve-out, with one fewer rule. Only chosen when widening
+    is safe (prefer_widen on, a target found, no opaque possible-deny passed, and — for a real deny — the
+    operator allows overriding denies)."""
+    others = {"source": "destination + service", "destination": "source + service",
+              "service": "source + destination"}[widen_field]
+    return Decision(
+        Outcome.WIDEN,
+        f"rule {widen_target.number} ({widen_target.name}) already matches the request's {others} and sits "
+        f"above the blocking rule {blocker.number} ({blocker.name}); widening it grants the access there "
+        f"(first-match) — no new rule needed",
+        target_rule=widen_target, widen_field=widen_field,
+    )
+
+
 def decide(req: AccessRequest, rules: list[ParsedRule], options: "DecideOptions" = None) -> Decision:
     """Pure: pick the minimal correct change for ``req`` against ``rules``.
 
@@ -1117,6 +1135,13 @@ def _decide(req: AccessRequest, rules: list[ParsedRule], options: "DecideOptions
         if (req_svc.apps and r.is_drop and interferes
                 and covering_drop is None and not (_is_catchall(r) and i == last_enabled)):
             if options.app_carveout:
+                # Prefer WIDENING a clean accept candidate already found ABOVE this drop over a new carve-out
+                # rule — the widened rule sits above the drop, so first-match grants the app and the drop is
+                # moot (same effect, one fewer rule). Safe: target above, no opaque possible-deny passed.
+                # GATED BY app_carveout: when carve-out is OFF the operator wants NO grant above the drop, so
+                # we must NOT widen (that would put the grant above it = override) — fall through to place-below.
+                if options.prefer_widen and widen_target is not None and not uncertain_deny:
+                    return _widen_above_block(widen_target, widen_field, r)
                 return Decision(
                     Outcome.CREATE,
                     f"rule {r.number} ({r.name}) may block the requested application; creating the allow "
@@ -1313,6 +1338,10 @@ def _decide(req: AccessRequest, rules: list[ParsedRule], options: "DecideOptions
                     target_rule=r, position={"below": r.uid},
                 )
             else:
+                # Prefer widening a clean accept already above this deny over a new rule (overriding denies
+                # is allowed here, and the widened rule sits above the deny -> first-match grants it).
+                if options.prefer_widen and widen_target is not None and not uncertain_deny:
+                    return _widen_above_block(widen_target, widen_field, r)
                 # A *specific* covering deny currently blocks the request. This tool's job is to make the
                 # requested access work, so we CREATE the least-privilege allow directly ABOVE that deny
                 # (first-match then hits the allow). The reason names the deny so the operator sees exactly
@@ -1341,6 +1370,9 @@ def _decide(req: AccessRequest, rules: list[ParsedRule], options: "DecideOptions
                     f"doesn't block)",
                     target_rule=r, position={"below": r.uid},
                 )
+            # Prefer widening a clean accept already above this partial deny over a new rule.
+            if options.prefer_widen and widen_target is not None and not uncertain_deny:
+                return _widen_above_block(widen_target, widen_field, r)
             # An overlapping deny blocks PART of the requested scope. Create the allow ABOVE it so the full
             # request takes effect (first-match hits the allow before this partial deny).
             return Decision(

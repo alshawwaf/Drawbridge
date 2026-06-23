@@ -167,6 +167,51 @@ def test_decide_app_create_when_two_dims_differ():
     assert d.outcome is Outcome.CREATE
 
 
+def test_decide_app_widens_accept_above_drop_instead_of_carving_out():
+    # The reported case: a win_client Facebook ACCEPT sits ABOVE a "Silent Drop"; a win_server Facebook
+    # request should WIDEN that accept's source (it already sits above the drop -> first-match grants it)
+    # rather than create a NEW carve-out rule. Tidier, same effect.
+    acc = _rule("acc", 2, "Accept", _host("10.1.2.222"), ANY, _app({"Facebook"}))
+    drop = _rule("sdrop", 3, "Drop", ANY, ANY, _tcp(67))      # specific service -> not the catch-all
+    d = aa.decide(AccessRequest(["10.1.2.250/32"], ["Any"], application="Facebook"), [acc, drop, CLEANUP])
+    assert d.outcome is Outcome.WIDEN and d.widen_field == "source" and d.target_rule.uid == "acc"
+
+
+def test_decide_app_carves_out_above_drop_when_no_widen_candidate():
+    # No accept candidate above the drop -> the conservative carve-out (create ABOVE the drop) still applies.
+    drop = _rule("sdrop", 3, "Drop", ANY, ANY, _tcp(67))
+    d = aa.decide(AccessRequest(["10.1.2.250/32"], ["Any"], application="Facebook"), [drop, CLEANUP])
+    assert d.outcome is Outcome.CREATE and d.position == {"above": "sdrop"}
+
+
+def test_decide_app_carveout_when_prefer_widen_off():
+    # prefer_widen OFF: widen is never chosen even with a candidate -> carve out above the drop (knob honored).
+    acc = _rule("acc", 2, "Accept", _host("10.1.2.222"), ANY, _app({"Facebook"}))
+    drop = _rule("sdrop", 3, "Drop", ANY, ANY, _tcp(67))
+    opts = aa.DecideOptions(prefer_widen=False)
+    d = aa.decide(AccessRequest(["10.1.2.250/32"], ["Any"], application="Facebook"), [acc, drop, CLEANUP], opts)
+    assert d.outcome is Outcome.CREATE and d.position == {"above": "sdrop"}
+
+
+def test_decide_app_carveout_off_places_below_not_widen_even_with_candidate():
+    # carve-out OFF = "do not put an app-grant above the drop". Even with a widen candidate above the drop,
+    # we must NOT widen (that would override the drop) -> create BELOW the drop, honoring the operator choice.
+    acc = _rule("acc", 2, "Accept", _host("10.1.2.222"), ANY, _app({"Facebook"}))
+    drop = _rule("sdrop", 3, "Drop", ANY, ANY, _tcp(67))
+    opts = aa.DecideOptions(app_carveout=False)              # prefer_widen stays default True
+    d = aa.decide(AccessRequest(["10.1.2.250/32"], ["Any"], application="Facebook"), [acc, drop, CLEANUP], opts)
+    assert d.outcome is Outcome.CREATE and d.position == {"below": "sdrop"}
+
+
+def test_decide_widens_accept_above_covering_deny():
+    # Same principle for a port request: an accept (same dst+service, differing source) above a covering
+    # deny is widened instead of creating a new allow above the deny.
+    acc = _rule("acc", 2, "Accept", _host("10.1.0.9"), _host("172.16.5.10"), _tcp(443))
+    deny = _rule("dny", 3, "Drop", ANY, _host("172.16.5.10"), _tcp(443))
+    d = aa.decide(AccessRequest(["192.168.9.9/32"], ["172.16.5.10/32"], "tcp", "443"), [acc, deny, CLEANUP])
+    assert d.outcome is Outcome.WIDEN and d.widen_field == "source" and d.target_rule.uid == "acc"
+
+
 def test_execute_app_create_references_app_name_without_creating_it(monkeypatch):
     calls = []
     monkeypatch.setattr(aa, "MgmtSession", _fake_session_factory(calls))
