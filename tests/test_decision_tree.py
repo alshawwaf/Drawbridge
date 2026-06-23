@@ -162,9 +162,9 @@ def test_typed_object_matching_branch_is_drawn():
     assert ("resolve", "kindq") in edges                 # branched off the resolve step
     assert ("kindq", "ipspace") in edges and ("kindq", "idspace") in edges   # the IP vs identity fork
     assert ("idspace", "iddomain") in edges and ("idspace", "iddisjoint") in edges
-    assert ("iddomain", "idupd") in edges                # domain-vs-updatable -> review leaf
+    assert ("iddomain", "idupd") in edges                # domain-vs-updatable -> note & continue (not a stop)
     idupd = next(n for n in dt.NODES if n.id == "idupd")
-    assert idupd.kind == "review"
+    assert idupd.kind == "note"
 
 
 def test_object_materialisation_branch_is_drawn():
@@ -186,3 +186,19 @@ def test_every_typed_request_kind_is_named_in_the_tree():
     assert set(keyword) == set(aa.TYPED_KINDS), "a typed kind has no keyword mapping — update this guard"
     for kind, kw in keyword.items():
         assert kw in text, f"typed kind {kind!r} ({kw!r}) is not represented in the decision tree"
+
+
+def test_opaque_rules_note_and_continue_is_drawn():
+    # the engine NOTES opaque rules and CONTINUES (no hard REVIEW stop). The diagram must show that — a
+    # 'note' kind node + the resolve -> note -> perm "continue" path + the domain-vs-updatable case as a
+    # note. A regression that re-introduced a hard REVIEW for opaque rules would fail this guard.
+    ids = {n.id for n in dt.NODES}
+    assert "note" in {n.kind for n in dt.NODES}, "no 'note' node — the note+continue behaviour isn't drawn"
+    assert {"noteO", "idupd"} <= ids
+    assert all(n.kind == "note" for n in dt.NODES if n.id in ("noteO", "idupd"))
+    edges = {(e.src, e.dst) for e in dt.EDGES}
+    assert ("resolve", "noteO") in edges and ("noteO", "perm") in edges     # noted, then continues the walk
+    resolve = next(n for n in dt.NODES if n.id == "resolve")
+    assert "continue" in resolve.sub.lower()                                # advertises continue, not review
+    note = next(n for n in dt.NODES if n.id == "noteO")
+    assert "note" in (note.label + note.sub).lower() and note.kind == "note"

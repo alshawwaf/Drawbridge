@@ -507,6 +507,10 @@ class Decision:
     layer: Optional[str] = None                 # target layer for the change — set to an INLINE layer's
                                                 # name when the decision lands inside it (else the caller's
                                                 # top-level layer is used)
+    notes: list = field(default_factory=list)   # advisory "possible match — review later" warnings for
+                                                # opaque rules the walk continued PAST (an updatable feed,
+                                                # an unresolvable cell): never block the automated flow,
+                                                # just flag them. The outcome is still acted on.
 
 
 # --------------------------------------------------------------------------- #
@@ -931,8 +935,24 @@ def decide(req: AccessRequest, rules: list[ParsedRule], options: "DecideOptions"
 
     Walks the rulebase top-down, honouring Check Point first-match semantics. ``options`` (default: all
     conservative) lets an admin opt into auto-resolving the judgment-call REVIEWs.
+
+    Thin wrapper around ``_decide``: it owns the ``notes`` list (advisory 'possible match — review later'
+    warnings the walk raises when it CONTINUES past an opaque rule instead of hard-stopping) and tags
+    them onto whatever single outcome the walk returns — so the automated flow is never halted just
+    because some rule in the path holds an object we can't fully resolve.
     """
     options = options or DecideOptions()
+    notes: list[str] = []
+    decision = _decide(req, rules, options, notes)
+    if notes:
+        decision.notes = list(notes) + [n for n in (decision.notes or []) if n not in notes]
+    return decision
+
+
+def _decide(req: AccessRequest, rules: list[ParsedRule], options: "DecideOptions", notes: list) -> Decision:
+    """The walk itself. Appends advisory warnings to ``notes`` (shared with ``decide``); returns the
+    single chosen Decision. Recurses through ``decide`` (the wrapper) for inline layers, so a sub-layer's
+    own notes come back tagged and get merged."""
     # IPv6 is now modeled (the dual-band integer space, see _V6_BASE). v4 and v6 occupy disjoint bands and
     # the predefined "Any" spans both, so a v6 request relates correctly to v6 cells, is disjoint from
     # v4-only cells, and is still covered by the Any/Any cleanup -- which is what makes it safe to reason
@@ -975,6 +995,12 @@ def decide(req: AccessRequest, rules: list[ParsedRule], options: "DecideOptions"
     lower_anchor: Optional[ParsedRule] = None     # last rule strictly more specific than req
     conditional_skip: Optional[ParsedRule] = None  # a conditional ACCEPT we skipped (for the CREATE note)
     last_enabled = max((i for i, r in enumerate(rules) if r.enabled), default=-1)
+
+    # ``uncertain_deny`` records that the walk continued past an opaque rule that COULD block (a drop /
+    # divert). It only constrains PLACEMENT: a new allow must never be inserted ABOVE such a rule (first-
+    # match would let it leap over a possible block) -> we force bottom placement when it's set. (The
+    # advisory text lives in ``notes``, which the decide() wrapper tags onto the returned outcome.)
+    uncertain_deny = False
 
     for i, r in enumerate(rules):
         if not r.enabled:
@@ -1072,11 +1098,15 @@ def decide(req: AccessRequest, rules: list[ParsedRule], options: "DecideOptions"
             return sub
 
         if (complex_eff or svc_uncertain or not r.is_resolved_action) and interferes:
-            # Name the SPECIFIC reason this rule can't be reasoned about, rather than listing every
-            # possibility — e.g. an unresolvable destination object reads very differently from an
-            # inline layer. The trailing note adapts to the request kind: for an IP request it points
-            # the user at the typed-object feature (request access by domain/role/zone to reason about
-            # those); for a typed request it explains what's still opaque in that identity space.
+            # This rule lies in the path but holds something we can't fully resolve — an updatable feed
+            # (which may itself contain the requested object), an unresolvable/negated cell, or a non-
+            # Accept/Drop action. We do NOT hard-stop the whole request on it (that would defeat the
+            # automated flow); instead we NOTE it as a possible match to review later and CONTINUE the
+            # walk. This is SAFE because nothing we go on to do can weaken the firewall: a NO_OP writes
+            # nothing, a WIDEN/CREATE never overrides this rule (a new allow is placed BELOW any opaque
+            # possible-deny — see uncertain_deny + placement — so first-match keeps that rule's effect).
+            # (A *resolved*, provable covering/partial deny is different — it still routes to REVIEW /
+            # the override-deny toggle below; this branch is only the UN-resolvable case.)
             why = []
             if src_unknown:
                 why.append("a negated or unresolvable source")
@@ -1087,20 +1117,15 @@ def decide(req: AccessRequest, rules: list[ParsedRule], options: "DecideOptions"
             if not r.is_resolved_action:
                 why.append(f"a non-Accept/Drop action (“{r.action or 'unknown'}”)")
             detail = "; ".join(why) or "an unresolvable match condition"
-            if req.src_kind == "ip" and req.dst_kind == "ip":
-                note = ("Unresolvable objects include domain/DNS, dynamic, updatable, access-role and "
-                        "security-zone objects — request the access by object type to reason about "
-                        "those; inline layers are evaluated.")
-            else:
-                note = ("For a typed request this usually means a negated cell, an updatable feed that "
-                        "may itself contain the object, or an over-broad wildcard; inline layers are "
-                        "evaluated.")
-            return Decision(
-                Outcome.REVIEW,
-                f"rule {r.number} ({r.name}) lies in the traffic path but has {detail}, so its real reach "
-                f"can't be computed — needs human review. ({note})",
-                target_rule=r,
-            )
+            could_block = r.is_drop or not r.is_resolved_action     # might deny/divert -> placement floor
+            effect = ("may already permit it" if r.is_accept else
+                      ("may block or divert it — the new rule is placed below it, so it can't override it"
+                       if could_block else "may also match it"))
+            notes.append(f"rule {r.number} ({r.name}) lies in the path with {detail} — it {effect}; "
+                         f"review it later.")
+            if could_block:
+                uncertain_deny = True
+            continue
 
         # A rule whose match ALSO depends on a column the engine doesn't model -- a VPN community/
         # direction, a time window, a content/data type, an install-on gateway subset, or a service-
@@ -1202,7 +1227,10 @@ def decide(req: AccessRequest, rules: list[ParsedRule], options: "DecideOptions"
         if not complex_eff and _is_proper_superset(rel_src, rel_dst, rel_svc):
             lower_anchor = r
 
-    if widen_target is not None:
+    # WIDEN is suppressed once we've passed an opaque possible-deny: widening a rule that sits ABOVE such
+    # a deny would pull the request's traffic into it and let it bypass the (possible) block — a first-
+    # match under-deny. CREATE below it is the safe alternative (placement is forced to the bottom above).
+    if widen_target is not None and not uncertain_deny:
         others = {"source": "destination + service", "destination": "source + service",
                   "service": "source + destination"}[widen_field]
         return Decision(
@@ -1217,11 +1245,15 @@ def decide(req: AccessRequest, rules: list[ParsedRule], options: "DecideOptions"
         reason += (f" (rule {conditional_skip.number} ({conditional_skip.name}) overlaps this request "
                    f"but only applies under {', '.join(conditional_skip.conditions)}, so it does not "
                    f"grant this traffic)")
+    # If an opaque rule that COULD deny was passed over, never anchor the new allow on a more-specific
+    # rule above it (that could place the allow ABOVE the possible-deny -> a first-match leap over it).
+    # Drop lower_anchor so placement falls to the cleanup floor / bottom — guaranteed below any such rule.
+    anchor = None if uncertain_deny else lower_anchor
     return Decision(
         Outcome.CREATE,
         reason,
-        target_rule=covering_drop or lower_anchor,
-        position=_placement(covering_drop, lower_anchor),
+        target_rule=covering_drop or anchor,
+        position=_placement(covering_drop, anchor),
     )
 
 
@@ -1626,6 +1658,8 @@ def build_preview(session, decision: Decision, req: AccessRequest, rules: list[P
     """Read-only: report exactly what execute() would do, without writing anything."""
     out: dict = {"outcome": decision.outcome.value, "reason": decision.reason,
                  "target_rule": _brief(decision.target_rule)}
+    if decision.notes:                       # advisory 'possible match — review later' warnings
+        out["notes"] = list(decision.notes)
     if decision.layer:                       # the change lands inside an inline layer, not the top layer
         out["layer"] = decision.layer
     if decision.outcome in (Outcome.NO_OP, Outcome.REVIEW):
@@ -1894,6 +1928,8 @@ def execute(server, secret, req: AccessRequest, layer: str, *, package: Optional
             decision = decide(req, rules, _decide_options())
             base = {"outcome": decision.outcome.value, "reason": decision.reason,
                     "target_rule": _brief(decision.target_rule), **res}
+            if decision.notes:
+                base["notes"] = list(decision.notes)
             if decision.outcome in (Outcome.NO_OP, Outcome.REVIEW):
                 return {"ok": True, "applied": False, "published": False, **base, "trace": s.trace}
             try:

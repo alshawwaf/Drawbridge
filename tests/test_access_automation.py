@@ -152,11 +152,12 @@ def test_decide_app_widens_service_when_app_differs():
     assert d.outcome is Outcome.WIDEN and d.widen_field == "service"
 
 
-def test_decide_app_review_on_opaque_category():
-    # rule allows an app CATEGORY we can't expand -> we can't tell if Facebook is inside -> REVIEW
+def test_decide_app_opaque_category_notes_and_continues():
+    # rule allows an app CATEGORY we can't expand -> can't tell if Facebook is inside. It's an ACCEPT, so
+    # we NOTE it ("may already permit it") and continue -> a clean CREATE (never a hard REVIEW stop).
     rule = _rule("ra", 5, "Accept", _host("10.1.2.250"), _host("1.1.1.1"), _app(opaque=True))
     d = aa.decide(AccessRequest(["10.1.2.250/32"], ["1.1.1.1/32"], application="Facebook"), [rule, CLEANUP])
-    assert d.outcome is Outcome.REVIEW
+    assert d.outcome is Outcome.CREATE and _noted(d, "rule 5")
 
 
 def test_decide_app_create_when_two_dims_differ():
@@ -197,10 +198,12 @@ def test_decide_explicit_deny_is_review_not_override():
     assert d.outcome is Outcome.REVIEW and d.target_rule.uid == "r9"
 
 
-def test_decide_negated_rule_in_path_is_review():
+def test_decide_negated_rule_in_path_notes_and_continues():
+    # a negated/unresolvable ACCEPT in the path is noted (not a hard REVIEW) and the walk continues to a
+    # safe CREATE — the new rule sits below it, so nothing is over-granted.
     weird = _rule("rx", 3, "Accept", _host("172.16.5.10"), _host("172.16.5.10"), _tcp(443), complex=True)
     d = aa.decide(AccessRequest(["172.16.5.10/32"], ["172.16.5.10/32"], "tcp", "443"), [weird, CLEANUP])
-    assert d.outcome is Outcome.REVIEW
+    assert d.outcome is Outcome.CREATE and _noted(d, "rule 3")
 
 
 def test_decide_disabled_rule_is_skipped():
@@ -253,10 +256,13 @@ def _mixed_svc(port, app):
     return ServiceSet(by_proto={"tcp": aa._ports_to_iv(str(port))}, apps={app})
 
 
-def test_decide_inline_layer_covering_request_is_review():
+def test_decide_inline_layer_unloaded_notes_and_continues():
+    # a non-Accept/Drop action whose sub-rulebase wasn't attached (inline_rules is None — e.g. a load
+    # failure, or an Ask/Inform action) can't be evaluated, but it may divert/handle the traffic. We note
+    # it and continue to a CREATE placed BELOW it (so if it does handle the traffic, it still wins).
     inl = _rule("ri", 2, "Some Inline Layer", _host("10.0.0.5"), _host("9.9.9.9"), _tcp(53))
     d = aa.decide(AccessRequest(["10.0.0.5/32"], ["9.9.9.9/32"], "tcp", "53"), [inl, CLEANUP])
-    assert d.outcome is Outcome.REVIEW and d.target_rule.uid == "ri"
+    assert d.outcome is Outcome.CREATE and _noted(d, "rule 2")
 
 
 def test_decide_inline_layer_disjoint_is_create():
@@ -484,6 +490,14 @@ _LIVE_CLEANUP = _pr("rC", 99, "Drop", ["any"], ["any"], ["any"])
 _OBJ_REQ = AccessRequest(["10.1.1.1/32"], ["8.8.8.8/32"], "tcp", "443")
 
 
+def _noted(d, *fragments):
+    """The decision carries an advisory 'possible match — review later' note mentioning every fragment.
+    (Behaviour 2026-06-23: an opaque rule in the path no longer HARD-STOPS the flow with REVIEW — the
+    walk notes it and continues; the note is the audit trail. See decide()/_decide.)"""
+    blob = " ".join(d.notes or []).lower()
+    return bool(d.notes) and all(str(f).lower() in blob for f in fragments)
+
+
 @pytest.mark.parametrize("src,dst,svc", [
     (["arfin"], ["h8888"], ["s443"]),   # access-role (Identity Awareness) source
     (["zone"],  ["h8888"], ["s443"]),   # security-zone source
@@ -493,11 +507,12 @@ _OBJ_REQ = AccessRequest(["10.1.1.1/32"], ["8.8.8.8/32"], "tcp", "443")
     # (service-other is now a named+opaque service: create-around an ACCEPT, REVIEW only for a possible
     #  DROP — covered by test_service_other_drop_keeps_port_request_in_path)
 ])
-def test_unenumerable_cell_objects_route_to_review(src, dst, svc):
+def test_unenumerable_cell_objects_note_and_continue(src, dst, svc):
     # any cell holding an object whose IP/port extent we can't enumerate is "extent-unknown" -> the rule
-    # stays in the path and routes to REVIEW; it is NEVER treated as provably disjoint (the v6/CIDR bug class)
+    # is NEVER treated as provably disjoint. It's an ACCEPT here, so the walk NOTES it and continues to a
+    # clean CREATE (below it) rather than hard-stopping the whole request with REVIEW.
     d = aa.decide(_OBJ_REQ, [_pr("rX", 1, "Accept", src, dst, svc), _LIVE_CLEANUP])
-    assert d.outcome is Outcome.REVIEW and d.target_rule.uid == "rX"
+    assert d.outcome is Outcome.CREATE and _noted(d, "rule 1")
 
 
 def test_live_any_object_cleanup_is_recognized_as_floor():
@@ -527,11 +542,13 @@ def test_resource_or_signature_service_is_not_reused(extra):
     cleanup = aa._parse_rule({"uid": "rC", "rule-number": 99, "name": "cleanup", "action": "Drop",
                               "enabled": True, "source": ["any"], "destination": ["any"],
                               "service": ["any"]}, objd)
-    # same flow (would have been a false NO_OP) and a differing source (would have been an unsafe WIDEN)
+    # The narrow service is NEVER reused: not a false NO_OP (same flow) and never an unsafe WIDEN
+    # (differing source). It's noted + skipped, and the walk continues to a clean CREATE for the exact
+    # port requested. The key safety property holds — the resource service is not consumed as a match.
     same = aa.decide(AccessRequest(["10.1.2.250/32"], ["172.16.5.10/32"], "tcp", "80"), [acc, cleanup])
     widen = aa.decide(AccessRequest(["192.168.7.7/32"], ["172.16.5.10/32"], "tcp", "80"), [acc, cleanup])
-    assert same.outcome is Outcome.REVIEW and same.target_rule.uid == "ra"
-    assert widen.outcome is not Outcome.WIDEN
+    assert same.outcome is Outcome.CREATE and _noted(same, "rule 1")
+    assert widen.outcome is Outcome.CREATE and widen.outcome is not Outcome.WIDEN
 
 
 # --- BLOCKER regression: a rule whose extent is UNKNOWN must never be treated as out-of-path -----
@@ -541,18 +558,23 @@ def _zone_rule(uid, num, action, dst, svc):
                       src=[], dst=dst, svc=svc, src_unknown=True, complex=True)
 
 
-def test_decide_unresolved_source_accept_is_review_not_widen():
+def test_decide_unresolved_source_accept_notes_not_widens():
+    # an unresolvable-source ACCEPT must never be WIDENED (its real source is unknown -> over-grant). It's
+    # noted and skipped; the walk continues to a clean CREATE instead (never a widen of the opaque rule).
     zone = _zone_rule("rz", 5, "Accept", _host("172.16.5.10"), _tcp(443))
     d = aa.decide(AccessRequest(["192.168.9.9/32"], ["172.16.5.10/32"], "tcp", "443"), [zone, CLEANUP])
-    assert d.outcome is Outcome.REVIEW and d.target_rule.uid == "rz"
+    assert d.outcome is Outcome.CREATE and _noted(d, "rule 5")
 
 
-def test_decide_unresolved_drop_above_accept_is_review_not_no_op():
+def test_decide_unresolved_drop_above_accept_notes_the_possible_block():
+    # an unresolvable DROP above a covering ACCEPT might block the flow. We can't prove it, so we NOTE it
+    # ("may block...") and continue -> NO_OP on the covering accept (which writes NOTHING, so the firewall
+    # is never weakened); the note flags that the drop may still block it. The drop is never overridden.
     drop = _zone_rule("rd", 3, "Drop", _host("172.16.5.10"), _tcp(443))
     broad = _rule("rb", 4, "Accept", ANY, _host("172.16.5.10"), _tcp(443))
     d = aa.decide(AccessRequest(["192.168.9.9/32"], ["172.16.5.10/32"], "tcp", "443"),
                   [drop, broad, CLEANUP])
-    assert d.outcome is Outcome.REVIEW and d.target_rule.uid == "rd"
+    assert d.outcome is Outcome.NO_OP and _noted(d, "rule 3", "block")
 
 
 def test_decide_unresolved_rule_on_different_dst_does_not_spurious_review():
@@ -968,12 +990,15 @@ def _dns_layer(group_members):
 _FB_REQ = AccessRequest(src_cidrs=["10.1.1.222/32"], dst_cidrs=["Any"], application="Facebook")
 
 
-def test_unresolved_group_source_routes_to_review():
-    # group members absent (bare UID) -> source extent unknown -> rule 1 complex -> REVIEW (safety guard)
+def test_unresolved_group_source_notes_and_widens():
+    # group members absent (bare UID) -> rule 1's source is unknown. It's an ACCEPT (can't block), so we
+    # NOTE it and continue — and the walk reaches the CORRECT outcome: WIDEN the Facebook rule's source.
+    # (This is exactly the live-lab symptom: an unresolvable DNS rule used to spuriously REVIEW the whole
+    # request; now it's noted and the real widen happens.)
     rules = _dns_layer(["u-missing-member"])
     assert rules[0].complex and rules[0].src_unknown
     d = aa.decide(_FB_REQ, rules)
-    assert d.outcome is Outcome.REVIEW and d.target_rule.number == 1
+    assert d.outcome is Outcome.WIDEN and d.target_rule.number == 6 and _noted(d, "rule 1")
 
 
 def test_dereferenced_group_source_lets_engine_widen():
@@ -1033,7 +1058,8 @@ def test_opaque_network_objects_still_review():
         rules = [_irule(1, [opaque], ["any"], ["any"], "acc", od),
                  _irule(2, ["any"], ["any"], ["any"], "drp", od)]
         assert rules[0].complex, opaque
-        assert aa.decide(req, rules).outcome is Outcome.REVIEW, opaque
+        d = aa.decide(req, rules)        # opaque-source ACCEPT -> noted + continue -> clean CREATE
+        assert d.outcome is Outcome.CREATE and _noted(d, "rule 1"), opaque
 
 
 def test_approx_accept_is_harmless_request_widens_later_rule():
@@ -1378,7 +1404,10 @@ def test_members_less_group_routes_to_review():
     rules = [_irule(1, ["any"], ["g"], ["any"], "drp", od), _irule(2, ["any"], ["any"], ["any"], "drp", od)]
     assert rules[0].dst_unknown and rules[0].complex
     req = AccessRequest(src_cidrs=["10.9.9.9/32"], dst_cidrs=["10.5.5.5/32"], protocol="tcp", ports="443")
-    assert aa.decide(req, rules).outcome is Outcome.REVIEW
+    # an unenumerable-member DROP could block -> noted + continue, the new allow is forced BELOW it (bottom)
+    # so it can never override the possible block. Outcome CREATE, not a hard REVIEW.
+    d = aa.decide(req, rules)
+    assert d.outcome is Outcome.CREATE and _noted(d, "rule 1", "block")
 
 
 def test_explicitly_empty_group_stays_disjoint():
@@ -1396,7 +1425,8 @@ def test_members_less_service_group_routes_to_review():
     rules = [_irule(1, ["any"], ["any"], ["sg"], "drp", od), _irule(2, ["any"], ["any"], ["any"], "drp", od)]
     assert rules[0].svc.complex
     req = AccessRequest(src_cidrs=["10.0.0.5/32"], dst_cidrs=["Any"], protocol="tcp", ports="443")
-    assert aa.decide(req, rules).outcome is Outcome.REVIEW
+    d = aa.decide(req, rules)   # unenumerable-service DROP -> noted + continue + CREATE below it (safe)
+    assert d.outcome is Outcome.CREATE and _noted(d, "rule 1", "block")
 
 
 # [3 BLOCKER] a rulebase larger than max_rules must FAIL LOUD, never decide on a truncated view
@@ -1525,7 +1555,8 @@ def test_wildcard_over_cap_stays_opaque_review():
     r = _irule(1, ["wcb"], ["any"], ["any"], "drp", od)
     assert r.complex                                   # over-cap -> kept opaque (never an over-approximation)
     rules = [r, _irule(2, ["any"], ["any"], ["any"], "drp", od)]
-    assert aa.decide(AccessRequest(["10.0.0.5/32"], ["Any"], "tcp", "443"), rules).outcome is Outcome.REVIEW
+    d = aa.decide(AccessRequest(["10.0.0.5/32"], ["Any"], "tcp", "443"), rules)   # opaque DROP -> note + CREATE below
+    assert d.outcome is Outcome.CREATE and _noted(d, "rule 1", "block")
 
 
 def test_group_with_exclusion_resolves_include_minus_except():
@@ -1683,10 +1714,13 @@ def test_domain_disjoint_from_ip_only_drop():
     assert aa.decide(_domreq("alshawwaf.ca"), rules).outcome is Outcome.CREATE
 
 
-def test_domain_review_on_updatable_feed():
-    # An updatable feed (Office365, …) can itself contain FQDNs -> can't prove coverage -> REVIEW.
+def test_domain_updatable_feed_notes_and_continues():
+    # An updatable feed (Office365, …) can itself contain FQDNs -> can't prove coverage. It's an ACCEPT,
+    # so the walk NOTES it ("may already permit it") and continues to a clean CREATE — no hard stop. This
+    # is the exact case from the live screenshot (rule "CP Updates").
     rules = [_trule("r1", 1, "Accept", ["any"], ["upd"]), _TCLEAN]
-    assert aa.decide(_domreq("alshawwaf.ca"), rules).outcome is Outcome.REVIEW
+    d = aa.decide(_domreq("alshawwaf.ca"), rules)
+    assert d.outcome is Outcome.CREATE and _noted(d, "rule 1")
 
 
 def test_domain_any_dest_accept_no_op_and_drop_review():
@@ -1704,10 +1738,13 @@ def test_domain_widen_adds_to_a_matching_rule_dest():
 
 
 # --- safety: an IP request is unchanged by typed cells (still REVIEW, never stepped past) ---
-def test_ip_request_still_reviews_on_typed_dest_cell():
+def test_ip_request_notes_on_typed_dest_cell():
+    # an IP request still treats a typed (domain) cell as opaque (a domain could resolve to IPs we can't
+    # see) — but it's an ACCEPT, so the walk NOTES it and continues to a clean CREATE instead of stopping.
     rules = [_trule("r1", 1, "Accept", ["any"], ["dom"]), _TCLEAN]
     ipreq = AccessRequest(["10.1.1.222/32"], ["203.0.113.5/32"], "tcp", "443")
-    assert aa.decide(ipreq, rules).outcome is Outcome.REVIEW
+    d = aa.decide(ipreq, rules)
+    assert d.outcome is Outcome.CREATE and _noted(d, "rule 1")
 
 
 # --- access-role / zone / dynamic exact-identity matching ---
@@ -1729,11 +1766,12 @@ def test_role_request_disjoint_from_domain_drop():
     assert aa.decide(rolereq, rules).outcome is Outcome.CREATE
 
 
-def test_negated_typed_cell_is_review():
+def test_negated_typed_cell_notes_and_continues():
     neg = aa._parse_rule({"uid": "rn", "rule-number": 1, "name": "rn", "enabled": True, "action": "Accept",
                           "source": ["any"], "destination": ["dom"], "destination-negate": True,
                           "service": ["https"]}, _TYPED_OD)
-    assert aa.decide(_domreq("alshawwaf.ca"), [neg, _TCLEAN]).outcome is Outcome.REVIEW
+    d = aa.decide(_domreq("alshawwaf.ca"), [neg, _TCLEAN])   # negated cell -> noted + continue (Accept)
+    assert d.outcome is Outcome.CREATE and _noted(d, "rule 1")
 
 
 def test_typed_request_empty_value_is_review():
@@ -1846,3 +1884,37 @@ def test_resolve_domain_creates_with_correct_is_sub_domain():
     s2 = _DomSession([])
     aa.resolve_typed_object(s2, "domain", ".example.com")
     assert next(p for c, p in s2.calls if c == "add-dns-domain")["is-sub-domain"] is True
+
+
+# --- note+continue safety guarantees (2026-06-23: opaque rules no longer hard-stop the flow) ----------
+def test_resolved_covering_deny_still_reviews():
+    # a RESOLVED, provable covering deny is UNCHANGED — it still REVIEWs (override_deny is the opt-in to
+    # auto-create above it). note+continue applies ONLY to opaque / unresolvable rules, never a real block.
+    deny = _rule("rd", 1, "Drop", _host("10.0.0.5"), _host("172.16.5.10"), _tcp(443))
+    d = aa.decide(AccessRequest(["10.0.0.5/32"], ["172.16.5.10/32"], "tcp", "443"), [deny, CLEANUP])
+    assert d.outcome is Outcome.REVIEW
+
+
+def test_widen_suppressed_past_opaque_deny_and_created_below_it():
+    # SAFETY: an opaque DROP above a would-be widen target. WIDEN is suppressed (widening a rule above the
+    # possible block would pull the request's traffic over it -> under-deny). Instead CREATE, placed at the
+    # bottom (above the cleanup) so it sits BELOW the opaque deny and can never override it.
+    od = {"any": {"uid": "any", "type": "CpmiAnyObject", "name": "Any"},
+          "zone": {"uid": "zone", "type": "security-zone", "name": "Z"},
+          "hd": {"uid": "hd", "type": "host", "name": "w", "ipv4-address": "172.16.5.10"},
+          "hs": {"uid": "hs", "type": "host", "name": "c", "ipv4-address": "10.0.0.5"},
+          "t443": {"uid": "t443", "type": "service-tcp", "name": "https", "port": "443"},
+          "acc": {"uid": "acc", "name": "Accept"}, "drp": {"uid": "drp", "name": "Drop"}}
+    odrop = aa._parse_rule({"uid": "od", "rule-number": 1, "name": "zone drop", "enabled": True,
+                            "action": "drp", "source": ["zone"], "destination": ["hd"],
+                            "service": ["t443"]}, od)                       # opaque (zone) DROP
+    acc = aa._parse_rule({"uid": "wa", "rule-number": 2, "name": "win", "enabled": True, "action": "acc",
+                          "source": ["hs"], "destination": ["hd"], "service": ["t443"]}, od)  # widen target
+    cleanup = aa._parse_rule({"uid": "rC", "rule-number": 99, "name": "cleanup", "enabled": True,
+                              "action": "drp", "source": ["any"], "destination": ["any"],
+                              "service": ["any"]}, od)
+    req = AccessRequest(["10.0.0.9/32"], ["172.16.5.10/32"], "tcp", "443")   # src differs from acc -> widen
+    d = aa.decide(req, [odrop, acc, cleanup])
+    assert d.outcome is Outcome.CREATE                       # WIDEN suppressed
+    assert d.position == {"above": "rC"}                     # bottom — below the opaque deny (rule 1)
+    assert _noted(d, "rule 1", "block")
