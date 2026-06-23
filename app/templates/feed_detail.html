@@ -10,7 +10,7 @@
     <p class="ph-sub">{{ feed.description or "No description" }}</p>
   </div>
   <div class="ph-actions">
-    <a class="btn secondary" href="/feeds/{{ feed.id }}/edit">Edit</a>
+    <a class="btn secondary" href="/feeds/{{ feed.id }}/edit" data-modal-form="/feeds/{{ feed.id }}/edit" data-modal-title="Edit {{ feed.name }}">Edit</a>
     <form method="post" action="/feeds/{{ feed.id }}/delete">
       <button class="danger" type="submit" data-confirm="Delete “{{ feed.name }}”? This removes the feed and its poll history.">Delete</button>
     </form>

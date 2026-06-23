@@ -34,9 +34,9 @@
     <div class="menu">
       <button class="btn menu-trigger" type="button">+ New feed ▾</button>
       <div class="menu-items">
-        <a href="/feeds/new/generic-dc">Generic Data Center</a>
-        <a href="/feeds/new/network-feed">Network Feed</a>
-        <a href="/feeds/new/ioc">IoC Feed</a>
+        <a href="/feeds/new/generic-dc" data-modal-form="/feeds/new/generic-dc" data-modal-title="New Generic Data Center feed">Generic Data Center</a>
+        <a href="/feeds/new/network-feed" data-modal-form="/feeds/new/network-feed" data-modal-title="New Network Feed">Network Feed</a>
+        <a href="/feeds/new/ioc" data-modal-form="/feeds/new/ioc" data-modal-title="New IoC Feed">IoC Feed</a>
       </div>
     </div>
     {{ export_menu('feeds') }}
@@ -66,7 +66,7 @@
   <tbody>
   {% for r in rows %}
     <tr data-feedtype="{{ r.feed.type.value }}">
-      <td><a class="feedname" href="/feeds/{{ r.feed.id }}">{{ r.feed.name }}</a></td>
+      <td><a class="feedname" href="/feeds/{{ r.feed.id }}" data-modal-view="/feeds/{{ r.feed.id }}" data-modal-title="{{ r.feed.name }}">{{ r.feed.name }}</a></td>
       {% if 'type' in vis %}<td>
         <span class="pill">{{ r.feed.type.value }}</span>
         {% if r.selections %}<div class="subsel">{{ r.selections }}</div>{% endif %}
@@ -81,7 +81,7 @@
         </div>
       </td>{% endif %}
       {% if 'created' in vis %}<td class="nowrap"><time class="ts mono" data-ts="{{ r.feed.created_at.isoformat() }}">{{ r.feed.created_at.strftime('%Y-%m-%d') }}</time></td>{% endif %}
-      {{ row_actions(links=[{'label':'Edit','url':'/feeds/' ~ r.feed.id ~ '/edit'}], delete={'url':'/feeds/' ~ r.feed.id ~ '/delete', 'name': r.feed.name}) }}
+      {{ row_actions(links=[{'label':'Open','url':'/feeds/' ~ r.feed.id, 'view': r.feed.name}, {'label':'Edit','url':'/feeds/' ~ r.feed.id ~ '/edit', 'modal':'Edit ' ~ r.feed.name}], delete={'url':'/feeds/' ~ r.feed.id ~ '/delete', 'name': r.feed.name}) }}
     </tr>
   {% endfor %}
   </tbody>
