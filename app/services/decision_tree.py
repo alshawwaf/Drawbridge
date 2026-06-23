@@ -95,16 +95,9 @@ NODES: list[Node] = [
     # --- DETAIL tier 1: inline-layer recursion ("Apply Layer") -----------------------------------
     Node("inline", "In-path rule applies an inline layer?", "action “Apply Layer” — a sub-rulebase",
          "decision", 900, 800, 280, 68, level=1),
-    Node("recurse", "Recurse into the inline layer",
-         "re-runs this whole flow — no-op / widen / create / review, same as above", "process",
-         900, 920, 290, 84, level=1),
-    Node("inlineEnd", "No inner rule covers it → the layer’s implicit cleanup", "", "decision",
-         900, 1050, 290, 68, level=1),
-    Node("inNoop", "No-op", "inline cleanup accepts it", "noop", 820, 1180, 240, level=1),
-    Node("inCreate", "Create inside the inline layer", "above the layer’s drop cleanup", "create",
-         1120, 1180, 260, level=1),
-    Node("revI", "Review", "inline: partial match · conditional parent · unknown cleanup", "review",
-         1280, 800, 260, 84, level=1),
+    Node("recurse", "Descend into the inline layer",
+         "re-runs this whole flow INSIDE it — its own no-op / widen / create, plus the layer’s implicit cleanup. Only a request that SPLITS across the inline + parent layers is left for a human.",
+         "process", 900, 928, 330, 116, level=1),
     # --- DETAIL tier 1: Settings-driven automation modes (own leaf, no cross-edge) ----------------
     Node("opts", "Automation mode (Settings)",
          "override-deny · ignore-conditions: treat VPN / time / data rules as unconditional", "process",
@@ -120,8 +113,8 @@ NODES: list[Node] = [
          "process", 740, 1200, 320, 84, level=1),
     Node("matReuse", "Reuse-only object?", "access-role · security-zone · updatable-object", "decision",
          1100, 1200, 300, 72, level=1),
-    Node("matMissing", "Review", "a reuse-only object is missing — reported at apply (it can’t be fabricated from a request); define it first (Identity Awareness / topology / CP repository)",
-         "review", 1100, 1330, 340, 96, level=1),
+    Node("matMissing", "Note: define it first", "a reuse-only object that’s missing can’t be fabricated from a request — create it once (Identity Awareness / topology / CP repository), then re-run",
+         "note", 1100, 1330, 340, 96, level=1),
 ]
 
 EDGES: list[Edge] = [
@@ -129,7 +122,7 @@ EDGES: list[Edge] = [
     Edge("resolve", "noteO", "opaque rule"), Edge("noteO", "perm", "continue"),
     Edge("resolve", "perm", "resolved"),
     Edge("perm", "noop", "yes"), Edge("perm", "deny", "no"),
-    Edge("deny", "revD", "resolved / conditional deny → review"), Edge("deny", "widen", "no"),
+    Edge("deny", "revD", "yes → review"), Edge("deny", "widen", "no"),
     Edge("widen", "doWiden", "yes"), Edge("widen", "create", "no"),
 
     # how each endpoint is matched (detail) — IP-interval space vs typed-object identity space
@@ -141,14 +134,9 @@ EDGES: list[Edge] = [
     Edge("idspace", "iddisjoint", "vs a different kind"),
     Edge("iddomain", "idupd", "vs an updatable feed"),
 
-    # inline-layer recursion (detail) — a self-contained branch off "resolve" with its OWN leaves
+    # inline-layer recursion (detail) — one summarising node off "resolve"
     Edge("resolve", "inline", "applies an inline layer"),
-    Edge("inline", "revI", "partial match"),
-    Edge("inline", "recurse", "request fully inside → descend"),
-    Edge("recurse", "inlineEnd", "no inner rule covers it"),
-    Edge("inlineEnd", "inNoop", "cleanup accept"),
-    Edge("inlineEnd", "inCreate", "cleanup drop"),
-    Edge("inlineEnd", "revI", "cleanup unknown"),
+    Edge("inline", "recurse", "descend"),
     # automation modes (detail) — the override-deny path turns a blocking-drop REVIEW into a CREATE
     Edge("deny", "opts", "options"),
     Edge("opts", "odCreate", "override-deny on"),
@@ -159,7 +147,7 @@ EDGES: list[Edge] = [
     Edge("apply", "matIP", "IP endpoint"),
     Edge("apply", "matMk", "domain / dynamic"),
     Edge("apply", "matReuse", "role / zone / updatable"),
-    Edge("matReuse", "matMissing", "missing → review"),
+    Edge("matReuse", "matMissing", "missing → note"),
 ]
 
 # The on-page diagram starts collapsed to this tier; deeper nodes expand step-by-step. Downloads/exports
@@ -317,8 +305,9 @@ def to_graph() -> dict:
         "start": next((n.id for n in NODES if n.kind == "start"), NODES[0].id if NODES else ""),
         "default_depth": DEFAULT_DEPTH,
         "nodes": [{"id": n.id, "kind": n.kind, "level": n.level, "depth": depth[n.id],
+                   "label": n.label, "sub": n.sub, "x": n.x, "y": n.y, "w": n.w, "h": n.h,
                    "mm": _mm_node_decl(n)} for n in NODES],
-        "edges": [{"src": e.src, "dst": e.dst, "mm": _mm_edge_decl(e)} for e in EDGES],
+        "edges": [{"src": e.src, "dst": e.dst, "label": e.label, "mm": _mm_edge_decl(e)} for e in EDGES],
         "themes": {"dark":  {"init": _mm_init(True),  "classDefs": _mm_classdefs(True)},
                    "light": {"init": _mm_init(False), "classDefs": _mm_classdefs(False)}},
     }

@@ -4,6 +4,7 @@ template rendering. No live SMS needed."""
 import asyncio
 import contextlib
 import ipaddress
+import json
 import types
 
 import pytest
@@ -942,25 +943,25 @@ def test_access_automation_detail_renders_form_and_webhook():
     ms = types.SimpleNamespace(id=7, name="SMS-B", host="10.0.0.2", port=443, domain="dom1")
     req = types.SimpleNamespace(base_url="https://portal.example/")
     html = _render("access_automation_detail.html", ms=ms, has_secret=True, flash=None, request=req,
-                   decision_mermaid_dark=dt.to_mermaid(dark=True), decision_mermaid_light=dt.to_mermaid())
+                   decision_graph_json=json.dumps(dt.to_graph()))
     assert "Preview decision" in html and "aa-source" in html
     assert "/access-automation/webhook" in html and "X-DCSim-Token" in html
     assert "callback_url" in html and "any ITSM" in html
-    # the "behind the scenes" decision tree — now a Mermaid render of the engine's own tree,
-    # exportable to the user's diagram tool
-    assert 'id="aa-flow-dt"' in html and "How it decides" in html
+    # the "behind the scenes" decision tree — a custom canvas the client renders from the engine's own
+    # graph JSON, still exportable to the user's diagram tool (.drawio / .mmd / .dot)
+    assert 'id="aa-flow-canvas"' in html and "How it decides" in html
     assert "/access-automation/decision-tree/drawio" in html and "decision-tree/mmd" in html
     for leaf in ("No-op", "Widen the rule", "Create least-privilege rule", "Review"):
-        assert leaf in html        # leaf labels live in the embedded Mermaid source
+        assert leaf in html        # leaf labels live in the embedded decision-graph JSON
 
 
 def test_access_automation_diagram_shows_without_credential():
     ms = types.SimpleNamespace(id=9, name="No-Secret", host="10.0.0.9", port=443, domain="")
     req = types.SimpleNamespace(base_url="https://portal.example/")
     html = _render("access_automation_detail.html", ms=ms, has_secret=False, flash=None, request=req,
-                   decision_mermaid_dark=dt.to_mermaid(dark=True), decision_mermaid_light=dt.to_mermaid())
+                   decision_graph_json=json.dumps(dt.to_graph()))
     # the explainer is educational, so it renders even when policy can't be pulled
-    assert 'id="aa-flow-dt"' in html and "How it decides" in html
+    assert 'id="aa-flow-canvas"' in html and "How it decides" in html
 
 
 # --- group dereferencing: an unresolved group source must REVIEW; a resolved one must not block -----
