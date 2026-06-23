@@ -133,7 +133,7 @@ Content-Type: application/json
 
 <div class="card">
   <h2 style="margin-top:0;">How it decides — behind the scenes</h2>
-  <p class="muted" style="margin-top:4px;">Every request runs the same first-match decision tree the market leaders use. It reuses a rule that already permits the traffic; widens a rule only when it matches the request exactly in the other two columns (so it never grants access nobody asked for); creates a least-privilege rule when nothing fits; and never silently overrides a resolved deny. A rule it <em>can’t fully resolve</em> (an updatable feed, an unresolvable cell) no longer stops the request — it’s <b>noted as a “possible match — review later” and the walk continues</b> (a new rule is always placed below it, so nothing is over-granted). It compares each source/destination <b>by kind</b> — an IP/CIDR in address space, or a typed object (domain, access-role, dynamic, updatable, security-zone) in its own <b>identity</b> space — so a domain is matched against a rule’s domain object, never confused with an IP. Expand any node below for the detail, or download the whole tree as Mermaid / draw.io / Graphviz.</p>
+  <p class="muted" style="margin-top:4px;">Every request runs the same first-match decision tree the market leaders use. The goal is always an actionable result — it identifies whether an existing rule can be reused, and otherwise creates one; it never stops to hand a request to a human. It reuses a rule that already permits the traffic; widens a rule only when it matches the request exactly in the other two columns (so it never grants access nobody asked for); and otherwise creates a least-privilege rule — placing it <b>above a blocking deny</b> when one is in the path, so the requested access actually takes effect. A rule it <em>can’t fully resolve</em> (an updatable feed, an unresolvable cell, a conditional or inline-layer rule) no longer stops the request — it’s <b>noted as a “possible match — review later” and the walk continues</b> (the new rule is placed below it, so it can’t leap over a possible block). It compares each source/destination <b>by kind</b> — an IP/CIDR in address space, or a typed object (domain, access-role, dynamic, updatable, security-zone) in its own <b>identity</b> space — so a domain is matched against a rule’s domain object, never confused with an IP. Expand any node below for the detail, or download the whole tree as Mermaid / draw.io / Graphviz.</p>
   <style>
     .dtbar{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin:4px 0 8px;}
     .dtzoom{display:inline-flex;align-items:center;gap:4px;}
@@ -177,7 +177,6 @@ Content-Type: application/json
     .k-noop{--dt-top:#16633f;--dt-bot:#0e3327;--dt-bd:#2bd06a;--dt-fg:#d6f7e4;}
     .k-widen{--dt-top:#125a7c;--dt-bot:#0b2c44;--dt-bd:#45c4fb;--dt-fg:#d4eefb;}
     .k-create{--dt-top:#7a5414;--dt-bot:#33270f;--dt-bd:#fcc83a;--dt-fg:#fce2b0;}
-    .k-review{--dt-top:#7a2930;--dt-bot:#36161a;--dt-bd:#f4686d;--dt-fg:#ffd7d6;}
     /* light theme overrides */
     html[data-theme="light"] .dtwrap{--dt-edge:#94a3b8;}
     html[data-theme="light"] .dtnode{--dt-top:#ffffff;--dt-bot:#eef2f9;--dt-bd:#cdd7e6;--dt-fg:#334155;
@@ -187,7 +186,6 @@ Content-Type: application/json
     html[data-theme="light"] .k-noop{--dt-top:#e9f9ef;--dt-bot:#d2f0de;--dt-bd:#16a34a;--dt-fg:#0c6b34;}
     html[data-theme="light"] .k-widen{--dt-top:#e9f5fe;--dt-bot:#d0e9fb;--dt-bd:#0ea5e9;--dt-fg:#0b6a96;}
     html[data-theme="light"] .k-create{--dt-top:#fef6e0;--dt-bot:#fbeaca;--dt-bd:#f59e0b;--dt-fg:#92610a;}
-    html[data-theme="light"] .k-review{--dt-top:#feeceb;--dt-bot:#fcdcdc;--dt-bd:#e5484d;--dt-fg:#b01e22;}
   </style>
   <div class="dtbar">
     <span class="dtzoom" role="group" aria-label="Diagram zoom">
@@ -196,7 +194,7 @@ Content-Type: application/json
       <button type="button" class="copybtn" id="dt-zin" title="Zoom in" aria-label="Zoom in">+</button>
     </span>
     <span class="dtzoom" role="group" aria-label="Diagram detail" id="dt-detail" hidden>
-      <button type="button" class="copybtn" id="dt-expand" title="Show every branch (inline-layer recursion, automation modes)">Expand all</button>
+      <button type="button" class="copybtn" id="dt-expand" title="Show every branch (identity matching, inline-layer recursion, object materialisation)">Expand all</button>
       <button type="button" class="copybtn" id="dt-collapse" title="Collapse back to the core flow">Collapse</button>
       <button type="button" class="copybtn" id="dt-savelayout" title="Save how you've arranged the boxes (remembered on this browser)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:5px;vertical-align:-2px;"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg><span class="dt-savelbl">Save layout</span></button>
       <button type="button" class="copybtn" id="dt-resetlayout" title="Restore the default node positions">Reset layout</button>
@@ -218,8 +216,7 @@ Content-Type: application/json
   <div class="row" style="gap:8px;margin-top:14px;flex-wrap:wrap;justify-content:center;">
     <span class="pill ok">No-op · already allowed</span>
     <span class="pill" style="background:var(--info-bg);color:var(--info);">Widen · extend a rule</span>
-    <span class="pill" style="background:var(--warn-bg);color:var(--warn);">Create · new rule</span>
-    <span class="pill bad">Review · a human decides</span>
+    <span class="pill" style="background:var(--warn-bg);color:var(--warn);">Create · new rule (above a deny if one blocks it)</span>
     <span class="pill" style="background:rgba(59,130,246,.16);color:#5b9bf3;">Note · flag &amp; keep going</span>
   </div>
 </div>

@@ -134,14 +134,8 @@ SETTINGS: list[Setting] = [
             "Name for a rule the engine creates. Placeholder: {ticket}. With no ticket id (and a "
             "ticket-based template) the rule is left unnamed and Check Point auto-names it.",
             group="Access automation", max=120),
-    # Automation aggressiveness — both OFF (conservative) by default. ON converts a class of REVIEW
-    # into an automatic action because you've accepted that risk.
-    Setting("aa_override_deny", "bool", False,
-            "Override a blocking deny",
-            "When an existing (non-cleanup) Drop already blocks the request, create the allow ABOVE it "
-            "instead of stopping for review. This deliberately overrides an admin's explicit block — "
-            "leave OFF unless you want full automation to take precedence over denies.",
-            group="Access automation"),
+    # Automation behaviour. The engine is reuse-or-create: it never stops for a policy "review" (a
+    # blocking deny just gets the new allow placed ABOVE it). This one knob tunes conditional rules.
     Setting("aa_ignore_conditions", "bool", False,
             "Evaluate conditional rules as unconditional",
             "Treat rules scoped by a column the engine doesn't model (VPN community/direction, time, "

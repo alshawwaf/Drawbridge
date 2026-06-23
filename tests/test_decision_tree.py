@@ -6,9 +6,12 @@ import xml.etree.ElementTree as ET
 from app.services import decision_tree as dt
 from app.services.access_automation import Outcome
 
-# every engine Outcome must map to a tree node KIND (keyed on kind, not id: REVIEW has several leaves)
-_OUTCOME_KIND = {Outcome.NO_OP: "noop", Outcome.WIDEN: "widen", Outcome.CREATE: "create",
-                 Outcome.REVIEW: "review"}
+# Every engine FLOW Outcome must map to a tree node KIND. The flow is reuse-or-create — it never stops for
+# a policy "review", so there is no review node. Outcome.REVIEW survives only as a defensive, non-flow
+# signal (an incomplete request, or an ambiguous application/service name handled around the walk), so it
+# is intentionally NOT drawn in the decision tree.
+_OUTCOME_KIND = {Outcome.NO_OP: "noop", Outcome.WIDEN: "widen", Outcome.CREATE: "create"}
+_NON_FLOW_OUTCOMES = {Outcome.REVIEW}
 
 
 def test_edges_reference_real_nodes_and_outcomes_present():
@@ -16,7 +19,7 @@ def test_edges_reference_real_nodes_and_outcomes_present():
     for e in dt.EDGES:
         assert e.src in ids and e.dst in ids, (e.src, e.dst)
     kinds = {n.kind for n in dt.NODES}
-    assert {"review", "noop", "widen", "create", "decision", "start", "process"} <= kinds
+    assert {"note", "noop", "widen", "create", "decision", "start", "process"} <= kinds
 
 
 def test_mermaid_is_well_formed():
@@ -62,12 +65,14 @@ def test_renderers_registry():
 # --- sync guards: the visual can't silently drift from decide() ----------------------------------
 def test_every_engine_outcome_maps_to_a_tree_node_kind():
     # a NEW or renamed Outcome forces an update here (and a matching node) -> the suite goes red
-    assert set(_OUTCOME_KIND) == set(Outcome)
+    assert set(_OUTCOME_KIND) | _NON_FLOW_OUTCOMES == set(Outcome)
     kinds = {n.kind for n in dt.NODES}
     for outcome, kind in _OUTCOME_KIND.items():
         assert kind in kinds, f"no tree node represents Outcome.{outcome.name}"
-    # reverse: no orphan outcome-leaf kind left behind after an outcome is removed
-    assert (kinds & {"noop", "widen", "create", "review"}) == set(_OUTCOME_KIND.values())
+    # reverse: no orphan flow-outcome node kind left behind after an outcome is removed
+    assert (kinds & {"noop", "widen", "create"}) == set(_OUTCOME_KIND.values())
+    # the flow is reuse-or-create: there is NO policy "review" node
+    assert "review" not in kinds
 
 
 def test_all_nodes_reachable_from_a_single_start():
@@ -131,16 +136,18 @@ def test_to_graph_is_client_consumable_and_matches_mermaid():
         assert ("  " + n["mm"]) in full
 
 
-def test_inline_layer_recursion_and_automation_modes_are_drawn():
-    # guards the two engine features shipped alongside this: they must stay represented in the visual.
-    # The inline branch is summarised in ONE node (recurse) — its outcomes are described in the text, so
-    # it adds no extra review box; only a genuine split across layers is left for a human (worded there).
+def test_inline_layer_recursion_and_automation_mode_are_drawn():
+    # guards the engine features that must stay represented in the visual. The inline branch is summarised
+    # in ONE node (recurse); a split across layers is noted & continued (no review box). The remaining
+    # automation knob (ignore-conditions) hangs off the deny decision.
     ids = {n.id for n in dt.NODES}
-    assert {"inline", "recurse", "opts", "odCreate"} <= ids
+    assert {"inline", "recurse", "opts"} <= ids
+    assert "odCreate" not in ids                                        # override-deny is gone (deny always creates above)
     edges = {(e.src, e.dst) for e in dt.EDGES}
     assert ("resolve", "inline") in edges                               # inline branch wired off resolve
     assert ("inline", "recurse") in edges                               # the recursion step
-    assert ("opts", "odCreate") in edges                                # override-deny -> create above the deny
+    assert ("deny", "opts") in edges                                    # the ignore-conditions automation mode
+    assert "ignore-conditions" in (next(n for n in dt.NODES if n.id == "opts").label.lower())
     recurse = next(n for n in dt.NODES if n.id == "recurse")
     assert "inline" in (recurse.label + recurse.sub).lower()
 

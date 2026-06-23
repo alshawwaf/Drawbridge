@@ -8,10 +8,18 @@ grounded in the Al-Shaer & Hamed five-relation algebra (IEEE JSAC 2005):
     NO_OP  - the flow is already permitted              -> change nothing
     WIDEN  - a rule already covers dst+svc, src differs -> extend its source
              (prefer a group the rule already references)
-    CREATE - nothing covers it                          -> add a least-privilege
-             rule above the cleanup / blocking drop, below any more-specific rule
-    REVIEW - an explicit deny covers it, or a negated / unparsable rule lies in
-             the path -> hand to a human (never silently override an admin's drop)
+    CREATE - nothing permits it (or a deny blocks it)   -> add a least-privilege
+             rule; placed ABOVE a blocking deny so the access takes effect, below
+             any more-specific rule, else above the cleanup
+
+The engine is built for AUTOMATION: it never hard-stops the flow for a policy
+"review". A rule it can't fully resolve (an updatable feed, a negated/unparsable
+cell, a conditional or inline-layer rule) is NOTED as a "possible match — review
+later" and the walk CONTINUES; the new allow is then placed BELOW that rule so it
+can't leap over a possible block. (Outcome.REVIEW survives only as a defensive
+signal for an INCOMPLETE request — no concrete service, or an endpoint that names
+no object — and for an ambiguous application/service NAME that matches no single
+Check Point object, where the caller returns "did you mean …" suggestions.)
 
 Design
 ------
@@ -921,11 +929,11 @@ def _dim_relation(kind: str, value: str, req_iv, r: ParsedRule, which: str) -> t
 
 @dataclass(frozen=True)
 class DecideOptions:
-    """Admin-tunable automation aggressiveness (built from Settings by the caller; decide() stays pure).
-    Both default OFF — the safe, conservative behaviour. Turning one ON converts a class of REVIEW into
-    an automatic action because the admin has accepted that risk."""
-    override_deny: bool = False        # an explicit (non-cleanup) deny covers/overlaps -> CREATE the
-                                       # allow ABOVE it (take precedence) instead of REVIEW
+    """Admin-tunable automation behaviour (built from Settings by the caller; decide() stays pure).
+
+    The engine never hard-stops for a policy "review": it reuses a rule, widens one, or CREATES a least-
+    privilege allow (placing it ABOVE a blocking deny when one is in the path, so the access takes effect).
+    The one remaining knob tunes how conditional rules are read."""
     ignore_conditions: bool = False    # evaluate VPN/time/data/install-on-scoped rules as if uncondi-
                                        # tional (a conditional ACCEPT can cover; a conditional DENY blocks)
 
@@ -933,8 +941,9 @@ class DecideOptions:
 def decide(req: AccessRequest, rules: list[ParsedRule], options: "DecideOptions" = None) -> Decision:
     """Pure: pick the minimal correct change for ``req`` against ``rules``.
 
-    Walks the rulebase top-down, honouring Check Point first-match semantics. ``options`` (default: all
-    conservative) lets an admin opt into auto-resolving the judgment-call REVIEWs.
+    Walks the rulebase top-down, honouring Check Point first-match semantics. The result is always an
+    actionable outcome — reuse (NO_OP), widen, or CREATE (placed above a blocking deny when needed) — never
+    a policy "review" stop; anything it can't fully resolve is NOTED and the walk continues.
 
     Thin wrapper around ``_decide``: it owns the ``notes`` list (advisory 'possible match — review later'
     warnings the walk raises when it CONTINUES past an opaque rule instead of hard-stopping) and tags
@@ -967,8 +976,8 @@ def _decide(req: AccessRequest, rules: list[ParsedRule], options: "DecideOptions
             req_svc.by_proto and any(iv for iv in req_svc.by_proto.values())):
         return Decision(
             Outcome.REVIEW,
-            "the request specifies no concrete service, port, or application -- cannot reason about "
-            "coverage; needs human review",
+            "the request specifies no concrete service, port, or application -- it is incomplete, so "
+            "there is nothing to evaluate or create",
         )
 
     # Guard 3 -- a typed (non-IP) source/destination must name a concrete identity, and an IP source/
@@ -979,14 +988,14 @@ def _decide(req: AccessRequest, rules: list[ParsedRule], options: "DecideOptions
         if kind != "ip" and not (value or "").strip():
             return Decision(
                 Outcome.REVIEW,
-                f"the {label} is typed as a {kind} but names no object -- cannot reason about "
-                f"coverage; needs human review",
+                f"the {label} is typed as a {kind} but names no object -- the request is incomplete, so "
+                f"there is nothing to evaluate or create",
             )
         if kind == "ip" and not iv:
             return Decision(
                 Outcome.REVIEW,
-                f"the {label} resolves to no concrete IP extent -- cannot reason about coverage; "
-                f"needs human review",
+                f"the {label} resolves to no concrete IP extent -- the request is incomplete, so there "
+                f"is nothing to evaluate or create",
             )
 
     covering_drop: Optional[ParsedRule] = None   # the catch-all cleanup that floors placement
@@ -1044,19 +1053,24 @@ def _decide(req: AccessRequest, rules: list[ParsedRule], options: "DecideOptions
         if r.inline_rules is not None and interferes and covering_drop is None:
             name = r.inline_layer_name or r.name
             if r.conditional and not options.ignore_conditions:
-                return Decision(
-                    Outcome.REVIEW,
+                # The "Apply Layer" only kicks in under a condition we can't model -> we can't follow that
+                # branch. Don't stop: NOTE it and keep walking (a new rule is placed below it, so it can't
+                # leap over whatever the inline layer would have done under the condition).
+                notes.append(
                     f"rule {r.number} ({r.name}) applies inline layer “{name}” only under "
-                    f"{', '.join(r.conditions)} (a dimension the engine doesn't model) -- needs review",
-                    target_rule=r,
-                )
+                    f"{', '.join(r.conditions)} (a dimension the engine doesn't model) — it may divert or "
+                    f"block this traffic; the new rule is placed below it. Review it later.")
+                uncertain_deny = True
+                continue
             if complex_eff or not _is_subset(rel_src, rel_dst, rel_svc):
-                return Decision(
-                    Outcome.REVIEW,
+                # Only PART of the request enters the inline layer; the rest stays in this layer. We can't
+                # cleanly reason across the split -> NOTE and keep walking (placement stays below it).
+                notes.append(
                     f"the request only partially matches rule {r.number} ({r.name}); its traffic splits "
-                    f"across inline layer “{name}” and the parent layer -- needs human review",
-                    target_rule=r,
-                )
+                    f"across inline layer “{name}” and the parent layer — the new rule is placed below it. "
+                    f"Review it later.")
+                uncertain_deny = True
+                continue
             sub = decide(req, r.inline_rules, options)
             if sub.outcome is Outcome.REVIEW:
                 return sub
@@ -1081,15 +1095,12 @@ def _decide(req: AccessRequest, rules: list[ParsedRule], options: "DecideOptions
                         f"(applied by rule {r.number})",
                         target_rule=r,
                     )
-                if r.inline_cleanup != "drop":
-                    return Decision(
-                        Outcome.REVIEW,
-                        f"the request reaches inline layer “{name}” (rule {r.number}) but no rule there "
-                        f"covers it and the layer's implicit cleanup is unknown -- needs human review",
-                        target_rule=r,
-                    )
+                # No explicit rule there covers it and the layer's cleanup is drop OR unknown: either way
+                # the safe, actionable move is to CREATE an explicit allow INSIDE the inline layer (above
+                # its cleanup). An explicit allow grants the request regardless of what the implicit
+                # cleanup would do, so we don't need to resolve the cleanup to act -- no review stop.
                 sub.reason = (f"no rule in inline layer “{name}” (applied by rule {r.number}) covers the "
-                              f"request; create a least-privilege rule inside it, above its drop cleanup")
+                              f"request; create a least-privilege rule inside it, above its cleanup")
             elif sub.outcome is Outcome.NO_OP:
                 sub.reason = f"already permitted inside inline layer “{name}”: {sub.reason}"
             # WIDEN / CREATE land INSIDE the inline layer (keep a deeper layer a nested recursion set).
@@ -1105,8 +1116,8 @@ def _decide(req: AccessRequest, rules: list[ParsedRule], options: "DecideOptions
             # walk. This is SAFE because nothing we go on to do can weaken the firewall: a NO_OP writes
             # nothing, a WIDEN/CREATE never overrides this rule (a new allow is placed BELOW any opaque
             # possible-deny — see uncertain_deny + placement — so first-match keeps that rule's effect).
-            # (A *resolved*, provable covering/partial deny is different — it still routes to REVIEW /
-            # the override-deny toggle below; this branch is only the UN-resolvable case.)
+            # (A *resolved*, provable covering/partial deny is different — it gets an explicit allow created
+            # ABOVE it below; this branch is only the UN-resolvable case, which stays below the rule.)
             why = []
             if src_unknown:
                 why.append("a negated or unresolvable source")
@@ -1130,24 +1141,44 @@ def _decide(req: AccessRequest, rules: list[ParsedRule], options: "DecideOptions
         # A rule whose match ALSO depends on a column the engine doesn't model -- a VPN community/
         # direction, a time window, a content/data type, an install-on gateway subset, or a service-
         # resource -- is not an always-on Accept/Drop. We can't verify the extra condition, so a
-        # conditional DENY/divert in the path -> REVIEW (don't assume the block is irrelevant), and a
-        # conditional ACCEPT is excluded from NO_OP / reuse / widen (its grant only holds under that
-        # condition) and skipped -- a clean rule decides, or we CREATE a precise rule for the requested
-        # (unconditional) traffic, noting why the matching-but-conditional rule doesn't grant it.
+        # conditional DENY/divert in the path is NOTED and the walk CONTINUES (don't hard-stop; the new
+        # allow is placed below it so it can't leap over a possible block), and a conditional ACCEPT is
+        # excluded from NO_OP / reuse / widen (its grant only holds under that condition) and skipped -- a
+        # clean rule decides, or we CREATE a precise rule for the requested (unconditional) traffic, noting
+        # why the matching-but-conditional rule doesn't grant it.
         if r.conditional and interferes and not options.ignore_conditions:
             if not r.is_accept:
-                return Decision(
-                    Outcome.REVIEW,
+                # A conditional DENY/divert (VPN / time / data / install-on) only blocks under a column we
+                # can't model. Don't stop the flow: NOTE it and keep walking. It MIGHT block under its
+                # condition, so we treat it as a possible-deny -> the new allow is placed below it (first-
+                # match keeps that rule's effect for the traffic it does match).
+                notes.append(
                     f"rule {r.number} ({r.name}) lies in the path but its match is restricted by "
                     f"{', '.join(r.conditions)} (a dimension the engine doesn't model) and it denies or "
-                    f"diverts the traffic -- can't auto-evaluate; needs human review",
-                    target_rule=r,
-                )
+                    f"diverts the traffic — it may block this under that condition; the new rule is placed "
+                    f"below it. Review it later.")
+                uncertain_deny = True
+                continue
             conditional_skip = r
             continue
 
-        # Past here, any rule we reuse / widen / anchor on is fully resolved (complex+interfering rules
-        # already returned REVIEW above; complex+provably-disjoint rules are excluded explicitly below).
+        # A DROP that interferes but whose true extent we CANNOT resolve for this request -- an approx
+        # infra object (a gateway/cluster/mgmt resolved to its main IP; its real reach may be WIDER) or an
+        # indeterminate/opaque service (an app category, service-other, a port we can't pin to the request)
+        # -- is a POSSIBLE block we can't prove. We must NOT override it with a create-ABOVE (that could
+        # leap over a real deny we simply couldn't see). NOTE it and CONTINUE, forcing the new allow BELOW
+        # it (uncertain_deny). Only a FULLY-RESOLVED covering/partial deny is overridden with a create-
+        # above (the branches below) -- there we can prove exactly what it blocks, which is the access the
+        # caller asked us to make work.
+        if r.is_drop and interferes and (svc_indeterminate or src_approx or dst_approx):
+            dim = "service" if svc_indeterminate else "source / destination"
+            notes.append(f"rule {r.number} ({r.name}) may block this request — its {dim} extent can't be "
+                         f"fully resolved, so the new rule is placed below it. Review it later.")
+            uncertain_deny = True
+            continue
+
+        # Past here, any rule we reuse / widen / anchor on is fully resolved (rules we couldn't resolve
+        # were already NOTED and skipped above; complex+provably-disjoint rules are excluded below).
         fully_covers = not complex_eff and _is_subset(rel_src, rel_dst, rel_svc)
 
         # (1) already permitted? first covering ACCEPT before any covering DROP wins.
@@ -1163,39 +1194,31 @@ def _decide(req: AccessRequest, rules: list[ParsedRule], options: "DecideOptions
         if fully_covers and r.is_drop and covering_drop is None:
             if _is_catchall(r) and i == last_enabled:
                 covering_drop = r        # the real bottom cleanup -> placement floor
-            elif options.override_deny:
+            else:
+                # A *specific* covering deny currently blocks the request. This tool's job is to make the
+                # requested access work, so we CREATE the least-privilege allow directly ABOVE that deny
+                # (first-match then hits the allow). The reason names the deny so the operator sees exactly
+                # what the new rule takes precedence over.
                 return Decision(
                     Outcome.CREATE,
-                    f"traffic is denied by rule {r.number} ({r.name}); creating the allow ABOVE it "
-                    f"(override-deny mode is on)",
+                    f"traffic is currently denied by rule {r.number} ({r.name}); creating the allow ABOVE "
+                    f"it so the requested access takes effect",
                     target_rule=r, position={"above": r.uid},
-                )
-            else:
-                return Decision(
-                    Outcome.REVIEW,
-                    f"traffic is explicitly denied by rule {r.number} ({r.name}); an allow "
-                    f"above it would override an intentional block -- needs human review",
-                    target_rule=r,
                 )
 
         # A reachable DROP that overlaps the request but does NOT fully cover it partially blocks the
-        # flow (e.g. a /32 deny inside a /24 request, or an overlapping range). We can neither grant the
-        # request (it would override that intentional partial block) nor split it into allowed/denied
-        # sub-flows -> REVIEW. (A fully-covering deny is handled above; the catch-all cleanup is excluded.)
+        # flow (e.g. a /32 deny inside a /24 request, or an overlapping range). To make the full request
+        # work we create the allow ABOVE it. (A fully-covering deny is handled above; the catch-all
+        # cleanup is excluded.)
         if (r.is_drop and not complex_eff and covering_drop is None
                 and interferes and not fully_covers and not _is_catchall(r)):
-            if options.override_deny:
-                return Decision(
-                    Outcome.CREATE,
-                    f"rule {r.number} ({r.name}) partially denies the requested scope; creating the "
-                    f"allow ABOVE it (override-deny mode is on)",
-                    target_rule=r, position={"above": r.uid},
-                )
+            # An overlapping deny blocks PART of the requested scope. Create the allow ABOVE it so the full
+            # request takes effect (first-match hits the allow before this partial deny).
             return Decision(
-                Outcome.REVIEW,
-                f"rule {r.number} ({r.name}) partially denies the requested scope (an overlapping DROP "
-                f"in the path); granting it would override that block -- needs human review",
-                target_rule=r,
+                Outcome.CREATE,
+                f"rule {r.number} ({r.name}) partially denies the requested scope; creating the allow "
+                f"ABOVE it so the requested access takes effect",
+                target_rule=r, position={"above": r.uid},
             )
 
         # (2) widen candidate: a reachable ACCEPT that is EXACTLY EQUAL to the request in two of the
@@ -1211,7 +1234,7 @@ def _decide(req: AccessRequest, rules: list[ParsedRule], options: "DecideOptions
             # exact extent. An approx cell (an infra object resolved to its main IP — true reach may be
             # wider) that reads EQUAL is an UNDER-approximation: widening the third dimension would grant
             # it combined with the cell's unseen extra addresses -> over-grant. Exclude approx from eq so
-            # such a rule falls through to CREATE/REVIEW instead of widening.
+            # such a rule falls through to CREATE instead of widening.
             eq = {"source": rel_src == Relation.EQUAL and not src_approx,
                   "destination": rel_dst == Relation.EQUAL and not dst_approx,
                   "service": rel_svc == Relation.EQUAL}
@@ -1868,11 +1891,10 @@ def _correlate(session, req: AccessRequest):
 
 
 def _decide_options() -> "DecideOptions":
-    """Build the engine's automation-aggressiveness options from the admin's Settings (best-effort)."""
+    """Build the engine's automation options from the admin's Settings (best-effort)."""
     try:
         from . import app_settings
-        return DecideOptions(override_deny=bool(app_settings.get("aa_override_deny")),
-                             ignore_conditions=bool(app_settings.get("aa_ignore_conditions")))
+        return DecideOptions(ignore_conditions=bool(app_settings.get("aa_ignore_conditions")))
     except Exception:  # noqa: BLE001
         return DecideOptions()
 

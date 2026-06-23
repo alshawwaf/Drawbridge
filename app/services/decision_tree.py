@@ -40,30 +40,29 @@ class Edge:
     label: str = ""
 
 
-# The tree — mirrors decide(). CORE flow (level 0, always shown): guard (unsupported/malformed) ->
-# resolve each cell (exact / approx / typed-identity / unresolvable) -> already permitted? ->
-# denied/unverifiable? -> two columns equal? -> else create. DETAIL (level 1, collapsed on-page until
-# expanded): (a) HOW each source/destination is matched — IP-interval space vs typed-object IDENTITY
-# space (domain / role / dynamic / updatable / zone), the cross-kind disjointness and the one opaque
-# case; (b) the inline-layer recursion ("Apply Layer" sub-rulebase); (c) the Settings-driven automation
-# modes (override-deny / ignore-conditions); (d) how the chosen objects are materialised on apply
-# (reuse-or-create vs reuse-only). Keep this in lock-step with access_automation.decide() + _apply().
+# The tree — mirrors decide(). It is REUSE-OR-CREATE: it never hard-stops for a policy "review". CORE flow
+# (level 0, always shown): resolve each cell (exact / approx / typed-identity / opaque → note & continue)
+# -> already permitted? (no-op) -> resolved deny covering the path? (create the allow ABOVE it) -> two
+# columns equal? (widen) -> else create. DETAIL (level 1, collapsed on-page until expanded): (a) HOW each
+# source/destination is matched — IP-interval space vs typed-object IDENTITY space (domain / role /
+# dynamic / updatable / zone), the cross-kind disjointness and the one opaque case; (b) the inline-layer
+# recursion ("Apply Layer" sub-rulebase); (c) the Settings-driven ignore-conditions mode; (d) how the
+# chosen objects are materialised on apply (reuse-or-create vs reuse-only). Keep this in lock-step with
+# access_automation.decide() + _apply().
 NODES: list[Node] = [
     Node("req", "Access request", "source · destination · service / app — each endpoint an IP/CIDR/Any or a typed object",
          "start", 60, 20, 300, 72),
     Node("resolve", "Resolve request + each rule cell (top-down, first match wins)",
          "IP: host / network / range / group (exact) · gateway / cluster / mgmt (approx) · typed object → matched by identity · else opaque → note & continue",
          "process", 60, 256, 320, 104),
-    Node("noteO", "Note & keep going", "an OPAQUE rule (updatable feed · unresolvable / negated cell · non-Accept/Drop action) is flagged “review later”, NOT stopped — the walk continues",
-         "note", 460, 264, 300, 92),
+    Node("noteO", "Note & keep going", "anything we can’t fully resolve — an OPAQUE rule (updatable feed · negated / unparsable cell · non-Accept/Drop action), a CONDITIONAL rule (VPN / time / data / install-on), or a request that SPLITS across an inline layer — is flagged “review later”, NOT stopped. The walk continues; the new rule is placed BELOW it so it can’t leap over a possible block.",
+         "note", 460, 264, 320, 116),
     Node("perm", "Already permitted?", "first reachable Accept covering all 3 columns, before any covering drop",
          "decision", 60, 400, 300, 68),
     Node("noop", "No-op", "already allowed — just attach the rule to the ticket", "noop", 460, 402, 250),
-    Node("deny", "RESOLVED deny or conditional deny in path?",
-         "a covering / partial DROP we can fully resolve · a conditional rule (VPN / time / data / install-on) that denies. (Opaque rules are NOT here — they’re noted & passed, above.)",
+    Node("deny", "Resolved deny covering the path?",
+         "a covering / partial DROP we can fully resolve → CREATE the allow ABOVE it so the access works (first-match then hits the allow). A conditional / opaque possible-deny is NOT here — it’s noted & passed, above.",
          "decision", 60, 516, 320, 104),
-    Node("revD", "Review", "an intentional, provable deny — never silently overridden (the override-deny toggle opts in)",
-         "review", 460, 540, 260, 84),
     Node("widen", "Two columns equal the request?", "the third differs → add the request’s value to THAT rule cell (suppressed if an opaque possible-deny was passed)",
          "decision", 60, 700, 300, 84),
     Node("doWiden", "Widen the rule", "add the differing source / destination / service to the cell (never a shared group)",
@@ -98,11 +97,10 @@ NODES: list[Node] = [
     Node("recurse", "Descend into the inline layer",
          "re-runs this whole flow INSIDE it — its own no-op / widen / create, plus the layer’s implicit cleanup. Only a request that SPLITS across the inline + parent layers is left for a human.",
          "process", 900, 928, 330, 116, level=1),
-    # --- DETAIL tier 1: Settings-driven automation modes (own leaf, no cross-edge) ----------------
-    Node("opts", "Automation mode (Settings)",
-         "override-deny · ignore-conditions: treat VPN / time / data rules as unconditional", "process",
-         60, 940, 340, 84, level=1),
-    Node("odCreate", "Create above the deny", "override-deny mode is on", "create", 460, 948, 250, level=1),
+    # --- DETAIL tier 1: Settings-driven automation mode (own leaf, no cross-edge) -----------------
+    Node("opts", "Automation mode (Settings): ignore-conditions",
+         "optionally treat VPN / time / data / install-on rules as unconditional — a conditional Accept then counts as covering and a conditional Drop as a resolved block (create above it), instead of being noted & passed",
+         "process", 60, 940, 360, 96, level=1),
 
     # --- DETAIL tier 1: object materialisation on apply (reuse-or-create vs reuse-only) -----------
     Node("apply", "On apply: materialise the objects", "reuse an existing object, else create it — then write the rule",
@@ -122,7 +120,7 @@ EDGES: list[Edge] = [
     Edge("resolve", "noteO", "opaque rule"), Edge("noteO", "perm", "continue"),
     Edge("resolve", "perm", "resolved"),
     Edge("perm", "noop", "yes"), Edge("perm", "deny", "no"),
-    Edge("deny", "revD", "yes"), Edge("deny", "widen", "no"),
+    Edge("deny", "create", "yes → create above it"), Edge("deny", "widen", "no"),
     Edge("widen", "doWiden", "yes"), Edge("widen", "create", "no"),
 
     # how each endpoint is matched (detail) — IP-interval space vs typed-object identity space
@@ -137,9 +135,8 @@ EDGES: list[Edge] = [
     # inline-layer recursion (detail) — one summarising node off "resolve"
     Edge("resolve", "inline", "applies an inline layer"),
     Edge("inline", "recurse", "descend"),
-    # automation modes (detail) — the override-deny path turns a blocking-drop REVIEW into a CREATE
-    Edge("deny", "opts", "options"),
-    Edge("opts", "odCreate", "override-deny on"),
+    # automation mode (detail) — the optional ignore-conditions toggle, off the deny decision
+    Edge("deny", "opts", "ignore-conditions"),
 
     # object materialisation on apply (detail) — off the widen/create outcomes
     Edge("doWiden", "apply", "materialise"),
