@@ -1092,9 +1092,9 @@ def test_approx_drop_never_under_approximates():
              _irule(2, ["any"], ["any"], ["any"], "drp", od)]
     req = AccessRequest(src_cidrs=["10.7.7.7/32"], dst_cidrs=["Any"], application="Facebook")
     d = aa.decide(req, rules)
-    # the gateway's true reach is wider than its main IP, so we can't PROVE this deny applies -> we don't
-    # override it (no create-above): it's NOTED and the new allow lands BELOW it.
-    assert d.outcome is Outcome.CREATE and _noted(d, "rule 1") and d.position == {"above": "r2"}
+    # an APPLICATION request never steps over a drop whose extent we can't prove — the app is carved out
+    # ABOVE it (a precise single-app allow that achieves the request; all other traffic still hits the drop).
+    assert d.outcome is Outcome.CREATE and d.position == {"above": "r1"}
 
 
 def test_malformed_port_reviews_not_crashes():
@@ -1434,12 +1434,13 @@ def test_opaque_accept_that_could_cover_is_still_flagged():
     assert d.outcome is Outcome.CREATE and _noted(d, "rule 2")
 
 
-def test_specific_dest_drop_vs_any_still_blocks_below():
-    # symmetry: a specific/approx-destination DROP overlapping an Any request CAN block that subset, so it
-    # is still noted + the new rule placed BELOW it (only the false "may permit" for accepts is suppressed).
+def test_specific_dest_drop_vs_any_port_request_still_blocks_below():
+    # a specific/approx-destination DROP overlapping an Any PORT request can block that subset, so it is
+    # still noted + the new rule placed BELOW it. (The app carve-out is application-only; a port request
+    # stays conservative — placing above a port-drop would grant the whole port, not a precise carve-out.)
     drop = _rule("r6", 6, "Drop", ANY, _host("172.16.0.1"), ServiceSet(any=True))
     drop.dst_approx = True
-    d = aa.decide(AccessRequest(["10.1.1.222/32"], ["Any"], application="Facebook"), [drop, CLEANUP])
+    d = aa.decide(AccessRequest(["10.1.1.222/32"], ["Any"], "tcp", "443"), [drop, CLEANUP])
     assert d.outcome is Outcome.CREATE and _noted(d, "rule 6")
 
 
@@ -1501,6 +1502,68 @@ def test_dynamic_divert_floors_placement_below_it():
     assert d.outcome is Outcome.CREATE
     assert d.position != {"below": "r1"}               # must NOT anchor ABOVE the divert
     assert d.position == {"_above_cleanup": True}      # forced to the bottom, below the divert
+
+
+# ===== L7 application carve-out (find the BEST position to ACHIEVE an app request) + tunable knobs =====
+def test_app_request_carves_out_above_an_L4_port_drop():
+    # HIGH-bug fix: an application request blocked by a broad L4 port DROP must NOT read as NO_OP (the
+    # gateway drops it today). The correct, precise outcome is CREATE the app-Accept ABOVE the L4 Drop.
+    drop = _rule("r10", 10, "Drop", ANY, ANY, _tcp(443))
+    allow = _rule("r20", 20, "Accept", ANY, ANY, ServiceSet(any=True))      # a lower Accept that used to win
+    d = aa.decide(AccessRequest(["Any"], ["Any"], application="Facebook"), [drop, allow])
+    assert d.outcome is Outcome.CREATE and d.position == {"above": "r10"}   # carved out above the L4 Drop
+    assert d.outcome is not Outcome.NO_OP
+
+
+def test_app_carveout_off_places_below_and_does_not_false_noop():
+    # carve-out OFF (conservative): place the new rule BELOW the blocking drop and STOP — it must NOT fall
+    # through to the lower Accept and report a false NO_OP.
+    drop = _rule("r10", 10, "Drop", ANY, ANY, _tcp(443))
+    allow = _rule("r20", 20, "Accept", ANY, ANY, ServiceSet(any=True))
+    d = aa.decide(AccessRequest(["Any"], ["Any"], application="Facebook"), [drop, allow],
+                  aa.DecideOptions(app_carveout=False))
+    assert d.outcome is Outcome.CREATE and d.position == {"below": "r10"}
+
+
+def test_app_request_carves_out_above_an_opaque_category_drop():
+    # an opaque app-category/group DROP can't be proven to contain the app, but a single-app Accept ABOVE
+    # it is a harmless precise carve-out that achieves the request if the app IS in the category.
+    cat = _rule("rc", 10, "Drop", ANY, ANY, _app(opaque=True))
+    d = aa.decide(AccessRequest(["Any"], ["Any"], application="Facebook"), [cat, CLEANUP])
+    assert d.outcome is Outcome.CREATE and d.position == {"above": "rc"}
+
+
+def test_port_request_vs_app_plus_port_rule_still_noops():
+    # lock-in (no regression from the L7 symmetry fix): a tcp/443 PORT request is genuinely covered by a
+    # rule whose service is {Facebook + tcp443} on the port leg -> NO_OP (not a spurious carve-out/create).
+    both = _rule("rb", 10, "Accept", ANY, ANY, ServiceSet(apps={"Facebook"}, by_proto={"tcp": [(443, 443)]}))
+    d = aa.decide(AccessRequest(["10.1.1.0/24"], ["Any"], "tcp", "443"), [both, CLEANUP])
+    assert d.outcome is Outcome.NO_OP
+
+
+def test_prefer_widen_off_always_creates():
+    r = _rule("rn", 6, "Accept", _net("10.2.0.0/24"), _host("172.16.5.10"), _tcp(443))
+    req = AccessRequest(["192.168.9.9/32"], ["172.16.5.10/32"], "tcp", "443")
+    assert aa.decide(req, [r, CLEANUP]).outcome is Outcome.WIDEN                       # default: reuse
+    assert aa.decide(req, [r, CLEANUP], aa.DecideOptions(prefer_widen=False)).outcome is Outcome.CREATE
+
+
+def test_emit_notes_off_is_quiet():
+    op = _rule("ro", 2, "Accept", ANY, ANY, ServiceSet(complex=True))
+    op.svc_unknown = True
+    req = AccessRequest(["10.1.1.5/32"], ["8.8.8.8/32"], "tcp", "443")
+    assert aa.decide(req, [op, CLEANUP]).notes                                         # default: noted
+    assert not aa.decide(req, [op, CLEANUP], aa.DecideOptions(emit_notes=False)).notes  # quiet
+
+
+def test_override_blocking_deny_off_places_below():
+    # a resolved covering deny: default overrides by placing ABOVE; OFF -> place BELOW (don't override),
+    # and STOP (no false NO_OP from a lower rule).
+    deny = _rule("rd", 1, "Drop", _host("10.0.0.5"), _host("172.16.5.10"), _tcp(443))
+    req = AccessRequest(["10.0.0.5/32"], ["172.16.5.10/32"], "tcp", "443")
+    assert aa.decide(req, [deny, CLEANUP]).position == {"above": "rd"}                  # default: override
+    d = aa.decide(req, [deny, CLEANUP], aa.DecideOptions(override_blocking_deny=False))
+    assert d.outcome is Outcome.CREATE and d.position == {"below": "rd"}                # don't override
 
 
 # ================= regression tests for the 2026-06-22 comprehensive audit =================
