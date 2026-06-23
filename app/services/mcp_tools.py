@@ -8,8 +8,12 @@ HTTP request lifecycle), mirroring the webhook. Reads/preview/correlate/coverage
 ``mcp_allow_publish`` setting — an LLM never commits to live policy by default."""
 from __future__ import annotations
 
+import logging
+
 from ..db import SessionLocal
 from ..models import ManagementServer
+
+logger = logging.getLogger("dcsim.mcp_tools")
 
 
 def _server_secret(db, server_id: int):
@@ -94,7 +98,11 @@ def decide_access(server_id: int, source: str, destination: str, layer: str, ser
                      source_kind, destination_kind)
     except ValueError as exc:
         return {"ok": False, "error": str(exc)}
-    return aa.preview(ms, secret, req, layer, package=package)
+    try:
+        return aa.preview(ms, secret, req, layer, package=package)
+    except Exception as exc:  # noqa: BLE001 — the agent must always get a structured result, never an
+        logger.exception("decide_access failed (server_id=%s, layer=%r)", server_id, layer)  # opaque
+        return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}                          # MCP error
 
 
 def apply_access(server_id: int, source: str, destination: str, layer: str, service: str | None = None,
@@ -128,7 +136,11 @@ def apply_access(server_id: int, source: str, destination: str, layer: str, serv
                      source_kind, destination_kind)
     except ValueError as exc:
         return {"ok": False, "error": str(exc)}
-    return aa.execute(ms, secret, req, layer, package=package, ticket_id=ticket_id, publish=publish)
+    try:
+        return aa.execute(ms, secret, req, layer, package=package, ticket_id=ticket_id, publish=publish)
+    except Exception as exc:  # noqa: BLE001 — never surface an uncaught raise as a generic "Internal error";
+        logger.exception("apply_access failed (server_id=%s, layer=%r)", server_id, layer)
+        return {"ok": False, "applied": False, "published": False, "error": f"{type(exc).__name__}: {exc}"}
 
 
 def correlate_service(server_id: int, name: str) -> dict:
