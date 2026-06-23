@@ -856,11 +856,24 @@ def decide(req: AccessRequest, rules: list[ParsedRule], options: "DecideOptions"
             return sub
 
         if (r.complex or svc_uncertain or not r.is_resolved_action) and interferes:
+            # Name the SPECIFIC reason this rule can't be reasoned about, rather than listing every
+            # possibility — e.g. an unresolvable destination object (a domain/DNS, dynamic, updatable,
+            # access-role or security-zone object) reads very differently from an inline layer.
+            why = []
+            if r.src_unknown:
+                why.append("a negated or unresolvable source")
+            if r.dst_unknown:
+                why.append("a negated or unresolvable destination")
+            if svc_uncertain or r.svc_unknown:
+                why.append("a negated or unresolvable service/application")
+            if not r.is_resolved_action:
+                why.append(f"a non-Accept/Drop action (“{r.action or 'unknown'}”)")
+            detail = "; ".join(why) or "an unresolvable match condition"
             return Decision(
                 Outcome.REVIEW,
-                f"rule {r.number} ({r.name}) lies in the traffic path but can't be reasoned about "
-                f"(negation, an unresolved object, an application category, or a non-Accept/Drop action "
-                f"such as an inline layer) -- needs human review",
+                f"rule {r.number} ({r.name}) lies in the traffic path but has {detail}, so its real reach "
+                f"can't be computed — needs human review. (Unresolvable objects include domain/DNS, "
+                f"dynamic, updatable, access-role and security-zone objects; inline layers are evaluated.)",
                 target_rule=r,
             )
 
