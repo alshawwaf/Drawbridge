@@ -16,14 +16,19 @@
   .ax-bar select, .ax-bar input { padding:6px 9px; min-width:180px; }
   .ax-bar input.url { min-width:340px; font-family:ui-monospace,monospace; }
   .ax-bar button { padding:7px 16px; font-weight:600; }
-  .ax-note { font-size:12px; color:var(--subtle-fg); margin:2px 0 12px; line-height:1.5; max-width:980px; }
-  .ax-note code { font-family:ui-monospace,monospace; }
-  .ax-callout { display:flex; gap:10px; align-items:flex-start; max-width:980px; margin:2px 0 12px;
-    padding:11px 14px; border:1px solid var(--line); border-left:3px solid var(--accent);
-    border-radius:9px; background:var(--surface-2); font-size:12.5px; line-height:1.55; color:var(--text-2); }
-  .ax-callout svg { flex:none; margin-top:1px; stroke:var(--accent); }
-  .ax-callout code { font-family:ui-monospace,monospace; }
-  .ax-callout b { color:var(--text); }
+  /* One collapsed "how it works" disclosure instead of two big always-on explainer blocks. */
+  .ax-help { max-width:980px; margin:2px 0 14px; border:1px solid var(--line); border-radius:9px;
+    background:var(--surface-2); font-size:12.5px; overflow:hidden; }
+  .ax-help > summary { cursor:pointer; padding:9px 14px; color:var(--text-2); font-weight:600;
+    list-style:none; display:flex; align-items:center; gap:8px; }
+  .ax-help > summary::-webkit-details-marker { display:none; }
+  .ax-help > summary::after { content:"▾"; margin-left:auto; color:var(--muted); transition:transform .15s; }
+  .ax-help[open] > summary { border-bottom:1px solid var(--line); }
+  .ax-help[open] > summary::after { transform:rotate(180deg); }
+  .ax-help-body { padding:11px 14px 13px; line-height:1.6; color:var(--text-2); }
+  .ax-help-body p { margin:0 0 9px; } .ax-help-body p:last-child { margin:0; }
+  .ax-help-body code { font-family:ui-monospace,monospace; }
+  .ax-help-body b { color:var(--text); }
   #ax-status { font-size:12.5px; margin:8px 0; min-height:1.2em; }
   #ax-status.err { color:var(--bad-fg,#c4314b); font-weight:600; }
   /* --- Theme Swagger UI onto the portal's own variables (follows dark/light automatically) --------- */
@@ -31,7 +36,9 @@
     padding:6px 16px 16px; }
   #swagger-ui .swagger-ui, #swagger-ui .swagger-ui .info .title { color:var(--text); }
   #swagger-ui .topbar { display:none; }
-  #swagger-ui .information-container { padding:18px 0 0; }
+  /* Hide Swagger's own info block (title + the long raw spec URL + description) — the page-head, the
+     API tabs, and the version picker already say what this is, so it's pure noise + an ugly URL line. */
+  #swagger-ui .information-container { display:none; }
   #swagger-ui .info { margin:14px 0; }
   #swagger-ui .info .title small.version-stamp { background:var(--chip-bg); }
   #swagger-ui .info .title small { background:var(--accent); }
@@ -148,9 +155,8 @@
     <h1>API explorer</h1>
     <p class="ph-sub">
       Live, interactive reference for the Check Point <strong>Management</strong> and <strong>Gaia</strong> APIs —
-      every command, request schema, and example — converted in-portal straight from Check Point's published
-      documentation (no external service). Pick the API version a server runs, and pre-fill the target so the
-      examples and <em>Try it out</em> point at it.
+      every command, schema, and example, generated in-portal from Check Point's docs. Pick a version and
+      target, then <em>Try it out</em>.
     </p>
   </div>
 </div>
@@ -191,22 +197,20 @@
   </label>
 </div>
 
-<div class="ax-callout">
-  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
-  <div><b>About “Try it out”.</b> By default it runs <b>through the portal</b> (server-side), so it
-  reaches your <b>saved</b> Management/Gateway servers without the browser's cross-origin (CORS) block —
-  just <b>Authorize</b> with a session id (sid) and execute. The proxy only ever reaches servers you've
-  added, and TLS is verified server-side. Untick <b>“Run calls through the portal”</b> to call straight
-  from the browser instead — handy for the copy-paste <code>curl</code>, though a real server will then
-  show <b>“Failed to fetch — CORS”</b> (expected, not a portal bug). For governed changes, use the gated
-  editor on <b>Management Servers</b> (preview → publish). You can also <b>Export for Postman / Bruno</b>.</div>
-</div>
-<p class="ax-note">
-  <strong>Export for Postman / Bruno</strong> downloads this version's OpenAPI 3.0 file with your selected
-  target server baked in. In <strong>Postman</strong>: <em>Import → File</em> (builds a collection of every
-  command). In <strong>Bruno</strong>: <em>Import Collection → OpenAPI V3</em>. Re-export after switching the
-  version or target server to get a fresh file.
-</p>
+<details class="ax-help">
+  <summary>How “Try it out” &amp; Export work</summary>
+  <div class="ax-help-body">
+    <p><b>Try it out</b> runs <b>through the portal</b> by default (server-side), so it reaches your
+    <b>saved</b> servers without the browser's CORS block — just <b>Authorize</b> with a session id (sid,
+    auto-captured after you run login) and execute. The proxy only reaches servers you've added, and TLS is
+    verified server-side. Untick <b>“Run calls through the portal”</b> to call straight from the browser
+    (handy for the copy-paste <code>curl</code>; a real server then shows “Failed to fetch — CORS”, which is
+    expected). For governed changes, use the gated editor on <b>Management Servers</b> (preview → publish).</p>
+    <p><b>Export for Postman / Bruno</b> downloads this version's OpenAPI 3.0 file with your target baked in.
+    Postman: <em>Import → File</em>. Bruno: <em>Import Collection → OpenAPI V3</em>. Re-export after switching
+    the version or target.</p>
+  </div>
+</details>
 
 <div id="ax-status">Loading {{ api_type }} {{ version or 'latest' }} spec…</div>
 <div id="swagger-ui"></div>
@@ -214,6 +218,14 @@
 <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.17.14/swagger-ui-bundle.js"></script>
 <script>
 (function () {
+  // Swagger UI 5.17 logs a benign "Error persisting cookie based apiKey" on every preauthorizeApiKey
+  // (an internal cookie-persist bug) even though the header auth applies fine. Drop just that one line so
+  // it doesn't look like a real failure to someone watching the console during a demo.
+  var _cerr = console.error.bind(console);
+  console.error = function (m) {
+    if (typeof m === 'string' && m.indexOf('persisting cookie based apiKey') !== -1) return;
+    return _cerr.apply(null, arguments);
+  };
   var API = {{ api_type | tojson }};
   var verSel = document.getElementById('ax-version');
   var srvSel = document.getElementById('ax-server');
@@ -251,7 +263,9 @@
       defaultModelsExpandDepth: 0,
       filter: true,
       tryItOutEnabled: true,
-      persistAuthorization: true,
+      // Per-session auth (no cross-reload persist) — the sid is short-lived and re-captured on the next
+      // login anyway, and this avoids restoring a stale sid on reload.
+      persistAuthorization: false,
       requestInterceptor: function (req) {
         // Route the live call through the portal's same-origin proxy so the browser's CORS block
         // doesn't stop it. The proxy only reaches your saved servers (see /api-explorer/proxy).
