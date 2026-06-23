@@ -567,9 +567,11 @@ Content-Type: application/json
     function vpW() { return wrap.clientWidth; }
     function vpH() { return wrap.clientHeight; }
     function clampPan() {
-      var cw = natW * s, ch = natH * s, M = 60;
-      tx = (cw <= vpW()) ? (vpW() - cw) / 2 : Math.min(M, Math.max(vpW() - cw - M, tx));
-      ty = (ch <= vpH()) ? (vpH() - ch) / 2 : Math.min(M, Math.max(vpH() - ch - M, ty));
+      // Freely movable: the user can drag the canvas anywhere to centre their view (even when the whole
+      // diagram already fits), as long as at least KEEP px of it stays on screen so it can't be lost.
+      var cw = natW * s, ch = natH * s, KEEP = 140;
+      tx = Math.min(vpW() - KEEP, Math.max(KEEP - cw, tx));
+      ty = Math.min(vpH() - KEEP, Math.max(KEEP - ch, ty));
     }
     function apply() {
       canvas.style.transform = 'translate(' + tx + 'px,' + ty + 'px) scale(' + s + ')';

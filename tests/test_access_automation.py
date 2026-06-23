@@ -1002,15 +1002,17 @@ def _dns_layer(group_members):
 _FB_REQ = AccessRequest(src_cidrs=["10.1.1.222/32"], dst_cidrs=["Any"], application="Facebook")
 
 
-def test_unresolved_group_source_notes_and_widens():
-    # group members absent (bare UID) -> rule 1's source is unknown. It's an ACCEPT (can't block), so we
-    # NOTE it and continue — and the walk reaches the CORRECT outcome: WIDEN the Facebook rule's source.
-    # (This is exactly the live-lab symptom: an unresolvable DNS rule used to spuriously REVIEW the whole
-    # request; now it's noted and the real widen happens.)
+def test_unresolved_group_source_does_not_block_widen():
+    # group members absent (bare UID) -> rule 1's source is unknown. It's an ACCEPT with a SPECIFIC
+    # destination (win_server), so it can NOT cover this Any-destination request -> it isn't flagged as a
+    # possible allow at all, and the walk still reaches the CORRECT outcome: WIDEN the Facebook rule's
+    # source. (Live-lab symptom: an unresolvable DNS rule used to spuriously REVIEW the whole request; now
+    # it doesn't even add noise, because a specific-destination rule can't allow an Any-destination request.)
     rules = _dns_layer(["u-missing-member"])
     assert rules[0].complex and rules[0].src_unknown
     d = aa.decide(_FB_REQ, rules)
-    assert d.outcome is Outcome.WIDEN and d.target_rule.number == 6 and _noted(d, "rule 1")
+    assert d.outcome is Outcome.WIDEN and d.target_rule.number == 6
+    assert not _noted(d, "rule 1")     # specific destination (win_server) can't cover an Any request
 
 
 def test_dereferenced_group_source_lets_engine_widen():
@@ -1355,8 +1357,9 @@ class _FakeSession:
     `layers` maps a layer NAME -> its rulebase; `objs` is the shared object dictionary returned with every
     rulebase page (so the inline-layer name resolves like a real pull); `cleanups` maps a layer UID -> its
     implicit-cleanup-action for the show-access-layer fallback."""
-    def __init__(self, layers, objs=None, cleanups=None):
+    def __init__(self, layers, objs=None, cleanups=None, dynamics=None):
         self.layers, self.objs, self.cleanups, self.calls = layers, objs or [], cleanups or {}, []
+        self.dynamics = dynamics or {}          # layer UID -> is-dynamic-layer (sk182252)
 
     def call(self, cmd, payload):
         self.calls.append((cmd, payload))
@@ -1364,7 +1367,9 @@ class _FakeSession:
             return {"rulebase": self.layers.get(payload.get("name"), []),
                     "objects-dictionary": self.objs, "total": 0, "to": 0}
         if cmd == "show-access-layer":
-            return {"implicit-cleanup-action": self.cleanups.get(payload.get("uid"), "")}
+            ref = payload.get("uid") or payload.get("name")
+            return {"implicit-cleanup-action": self.cleanups.get(ref, ""),
+                    "dynamic-layer": self.dynamics.get(ref, False)}
         return {}
 
 
@@ -1389,13 +1394,16 @@ def test_loader_attaches_inline_rules_and_cleanup():
     assert ("show-access-layer", {"uid": "L-DMZ"}) in sess.calls
 
 
-def test_loader_cleanup_from_object_dictionary_skips_lookup():
-    # cleanup carried in the object dictionary -> no extra show-access-layer call
+def test_loader_keeps_objdict_cleanup_but_still_checks_dynamic_flag():
+    # cleanup carried in the object dictionary is kept; but the dynamic-layer flag (sk182252) is returned
+    # ONLY by show-access-layer (never in show-access-rulebase's object dictionary), so the loader MUST
+    # still consult it — here it learns the layer is NOT dynamic and descends normally.
     objs = [{"uid": "L-DMZ", "type": "access-layer", "name": "DMZ", "implicit-cleanup-action": "Accept"}]
     sess = _FakeSession({"DMZ": [], "topL": [_ap_rule("p", 1, "L-DMZ")]}, objs=objs)
     rules = aa.load_layer(sess, "topL")
-    assert rules[0].inline_cleanup == "accept"
-    assert not any(c[0] == "show-access-layer" for c in sess.calls)
+    assert rules[0].inline_cleanup == "accept"          # kept from the object dictionary
+    assert rules[0].dynamic_layer is False and rules[0].inline_rules is not None   # not dynamic -> descended
+    assert any(c[0] == "show-access-layer" for c in sess.calls)   # consulted for the dynamic-layer flag
 
 
 def test_loader_cycle_guard_does_not_recurse_forever():
@@ -1406,6 +1414,93 @@ def test_loader_cycle_guard_does_not_recurse_forever():
     rules = aa.load_layer(sess, "topL")        # must terminate
     assert rules[0].inline_rules is not None    # attached; the self-reference inside resolves to []
     assert rules[0].inline_rules[0].inline_rules == []   # the cycle was cut at the second encounter
+
+
+# ---- a rule with a specific destination can't ALLOW an Any-destination request (no false "may permit") ----
+def test_specific_dest_accept_not_flagged_as_possible_allow():
+    # opaque ACCEPT (unresolvable service) with a SPECIFIC destination, request destination = Any.
+    # A specific destination can never cover Any, so this rule can't "already permit" the request -> NO note.
+    acc = _rule("r11", 11, "Accept", _host("10.1.1.222"), _host("10.9.9.9"), _app(opaque=True))
+    d = aa.decide(AccessRequest(["10.1.1.222/32"], ["Any"], application="Facebook"), [acc, CLEANUP])
+    assert d.outcome is Outcome.CREATE and not d.notes
+
+
+def test_opaque_accept_that_could_cover_is_still_flagged():
+    # request is NOT Any and the rule's src/dst are Any with an UNRESOLVABLE service -> the rule COULD
+    # cover it, so it is still flagged "may already permit it" (we only suppress provable non-covers).
+    acc = _rule("ra", 2, "Accept", ANY, ANY, ServiceSet(complex=True))
+    acc.svc_unknown = True
+    d = aa.decide(AccessRequest(["10.1.1.5/32"], ["8.8.8.8/32"], "tcp", "443"), [acc, CLEANUP])
+    assert d.outcome is Outcome.CREATE and _noted(d, "rule 2")
+
+
+def test_specific_dest_drop_vs_any_still_blocks_below():
+    # symmetry: a specific/approx-destination DROP overlapping an Any request CAN block that subset, so it
+    # is still noted + the new rule placed BELOW it (only the false "may permit" for accepts is suppressed).
+    drop = _rule("r6", 6, "Drop", ANY, _host("172.16.0.1"), ServiceSet(any=True))
+    drop.dst_approx = True
+    d = aa.decide(AccessRequest(["10.1.1.222/32"], ["Any"], application="Facebook"), [drop, CLEANUP])
+    assert d.outcome is Outcome.CREATE and _noted(d, "rule 6")
+
+
+# ---- Dynamic Layers (sk182252) are managed out-of-band -> excluded from the engine entirely ----
+def test_dynamic_layer_rule_is_excluded_from_decide():
+    dyn = _inline("p1", 5, _net("10.1.0.0/24"), _host("172.16.5.10"), _tcp(443), [], name="dynamic_layer")
+    dyn.dynamic_layer = True                                    # marked by the loader
+    d = aa.decide(_req(), [dyn, CLEANUP])
+    assert d.outcome is Outcome.CREATE and not d.notes and d.layer is None   # skipped, not descended/flagged
+
+
+def _accept_any():
+    return {"type": "access-rule", "uid": "x", "rule-number": 1, "name": "x", "enabled": True,
+            "source": ["Any"], "destination": ["Any"], "service": ["Any"], "action": "Accept"}
+
+
+def test_loader_excludes_dynamic_layer_from_object_dictionary():
+    # the object dictionary marks the inline layer as a Dynamic Layer -> excluded: never pulled, no lookup
+    objs = [{"uid": "L-DYN", "type": "access-layer", "name": "dynamic_layer", "dynamic-layer": True}]
+    sess = _FakeSession({"dynamic_layer": [_accept_any()], "topL": [_ap_rule("p", 1, "L-DYN")]}, objs=objs)
+    rules = aa.load_layer(sess, "topL")
+    assert rules[0].dynamic_layer is True and rules[0].inline_rules is None
+    assert not any(c[0] == "show-access-layer" for c in sess.calls)   # flag came from the object dictionary
+
+
+def test_loader_excludes_dynamic_layer_via_lookup():
+    # object dictionary lacks the flag (and the cleanup) -> the fallback lookup detects dynamic-layer
+    objs = [{"uid": "L-DYN", "type": "access-layer", "name": "dynamic_layer"}]
+    sess = _FakeSession({"dynamic_layer": [_accept_any()], "topL": [_ap_rule("p", 1, "L-DYN")]},
+                        objs=objs, dynamics={"L-DYN": True})
+    rules = aa.load_layer(sess, "topL")
+    assert rules[0].dynamic_layer is True and rules[0].inline_rules is None
+    assert ("show-access-layer", {"uid": "L-DYN"}) in sess.calls
+
+
+def test_loader_detects_dynamic_layer_when_objdict_has_cleanup_but_not_flag():
+    # the REALISTIC Check Point shape (adversarial-review finding): show-access-rulebase's object
+    # dictionary carries the layer's implicit-cleanup-action but NOT the dynamic-layer flag (that flag is
+    # ONLY on show-access-layer). The loader must STILL consult show-access-layer and detect + exclude it,
+    # never descend into the out-of-band layer just because the cleanup happened to be in the dict.
+    objs = [{"uid": "L-DYN", "type": "access-layer", "name": "dynamic_layer",
+             "implicit-cleanup-action": "Drop"}]
+    sess = _FakeSession({"dynamic_layer": [_accept_any()], "topL": [_ap_rule("p", 1, "L-DYN")]},
+                        objs=objs, dynamics={"L-DYN": True})
+    rules = aa.load_layer(sess, "topL")
+    assert rules[0].dynamic_layer is True and rules[0].inline_rules is None   # detected despite objdict cleanup
+
+
+def test_dynamic_divert_floors_placement_below_it():
+    # adversarial-review finding: a dynamic-layer divert that INTERFERES must keep the new rule BELOW it
+    # even when a more-specific rule sits above and there is NO catch-all cleanup floor — otherwise
+    # first-match could serve the new allow ABOVE the divert and bypass the out-of-band segmentation.
+    # uncertain_deny must drop the lower_anchor and force bottom placement.
+    r1 = _rule("r1", 1, "Accept", _host("10.1.0.5"), _host("172.16.5.10"), _tcp(443))
+    rd = _inline("rd", 5, ANY, _net("172.16.0.0/16"), ServiceSet(any=True), [], name="dynamic_layer")
+    rd.dynamic_layer = True
+    req = AccessRequest(src_cidrs=["10.1.0.0/24"], dst_cidrs=["172.16.0.0/16"], protocol="tcp", ports="443")
+    d = aa.decide(req, [r1, rd])                       # no catch-all cleanup below the divert
+    assert d.outcome is Outcome.CREATE
+    assert d.position != {"below": "r1"}               # must NOT anchor ABOVE the divert
+    assert d.position == {"_above_cleanup": True}      # forced to the bottom, below the divert
 
 
 # ================= regression tests for the 2026-06-22 comprehensive audit =================
