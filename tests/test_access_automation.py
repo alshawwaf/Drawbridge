@@ -1632,6 +1632,11 @@ def test_decide_options_resolves_named_profiles(monkeypatch):
     assert o.prefer_widen and o.app_carveout and o.override_blocking_deny and o.ignore_conditions \
         and not o.emit_notes
 
+    store["aa_profile"] = "autopilot"                       # demo: max-decisive but narrates (notes ON)
+    o = aa._decide_options()
+    assert o.prefer_widen and o.app_carveout and o.override_blocking_deny and o.ignore_conditions \
+        and o.emit_notes
+
 
 def test_decide_options_custom_uses_individual_toggles(monkeypatch):
     from app.services import app_settings

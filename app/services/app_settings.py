@@ -151,6 +151,7 @@ SETTINGS: list[Setting] = [
             choices=(("balanced", "Balanced — recommended default"),
                      ("conservative", "Conservative — never modify or override existing rules"),
                      ("aggressive", "Aggressive — fewest rules, least friction"),
+                     ("autopilot", "Autopilot — lab demo: one sentence resolves, applies & publishes"),
                      ("custom", "Custom — use the individual toggles below"))),
     Setting("aa_app_carveout", "bool", True,
             "Carve out an application above a blocking rule",
