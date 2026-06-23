@@ -83,18 +83,22 @@
 
     genBtn.addEventListener('click', function () {
       genBtn.disabled = true;
-      status.innerHTML = '<span class="muted">Pulling Gaia config over gaia_api…</span>';
+      genBtn.dataset.t = genBtn.dataset.t || genBtn.textContent;
+      genBtn.innerHTML = '<span class="spin" style="margin-right:7px; vertical-align:-2px;"></span>Pulling…';
+      status.innerHTML = '<span class="muted">Reading the live Gaia config over <code>gaia_api</code> — ' +
+        'this can take a few seconds…</span>';
       results.hidden = true;
+      function restore() { genBtn.disabled = false; genBtn.textContent = genBtn.dataset.t; }
       var body = new URLSearchParams(); if (pw.value) body.set('password', pw.value);
       fetch(runUrl, { method: 'POST', body: body })
         .then(function (r) { return r.json(); })
         .then(function (j) {
-          genBtn.disabled = false;
+          restore();
           if (j.error) { status.innerHTML = '<span class="err">' + esc(j.error) + '</span>'; return; }
           data = j; status.innerHTML = '<span class="ok">✓ Generated.</span>';
           renderStats(); renderTab(); results.hidden = false;
         })
-        .catch(function () { genBtn.disabled = false; status.innerHTML = '<span class="err">Export failed.</span>'; });
+        .catch(function () { restore(); status.innerHTML = '<span class="err">Export failed.</span>'; });
     });
   })();
 </script>
