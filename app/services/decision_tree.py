@@ -55,25 +55,25 @@ NODES: list[Node] = [
          "decision", 60, 140, 280, 68),
     Node("revU", "Review", "nothing concrete to reason about", "review", 460, 142, 240),
     Node("resolve", "Resolve request + each rule cell (top-down, first match wins)",
-         "IP: host / network / range / group (exact) · gateway / cluster / mgmt (approx) · typed object → matched by identity · else unresolvable → review",
+         "IP: host / network / range / group (exact) · gateway / cluster / mgmt (approx) · typed object → matched by identity · else opaque → note & continue",
          "process", 60, 256, 320, 104),
-    Node("revO", "Review", "a cell with no computable extent in any space — an over-cap wildcard · an unenumerable group · a malformed or unknown-type object",
-         "review", 460, 268, 280, 84),
+    Node("noteO", "Note & keep going", "an OPAQUE rule (updatable feed · unresolvable / negated cell · non-Accept/Drop action) is flagged “review later”, NOT stopped — the walk continues",
+         "note", 460, 264, 300, 92),
     Node("perm", "Already permitted?", "first reachable Accept covering all 3 columns, before any covering drop",
          "decision", 60, 400, 300, 68),
     Node("noop", "No-op", "already allowed — just attach the rule to the ticket", "noop", 460, 402, 250),
-    Node("deny", "Denied, conditional, or can’t verify in path?",
-         "a covering / partial drop · a conditional rule (VPN / time / data / install-on) · a cell whose reach is unknown (negated · unresolvable · a domain meeting an updatable feed) · a non-Accept/Drop action",
-         "decision", 60, 516, 320, 116),
-    Node("revD", "Review", "an intentional deny, or scope we can’t safely verify — hand to a human",
-         "review", 460, 540, 260, 72),
-    Node("widen", "Two columns equal the request?", "the third differs → add the request’s value to THAT rule cell",
-         "decision", 60, 688, 300, 68),
+    Node("deny", "RESOLVED deny or conditional deny in path?",
+         "a covering / partial DROP we can fully resolve · a conditional rule (VPN / time / data / install-on) that denies. (Opaque rules are NOT here — they’re noted & passed, above.)",
+         "decision", 60, 516, 320, 104),
+    Node("revD", "Review", "an intentional, provable deny — never silently overridden (the override-deny toggle opts in)",
+         "review", 460, 540, 260, 84),
+    Node("widen", "Two columns equal the request?", "the third differs → add the request’s value to THAT rule cell (suppressed if an opaque possible-deny was passed)",
+         "decision", 60, 700, 300, 84),
     Node("doWiden", "Widen the rule", "add the differing source / destination / service to the cell (never a shared group)",
-         "widen", 460, 690, 260, 72),
+         "widen", 460, 706, 260, 72),
     Node("create", "Create least-privilege rule",
-         "above a blocking / cleanup drop · below a more-specific rule · else bottom", "create",
-         60, 804, 300, 72),
+         "above a blocking / cleanup drop · below a more-specific rule · BELOW any opaque possible-deny that was passed · else bottom", "create",
+         60, 820, 320, 84),
 
     # --- DETAIL tier 1: HOW each source/destination is matched (IP space vs identity space) -------
     # A self-contained branch off "resolve" explaining the typed-object framework: each object KIND is
@@ -92,8 +92,8 @@ NODES: list[Node] = [
          "process", 1280, 470, 280, 72, level=1),
     Node("iddisjoint", "Different kinds never collide", "a domain ≠ an IP / role / zone object → provably OUT of the request’s path (can’t satisfy OR block it)",
          "process", 1280, 600, 340, 96, level=1),
-    Node("idupd", "Review", "a domain meets an updatable feed (e.g. Office365) — the feed may itself contain the FQDN, so coverage can’t be proven",
-         "review", 900, 640, 340, 96, level=1),
+    Node("idupd", "Note & keep going", "a domain meets an updatable feed (e.g. Office365) — it may contain the FQDN, so it’s flagged “review later” and the walk continues (never a hard stop)",
+         "note", 900, 640, 340, 96, level=1),
 
     # --- DETAIL tier 1: inline-layer recursion ("Apply Layer") -----------------------------------
     Node("inline", "In-path rule applies an inline layer?", "action “Apply Layer” — a sub-rulebase",
@@ -130,9 +130,10 @@ NODES: list[Node] = [
 EDGES: list[Edge] = [
     Edge("req", "unsup"),
     Edge("unsup", "revU", "yes"), Edge("unsup", "resolve", "no"),
-    Edge("resolve", "revO", "unresolvable cell"), Edge("resolve", "perm", "resolved"),
+    Edge("resolve", "noteO", "opaque rule"), Edge("noteO", "perm", "continue"),
+    Edge("resolve", "perm", "resolved"),
     Edge("perm", "noop", "yes"), Edge("perm", "deny", "no"),
-    Edge("deny", "revD", "blocked / unverifiable → review"), Edge("deny", "widen", "no"),
+    Edge("deny", "revD", "resolved / conditional deny → review"), Edge("deny", "widen", "no"),
     Edge("widen", "doWiden", "yes"), Edge("widen", "create", "no"),
 
     # how each endpoint is matched (detail) — IP-interval space vs typed-object identity space
@@ -179,6 +180,7 @@ PALETTE: dict[str, tuple[str, str, str]] = {
     "noop":     ("#dcf3e4", "#16a34a", "#0c6b34"),   # green
     "widen":    ("#dceffb", "#0ea5e9", "#0b6a96"),   # sky
     "create":   ("#fbeecb", "#f59e0b", "#92610a"),   # amber
+    "note":     ("#e6f0fb", "#3b82f6", "#1e497f"),   # advisory blue — "noted, not blocked; keep going"
 }
 
 # DARK palette — for the on-page render on the portal's dark canvas: nodes sit IN the dark (deep tinted
@@ -191,6 +193,7 @@ PALETTE_DARK: dict[str, tuple[str, str, str]] = {
     "noop":     ("#11302a", "#22c55e", "#a9efca"),   # green
     "widen":    ("#0f2738", "#38bdf8", "#bce3f7"),   # sky
     "create":   ("#33270f", "#fbbf24", "#f7d99a"),   # amber
+    "note":     ("#15233b", "#3b82f6", "#bcd7f7"),   # advisory blue — "noted, not blocked; keep going"
 }
 
 # Per-theme Mermaid look (fed via the %%{init}%% directive baked into the source, so the downloaded
@@ -213,7 +216,8 @@ _MM_THEME = {
 # --- Mermaid -------------------------------------------------------------------------------------
 # shape delimiters per kind: stadium for start, hexagons for decisions, rounded rects for the rest.
 _MM_SHAPE = {"start": ('(["', '"])'), "process": ('["', '"]'), "decision": ('{{"', '"}}'),
-             "review": ('("', '")'), "noop": ('("', '")'), "widen": ('("', '")'), "create": ('("', '")')}
+             "review": ('("', '")'), "noop": ('("', '")'), "widen": ('("', '")'), "create": ('("', '")'),
+             "note": ('>"', '"]')}    # a flag/note shape (asymmetric) — "advisory, keep going"
 
 
 def _mm_text(n: Node) -> str:

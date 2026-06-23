@@ -47,11 +47,19 @@ object dictionary), never by object name. The four outcomes:
   group, which would widen every rule that references it).
 - **CREATE** — nothing covers it → add a least-privilege Accept (`track: Log`, comment stamped with the
   ticket id), placed `above` the catch-all cleanup drop and `below` any more-specific rule.
-- **REVIEW** — an explicit (non-cleanup) deny covers/overlaps the flow, or a rule in the path is
-  negated / conditional (VPN, time, content, install-on, service-resource) / holds a truly-unresolvable
-  cell (an over-cap wildcard, an unenumerable group, an opaque app category) → hand to a human. The
-  guardrail: the engine **never silently overrides an admin's drop** and never reasons past a rule whose
-  real reach it can't prove. Inline ("Apply Layer") rules are pulled and recursed into.
+- **REVIEW** — an explicit (non-cleanup), *resolved* deny covers/overlaps the flow, or a conditional
+  (VPN / time / content / install-on / service-resource) deny lies in the path → hand to a human. The
+  guardrail: the engine **never silently overrides an admin's drop**. Inline ("Apply Layer") rules are
+  pulled and recursed into.
+
+**Opaque rules don't stop the flow.** A rule the engine *can't fully resolve* — an updatable feed (which
+may itself contain the requested object), an unresolvable/negated cell, an over-cap wildcard, an opaque
+app category, a non-Accept/Drop action — no longer halts the request with REVIEW. The walk **notes it as
+a "possible match — review later" and continues** to the real NO_OP / WIDEN / CREATE. This is safe by
+construction: a NO_OP writes nothing, and a new rule is always placed **below** any such opaque
+possible-deny (and a WIDEN that would leap a rule over it is suppressed), so the firewall is never
+weakened — the opaque rule keeps its first-match precedence. The notes ride along on the decision (and
+the webhook/MCP result) so nothing is lost. (A *resolved* deny is different — that's the REVIEW above.)
 
 Two admin toggles (Settings) can convert classes of REVIEW into automatic action — `override_deny`
 (create the allow *above* a blocking deny) and `ignore_conditions` — both **off** by default. The live

@@ -133,7 +133,7 @@ Content-Type: application/json
 
 <div class="card">
   <h2 style="margin-top:0;">How it decides — behind the scenes</h2>
-  <p class="muted" style="margin-top:4px;">Every request runs the same first-match decision tree the market leaders use. It reuses a rule that already permits the traffic; widens a rule only when it matches the request exactly in the other two columns (so it never grants access nobody asked for); creates a least-privilege rule when nothing fits; and refuses to touch policy it can’t safely reason about. It compares each source/destination <b>by kind</b> — an IP/CIDR in address space, or a typed object (domain, access-role, dynamic, updatable, security-zone) in its own <b>identity</b> space — so a domain is matched against a rule’s domain object, never confused with an IP. Expand any node below for the detail, or download the whole tree as Mermaid / draw.io / Graphviz.</p>
+  <p class="muted" style="margin-top:4px;">Every request runs the same first-match decision tree the market leaders use. It reuses a rule that already permits the traffic; widens a rule only when it matches the request exactly in the other two columns (so it never grants access nobody asked for); creates a least-privilege rule when nothing fits; and never silently overrides a resolved deny. A rule it <em>can’t fully resolve</em> (an updatable feed, an unresolvable cell) no longer stops the request — it’s <b>noted as a “possible match — review later” and the walk continues</b> (a new rule is always placed below it, so nothing is over-granted). It compares each source/destination <b>by kind</b> — an IP/CIDR in address space, or a typed object (domain, access-role, dynamic, updatable, security-zone) in its own <b>identity</b> space — so a domain is matched against a rule’s domain object, never confused with an IP. Expand any node below for the detail, or download the whole tree as Mermaid / draw.io / Graphviz.</p>
   <style>
     .dtbar{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin:4px 0 8px;}
     .dtzoom{display:inline-flex;align-items:center;gap:4px;}
@@ -313,6 +313,14 @@ Content-Type: application/json
       var h = '<div class="runbox">';
       h += '<div class="row" style="align-items:center; gap:10px;">' + outcomeBadge(j.outcome) +
            '<span>' + esc(j.reason) + '</span></div>';
+      // Advisory: opaque rules the engine passed over instead of stopping — flagged for a later review,
+      // never a blocker. (An updatable feed / unresolvable cell that may also match this traffic.)
+      if (j.notes && j.notes.length) {
+        h += '<div style="margin-top:10px; font-size:12.5px; color:var(--info); background:var(--info-bg); ' +
+             'border-radius:8px; padding:9px 12px;">⚑ Possible matches to review later ' +
+             '<span class="muted">(the automated decision still applies):</span><ul style="margin:6px 0 0; padding-left:20px;">' +
+             j.notes.map(function (n) { return '<li>' + esc(n) + '</li>'; }).join('') + '</ul></div>';
+      }
       if (j.app_resolution) h += objBlock(j.app_resolution, 'data-app', 'application');
       if (j.svc_resolution) h += objBlock(j.svc_resolution, 'data-svc', 'service');
       if (j.anomaly) h += '<div class="err-inline">Heads-up: an existing ordering anomaly was detected near the insert point — review placement.</div>';
