@@ -31,6 +31,8 @@ class Node:
                      # detail (inline-layer recursion, automation modes) collapsed until expanded. NOT a
                      # BFS depth — it's a hand-set "how much detail" tier so the core flow stays whole
                      # when collapsed. The exported .mmd/.drawio/.dot ALWAYS contain every node.
+    option: str = ""  # the Settings knob (aa_*) this node's behaviour is governed by — the on-page
+                      # diagram turns it into a click-to-toggle pill (interactive editor). "" = not tunable.
 
 
 @dataclass(frozen=True)
@@ -63,20 +65,20 @@ NODES: list[Node] = [
          "IP: host / network / range / group (exact) · gateway / cluster / mgmt (approx) · typed object → matched by identity · else opaque → note & continue",
          "process", 40, 200, 320, 104),
     Node("noteO", "Note & keep going", "anything we can’t fully resolve — an OPAQUE rule (updatable feed · negated / unparsable cell · non-Accept/Drop action), a CONDITIONAL rule (VPN / time / data / install-on), or a request that SPLITS across an inline layer — is flagged “review later”, NOT stopped. The walk continues; the new rule is placed BELOW it. A rule that provably CAN’T cover the request (e.g. a specific destination vs an Any request) is NOT flagged as a possible allow.",
-         "note", 430, 196, 320, 132),
+         "note", 430, 196, 320, 132, option="aa_emit_notes"),
     Node("perm", "Already permitted?", "first reachable Accept covering all 3 columns, before any covering drop",
          "decision", 40, 400, 300, 68),
     Node("noop", "No-op", "already allowed — just attach the rule to the ticket", "noop", 430, 402, 250),
     Node("deny", "Resolved deny covering the path?",
          "a covering / partial DROP we can fully resolve → CREATE the allow ABOVE it so the access works (first-match then hits the allow). A conditional / opaque possible-deny is NOT here — it’s noted & passed, above.",
-         "decision", 40, 540, 320, 104),
+         "decision", 40, 540, 320, 104, option="aa_override_blocking_deny"),
     Node("widen", "Two columns equal the request?", "the third differs → add the request’s value to THAT rule cell (suppressed if an opaque possible-deny was passed)",
-         "decision", 430, 552, 300, 84),
+         "decision", 430, 552, 300, 84, option="aa_prefer_widen"),
     Node("doWiden", "Widen the rule", "add the differing source / destination / service to the cell (never a shared group)",
          "widen", 430, 760, 260, 72),
     Node("create", "Create least-privilege rule",
          "above a blocking / cleanup drop · an APPLICATION is carved out ABOVE a rule that blocks it (CP identifies the app; other traffic still hits the rule) · below a more-specific rule · BELOW any opaque possible-deny · else bottom. Every choice here is tunable in Settings → Access automation logic.", "create",
-         40, 760, 320, 84),
+         40, 760, 320, 84, option="aa_app_carveout"),
 
     # --- DETAIL tier 1: HOW each source/destination is matched (IP space vs identity space) -------
     # A self-contained branch off "resolve", laid out left→right: kindq → {ipspace, idspace} →
@@ -106,7 +108,7 @@ NODES: list[Node] = [
          "process", 1300, 470, 330, 116, level=1),
     Node("opts", "Automation mode (Settings): ignore-conditions",
          "optionally treat VPN / time / data / install-on rules as unconditional — a conditional Accept then counts as covering and a conditional Drop as a resolved block (create above it), instead of being noted & passed",
-         "process", 900, 560, 360, 96, level=1),
+         "process", 900, 560, 360, 96, level=1, option="aa_ignore_conditions"),
 
     # --- DETAIL tier 1: object materialisation on apply — a fan along the bottom -------------------
     Node("apply", "On apply: materialise the objects", "reuse an existing object, else create it — then write the rule",
@@ -309,7 +311,7 @@ def to_graph() -> dict:
         "default_depth": DEFAULT_DEPTH,
         "nodes": [{"id": n.id, "kind": n.kind, "level": n.level, "depth": depth[n.id],
                    "label": n.label, "sub": n.sub, "x": n.x, "y": n.y, "w": n.w, "h": n.h,
-                   "mm": _mm_node_decl(n)} for n in NODES],
+                   "option": n.option, "mm": _mm_node_decl(n)} for n in NODES],
         "edges": [{"src": e.src, "dst": e.dst, "label": e.label, "mm": _mm_edge_decl(e)} for e in EDGES],
         "themes": {"dark":  {"init": _mm_init(True),  "classDefs": _mm_classdefs(True)},
                    "light": {"init": _mm_init(False), "classDefs": _mm_classdefs(False)}},

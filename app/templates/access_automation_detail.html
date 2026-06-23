@@ -161,6 +161,13 @@ Content-Type: application/json
       cursor:grab;user-select:none;transition:box-shadow .14s, transform .14s;}
     .dtnode:hover{box-shadow:0 12px 30px -7px rgba(0,0,0,.66), 0 4px 10px rgba(0,0,0,.40), inset 0 1px 0 rgba(255,255,255,.18);transform:translateY(-1px);}
     .dtnode.dragging{cursor:grabbing;opacity:.95;transform:none;}
+    /* click-to-toggle knob pill on a tunable node (interactive editor) */
+    .dtn-opt{position:absolute;bottom:-11px;left:50%;transform:translateX(-50%);white-space:nowrap;
+      font-size:10.5px;font-weight:800;letter-spacing:.03em;padding:3px 10px;border-radius:11px;cursor:pointer;
+      border:1.5px solid var(--dt-bd);background:var(--dt-bot);color:var(--dt-fg);box-shadow:0 2px 6px rgba(0,0,0,.4);}
+    .dtn-opt.on{background:var(--ok,#16a34a);border-color:var(--ok,#16a34a);color:#fff;}
+    .dtn-opt.off{background:#9aa3b2;border-color:#9aa3b2;color:#10151f;}
+    .dtn-opt:hover{filter:brightness(1.08);}
     /* Save-layout button: glows when there are unsaved moves, flashes a confirmation on save */
     #dt-savelayout.dirty{border-color:var(--accent);color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset;}
     #dt-savelayout.saved{border-color:var(--ok,#16a34a);color:var(--ok,#16a34a);}
@@ -221,6 +228,7 @@ Content-Type: application/json
   <p class="dthint" id="dt-hint" hidden>Showing the core flow — click a node’s <b>＋N</b> chip to reveal that branch. <b>Drag a box</b> to rearrange (space it out however you like), then <b>Save layout</b> to keep it · drag the <b>background</b> to pan · <b>pinch</b> / Ctrl-scroll / <b>＋ −</b> to zoom · <b>Reset layout</b> restores the default.</p>
   <div class="dtwrap" id="aa-flow-wrap"><div class="dtcanvas" id="aa-flow-canvas"></div></div>
   <script id="dt-graph-data" type="application/json">{{ decision_graph_json|safe }}</script>
+  <script id="dt-options-data" type="application/json">{{ aa_options_json|safe }}</script>
   <div class="row" style="gap:8px;margin-top:14px;flex-wrap:wrap;justify-content:center;">
     <span class="pill ok">No-op · already allowed</span>
     <span class="pill" style="background:var(--info-bg);color:var(--info);">Widen · extend a rule</span>
@@ -551,6 +559,9 @@ Content-Type: application/json
     var GRAPH = null;
     try { GRAPH = JSON.parse(document.getElementById('dt-graph-data').textContent); } catch (e) {}
     if (!GRAPH || !GRAPH.nodes) return;
+    // interactive editor: current effective knob values + active profile (click a node's pill to toggle)
+    var OPT = { profile: 'custom', values: {} };
+    try { OPT = JSON.parse(document.getElementById('dt-options-data').textContent) || OPT; } catch (e) {}
     var SVGNS = 'http://www.w3.org/2000/svg';
     function esc(s) { var d = document.createElement('div'); d.textContent = (s == null ? '' : s); return d.innerHTML; }
 
@@ -662,6 +673,16 @@ Content-Type: application/json
           b.textContent = '+' + hc.length; b.title = 'Show ' + hc.length + ' more';
           b.setAttribute('data-expand', n.id); d.appendChild(b);
         }
+        if (n.option) {                                       // tunable node -> a click-to-toggle pill
+          var on = !!OPT.values[n.option];
+          var p = document.createElement('button'); p.type = 'button';
+          p.className = 'dtn-opt ' + (on ? 'on' : 'off'); p.setAttribute('data-opt', n.option);
+          p.textContent = on ? 'ON' : 'OFF';
+          p.title = 'This behavior is ' + (on ? 'ON' : 'OFF') + (OPT.profile && OPT.profile !== 'custom'
+            ? ' (set by the “' + OPT.profile + '” profile — click to switch to Custom and change it)'
+            : ' — click to toggle');
+          d.appendChild(p);
+        }
         canvas.appendChild(d); cards[n.id] = d;
       });
       // labels wrap, so measure heights next frame, then draw edges + (optionally) fit
@@ -692,10 +713,31 @@ Content-Type: application/json
       var rl = document.getElementById('dt-resetlayout');
       if (rl) rl.addEventListener('click', function () { override = {}; try { localStorage.removeItem(LSKEY); } catch (e) {} markDirty(false); render(true); });
     }
-    // expand a node's hidden branch via its ＋N chip (a real drag suppresses the click)
+    // toast for the interactive editor
+    function dtToast(msg, bad) {
+      var t = document.createElement('div'); t.textContent = msg;
+      t.style.cssText = 'position:absolute;left:50%;bottom:14px;transform:translateX(-50%);z-index:5;' +
+        'padding:7px 14px;border-radius:9px;font-size:12.5px;font-weight:600;color:#fff;box-shadow:0 6px 18px rgba(0,0,0,.4);' +
+        'background:' + (bad ? '#b4232a' : 'var(--accent,#2563eb)') + ';';
+      wrap.appendChild(t); setTimeout(function () { t.remove(); }, 2200);
+    }
+    // click a node's knob pill -> toggle that decision behavior (persists; switches profile to Custom)
+    function toggleOption(key) {
+      var cur = !!OPT.values[key];
+      fetch('/access-automation/decision-option', { method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key: key, value: !cur }) })
+        .then(function (r) { return r.ok ? r.json() : r.json().then(function (j) { throw new Error(j.error || 'failed'); }); })
+        .then(function (j) { OPT = { profile: j.profile, values: j.values }; render(false);
+          dtToast((OPT.values[key] ? 'Enabled' : 'Disabled') + ' — saved (profile: ' + j.profile + ')'); })
+        .catch(function (e) { dtToast('Could not save: ' + (e.message || e), true); });
+    }
+    // expand a node's hidden branch via its ＋N chip / toggle a knob via its pill (a real drag suppresses the click)
     canvas.addEventListener('click', function (e) {
+      if (panMoved) return;
+      var opt = e.target.closest ? e.target.closest('[data-opt]') : null;
+      if (opt) { toggleOption(opt.getAttribute('data-opt')); return; }
       var b = e.target.closest ? e.target.closest('[data-expand]') : null;
-      if (!b || panMoved) return;
+      if (!b) return;
       var id = b.getAttribute('data-expand'); var hc = hiddenChildren(id); if (!hc.length) return;
       hc.forEach(function (c) { visible.add(c); }); render(false);
     });
@@ -707,7 +749,7 @@ Content-Type: application/json
       var dragId = null, nsx = 0, nsy = 0, dragCard = null;
       wrap.addEventListener('pointerdown', function (e) {
         if (e.button && e.button !== 0) return;
-        if (e.target.closest && e.target.closest('.dtn-more')) return;   // the chip handles its own click
+        if (e.target.closest && e.target.closest('.dtn-more, .dtn-opt')) return;   // chip / knob pill handle their own click
         panMoved = false; captured = false; sx = e.clientX; sy = e.clientY; pid = e.pointerId;
         var card = e.target.closest ? e.target.closest('.dtnode') : null;
         if (card) { mode = 'node'; dragId = card.getAttribute('data-node'); dragCard = card; nsx = parseFloat(card.style.left); nsy = parseFloat(card.style.top); }

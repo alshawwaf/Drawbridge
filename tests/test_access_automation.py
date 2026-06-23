@@ -1669,6 +1669,32 @@ def test_scoped_profile_overrides_global_by_specificity(monkeypatch):
     assert not aa._decide_options(srv, "X").prefer_widen
 
 
+def test_decision_option_endpoint_toggles_and_switches_to_custom(monkeypatch):
+    import types
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from app.db import get_db
+    from app.routers import access_automation as aar
+    from app.services import app_settings
+
+    store, saved = {"aa_profile": "balanced"}, {}
+    monkeypatch.setattr(app_settings, "get", lambda k: store.get(k))
+    monkeypatch.setattr(app_settings, "save", lambda d: (saved.update(d), store.update(d)))
+    app = FastAPI(); app.include_router(aar.router); app.dependency_overrides[get_db] = lambda: None
+    c = TestClient(app)
+
+    monkeypatch.setattr(aar, "get_user_or_none", lambda req, db: None)            # unauth -> 401
+    assert c.post("/access-automation/decision-option",
+                  json={"key": "aa_prefer_widen", "value": False}).status_code == 401
+
+    monkeypatch.setattr(aar, "get_user_or_none", lambda req, db: types.SimpleNamespace(username="admin"))
+    assert c.post("/access-automation/decision-option",
+                  json={"key": "bogus", "value": True}).status_code == 400          # unknown key rejected
+    r = c.post("/access-automation/decision-option", json={"key": "aa_prefer_widen", "value": False})
+    assert r.status_code == 200 and r.json()["ok"] is True
+    assert saved["aa_prefer_widen"] is False and saved["aa_profile"] == "custom"     # toggle -> Custom profile
+
+
 def test_decide_options_custom_uses_individual_toggles(monkeypatch):
     from app.services import app_settings
     store = {"aa_profile": "custom", "aa_app_carveout": False, "aa_override_blocking_deny": True,

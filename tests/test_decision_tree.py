@@ -14,6 +14,20 @@ _OUTCOME_KIND = {Outcome.NO_OP: "noop", Outcome.WIDEN: "widen", Outcome.CREATE: 
 _NON_FLOW_OUTCOMES = {Outcome.REVIEW}
 
 
+def test_option_bound_nodes_map_to_real_settings():
+    # The interactive editor turns option-tagged nodes into click-to-toggle pills. Each option must be a
+    # real aa_* knob, and the 5 tunable decisions must stay tagged (so the editor keeps working).
+    from app.services import app_settings
+    keys = {s.key for s in app_settings.SETTINGS}
+    g = dt.to_graph()
+    tagged = {n["id"]: n["option"] for n in g["nodes"] if n.get("option")}
+    assert tagged == {"noteO": "aa_emit_notes", "deny": "aa_override_blocking_deny",
+                      "widen": "aa_prefer_widen", "create": "aa_app_carveout",
+                      "opts": "aa_ignore_conditions"}
+    for opt in tagged.values():
+        assert opt in keys                              # every node option is a real setting
+
+
 def test_edges_reference_real_nodes_and_outcomes_present():
     ids = {n.id for n in dt.NODES}
     for e in dt.EDGES:
