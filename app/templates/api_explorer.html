@@ -271,7 +271,22 @@
           statusEl.className = 'err';
           statusEl.textContent = 'The browser blocked that live call (likely CORS / TLS to the target). ' +
             'The generated request and curl above are still valid.';
+          return res;
         }
+        // Auto-capture the Check Point session id (sid) from a login response, so every subsequent
+        // call sends it as the X-chkp-sid header (the "sessionId" apiKey auth) with no manual Authorize.
+        try {
+          var sid = null;
+          var t = res && (res.text || res.data);
+          if (t) { var j = JSON.parse(t); if (j && typeof j.sid === 'string') sid = j.sid; }
+          if (!sid && res) { var b = res.obj || res.body; if (b && typeof b.sid === 'string') sid = b.sid; }
+          if (sid && window.ui && window.ui.preauthorizeApiKey) {
+            window.ui.preauthorizeApiKey('sessionId', sid);
+            statusEl.className = 'ok';
+            statusEl.textContent = 'Session captured — subsequent calls are authorized automatically ' +
+              '(X-chkp-sid). Re-run login any time to refresh it.';
+          }
+        } catch (e) { /* response wasn't JSON or had no sid — nothing to capture */ }
         return res;
       }
     });
