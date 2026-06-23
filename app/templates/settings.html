@@ -22,6 +22,12 @@
 {% for group, items in groups.items() %}
   <div class="card" id="grp-{{ group | lower | replace(' & ','-') | replace(' / ','-') | replace(' ','-') }}">
     <h2 style="margin-top:0;">{{ group }}</h2>
+    {% if group == 'Ticket write-back' %}
+    <p class="muted small" style="margin:-4px 0 2px;max-width:800px;">Write-back is vendor-neutral — if a
+      ticket includes a <code>callback_url</code>, the result is POSTed there (ServiceNow, Jira, Slack,
+      anything). The fields below configure the optional built-in <b>ServiceNow</b> Table API adapter, used
+      only when no <code>callback_url</code> is supplied.</p>
+    {% endif %}
     {% for s in items %}
       <div class="setrow" style="padding:12px 0;border-top:1px solid var(--line);">
         {% if s.kind == 'bool' %}
@@ -39,6 +45,10 @@
               <input type="password" name="{{ s.key }}" value="" autocomplete="new-password" spellcheck="false"
                      placeholder="{% if secrets.get(s.key) %}•••• stored — type to replace{% else %}enter a value to set{% endif %}"
                      style="min-width:240px;font-family:ui-monospace,monospace;">
+              {% if s.generate %}
+                <button type="button" class="btn secondary gen-secret" data-gen="{{ s.key }}"
+                        title="Generate a strong random token" style="padding:6px 13px;font-size:12px;font-weight:600;">Generate</button>
+              {% endif %}
               {% if secrets.get(s.key) %}
                 <label style="display:inline-flex;align-items:center;gap:6px;font-weight:500;font-size:12px;color:var(--muted);">
                   <input type="checkbox" name="{{ s.key }}__clear"> clear
@@ -176,6 +186,31 @@
 </div><!-- /.settings-layout -->
 
 <script>
+  // "Generate" buttons for the random-token secrets (MCP / webhook) — fill a strong random value,
+  // reveal + copy it, then Save stores it encrypted. (Type your own to change; tick "clear" to revoke.)
+  (function () {
+    function token() {
+      var a = new Uint8Array(24);
+      (window.crypto || window.msCrypto).getRandomValues(a);
+      var s = btoa(String.fromCharCode.apply(null, a)).replace(/[^A-Za-z0-9]/g, '');
+      return 'dcsim_' + s.slice(0, 32);
+    }
+    document.querySelectorAll('.gen-secret').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var key = btn.getAttribute('data-gen');
+        var inp = document.querySelector('input[name="' + key + '"]');
+        if (!inp) return;
+        inp.value = token();
+        inp.type = 'text';                     // reveal so it can be copied
+        var clr = document.querySelector('input[name="' + key + '__clear"]'); if (clr) clr.checked = false;
+        inp.focus(); inp.select();
+        try { navigator.clipboard && navigator.clipboard.writeText(inp.value); } catch (e) {}
+        btn.textContent = 'Copied — Save to store';
+        setTimeout(function () { btn.textContent = 'Generate'; }, 2500);
+      });
+    });
+  })();
+
   // Scrollspy: highlight the section nav link for whatever group is currently in view.
   (function () {
     var nav = document.querySelector('.settings-nav'); if (!nav) return;

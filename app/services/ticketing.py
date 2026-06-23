@@ -211,7 +211,7 @@ def _post_callback(ticket: TicketRequest, result: dict) -> dict:
 
 # --- built-in ServiceNow Table API adapter (optional) ----------------------------------------
 def _servicenow_cfg() -> tuple[str, str, str, str]:
-    """(instance, user, password, table) resolved from Settings → ServiceNow write-back, with the
+    """(instance, user, password, table) resolved from Settings → Ticket write-back, with the
     DCSIM_SERVICENOW_* env vars as fallback. The password is decrypted from its encrypted-at-rest row."""
     s = get_settings()
     instance = app_settings.get_or_env("servicenow_instance", s.servicenow_instance)

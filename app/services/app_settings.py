@@ -45,6 +45,7 @@ class Setting:
     group: str = "Management API"
     min: int = 0
     max: int = 0                    # for "str": max length (0 → default cap)
+    generate: bool = False          # secret-only: offer a "Generate" button (a strong random token)
 
 
 SETTINGS: list[Setting] = [
@@ -160,7 +161,7 @@ SETTINGS: list[Setting] = [
             "var (so /mcp is disabled only when BOTH are unset). Stored encrypted at rest (AES-256-GCM). "
             "Like the webhook token it can drive policy writes (when publish is on below), so use a long "
             "random value and rotate it here whenever you need.",
-            group="MCP / agent"),
+            group="MCP / agent", generate=True),
     Setting("mcp_allow_publish", "bool", False,
             "Let the MCP agent publish to live policy",
             "Allow an MCP/LLM agent (authenticated with the MCP token) to commit + publish rules to a live "
@@ -178,7 +179,7 @@ SETTINGS: list[Setting] = [
             "request. Setting it here enables POST /access-automation/webhook with no redeploy; clearing "
             "it falls back to the DCSIM_WEBHOOK_TOKEN env var (the endpoint is disabled only when BOTH are "
             "unset). Stored encrypted at rest.",
-            group="Ticketing webhook"),
+            group="Ticketing webhook", generate=True),
     Setting("webhook_server_ids", "str", "",
             "Restrict the webhook to server ids",
             "Comma-separated management-server ids the webhook may target (e.g. 1,3). LEAVE BLANK to allow "
@@ -186,29 +187,31 @@ SETTINGS: list[Setting] = [
             "silently widens to all). Falls back to DCSIM_WEBHOOK_SERVER_IDS when blank.",
             group="Ticketing webhook", max=200),
 
-    # --- ServiceNow write-back -----------------------------------------------------------------------
-    # Optional built-in: PATCH the decision + rule UID into a ServiceNow incident's work notes via the
-    # Table API (TLS verification always on). The password is encrypted at rest; the rest are plain.
+    # --- Ticket write-back -----------------------------------------------------------------------------
+    # Write-back is vendor-neutral: a ticket that includes a `callback_url` gets the result POSTed there
+    # (any system). These fields configure the OPTIONAL built-in ServiceNow Table API adapter, used only
+    # when no callback_url is supplied — it PATCHes the decision + rule UID into an incident's work notes
+    # (TLS verification always on). The password is encrypted at rest; the rest are plain.
     Setting("servicenow_instance", "str", "",
             "ServiceNow instance URL",
             "Base URL of your ServiceNow instance, e.g. https://dev12345.service-now.com. The write-back "
             "is active only when instance + user + password are all set. Falls back to "
             "DCSIM_SERVICENOW_INSTANCE when blank.",
-            group="ServiceNow write-back", max=200),
+            group="Ticket write-back", max=200),
     Setting("servicenow_user", "str", "",
             "ServiceNow user",
             "Table API username for the write-back. Falls back to DCSIM_SERVICENOW_USER when blank.",
-            group="ServiceNow write-back", max=100),
+            group="Ticket write-back", max=100),
     Setting("servicenow_password", "secret", "",
             "ServiceNow password",
             "Table API password for the write-back. Stored encrypted at rest. Falls back to "
             "DCSIM_SERVICENOW_PASSWORD when empty.",
-            group="ServiceNow write-back"),
+            group="Ticket write-back"),
     Setting("servicenow_table", "str", "",
             "ServiceNow table",
             "Table the decision is written to. Leave blank for 'incident'. Falls back to "
             "DCSIM_SERVICENOW_TABLE when blank.",
-            group="ServiceNow write-back", max=60),
+            group="Ticket write-back", max=60),
 
     # --- Portal --------------------------------------------------------------------------------------
     Setting("base_url", "str", "",
