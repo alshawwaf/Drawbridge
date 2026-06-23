@@ -159,6 +159,9 @@ Content-Type: application/json
       cursor:grab;user-select:none;transition:box-shadow .12s;}
     .dtnode:hover{box-shadow:0 7px 22px rgba(0,0,0,.30), inset 0 1px 0 rgba(255,255,255,.08);}
     .dtnode.dragging{cursor:grabbing;opacity:.92;}
+    /* Save-layout button: glows when there are unsaved moves, flashes a confirmation on save */
+    #dt-savelayout.dirty{border-color:var(--accent);color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset;}
+    #dt-savelayout.saved{border-color:var(--ok,#16a34a);color:var(--ok,#16a34a);}
     .dtn-title{font-weight:650;font-size:13.5px;line-height:1.3;}
     .dtn-sub{font-size:11.5px;line-height:1.36;margin-top:4px;opacity:.93;}
     .dtn-more{position:absolute;right:-11px;bottom:-11px;min-width:28px;height:25px;padding:0 8px;border-radius:13px;
@@ -195,6 +198,7 @@ Content-Type: application/json
     <span class="dtzoom" role="group" aria-label="Diagram detail" id="dt-detail" hidden>
       <button type="button" class="copybtn" id="dt-expand" title="Show every branch (inline-layer recursion, automation modes)">Expand all</button>
       <button type="button" class="copybtn" id="dt-collapse" title="Collapse back to the core flow">Collapse</button>
+      <button type="button" class="copybtn" id="dt-savelayout" title="Save how you've arranged the boxes (remembered on this browser)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:5px;vertical-align:-2px;"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg><span class="dt-savelbl">Save layout</span></button>
       <button type="button" class="copybtn" id="dt-resetlayout" title="Restore the default node positions">Reset layout</button>
     </span>
     <div class="menu" style="display:inline-block;">
@@ -208,7 +212,7 @@ Content-Type: application/json
       </div>
     </div>
   </div>
-  <p class="dthint" id="dt-hint" hidden>Showing the core flow — click a node’s <b>＋N</b> chip to reveal that branch. <b>Drag a box</b> to move it · drag the <b>background</b> to pan · <b>pinch</b> / Ctrl-scroll / <b>＋ −</b> to zoom. Your layout is remembered (Reset layout to restore).</p>
+  <p class="dthint" id="dt-hint" hidden>Showing the core flow — click a node’s <b>＋N</b> chip to reveal that branch. <b>Drag a box</b> to rearrange (space it out however you like), then <b>Save layout</b> to keep it · drag the <b>background</b> to pan · <b>pinch</b> / Ctrl-scroll / <b>＋ −</b> to zoom · <b>Reset layout</b> restores the default.</p>
   <div class="dtwrap" id="aa-flow-wrap"><div class="dtcanvas" id="aa-flow-canvas"></div></div>
   <script id="dt-graph-data" type="application/json">{{ decision_graph_json|safe }}</script>
   <div class="row" style="gap:8px;margin-top:14px;flex-wrap:wrap;justify-content:center;">
@@ -657,6 +661,11 @@ Content-Type: application/json
     }
 
     // controls
+    // A drag updates positions in memory only; the user explicitly clicks "Save layout" to persist them
+    // (so the arrangement is never lost on its own, and never silently overwritten). markDirty flags
+    // unsaved moves on the Save button.
+    var saveBtn = document.getElementById('dt-savelayout'), saveT;
+    function markDirty(on) { if (!saveBtn) return; saveBtn.classList.toggle('dirty', !!on); if (on) saveBtn.classList.remove('saved'); }
     document.getElementById('dt-zin').addEventListener('click', function () { zoomTo(s * 1.25); });
     document.getElementById('dt-zout').addEventListener('click', function () { zoomTo(s * 0.8); });
     document.getElementById('dt-zreset').addEventListener('click', function () { fit(); });
@@ -667,8 +676,13 @@ Content-Type: application/json
       if (eb) eb.addEventListener('click', function () { GRAPH.nodes.forEach(function (n) { visible.add(n.id); }); render(true); });
       var cb = document.getElementById('dt-collapse');
       if (cb) cb.addEventListener('click', function () { resetVisible(); render(true); });
+      if (saveBtn) saveBtn.addEventListener('click', function () {
+        saveOverride(); markDirty(false); saveBtn.classList.add('saved');
+        var lbl = saveBtn.querySelector('.dt-savelbl'); if (lbl) { var t0 = lbl.textContent; lbl.textContent = 'Saved ✓';
+          clearTimeout(saveT); saveT = setTimeout(function () { lbl.textContent = t0; saveBtn.classList.remove('saved'); }, 1400); }
+      });
       var rl = document.getElementById('dt-resetlayout');
-      if (rl) rl.addEventListener('click', function () { override = {}; saveOverride(); render(true); });
+      if (rl) rl.addEventListener('click', function () { override = {}; try { localStorage.removeItem(LSKEY); } catch (e) {} markDirty(false); render(true); });
     }
     // expand a node's hidden branch via its ＋N chip (a real drag suppresses the click)
     canvas.addEventListener('click', function (e) {
@@ -705,7 +719,9 @@ Content-Type: application/json
       });
       function up() {
         if (mode === 'node' && panMoved && dragId && dragCard) {
-          override[dragId] = { x: parseFloat(dragCard.style.left), y: parseFloat(dragCard.style.top) }; saveOverride();
+          // keep the move in memory + mark unsaved — it only persists when the user clicks Save layout
+          override[dragId] = { x: parseFloat(dragCard.style.left), y: parseFloat(dragCard.style.top) };
+          markDirty(true);
         }
         if (dragCard) dragCard.classList.remove('dragging');
         mode = null; dragId = null; dragCard = null; wrap.classList.remove('grabbing');
