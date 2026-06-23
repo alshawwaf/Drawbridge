@@ -39,7 +39,8 @@
             <option value="security-zone">Security zone</option>
           </optgroup>
         </select>
-        <input id="aa-source" class="grow" placeholder="192.168.9.9" autocomplete="off">
+        <input id="aa-source" class="grow" placeholder="192.168.9.9" autocomplete="off" list="aa-srclist">
+        <datalist id="aa-srclist"></datalist>
       </div>
     </div>
     <div class="grow">
@@ -55,7 +56,8 @@
             <option value="security-zone">Security zone</option>
           </optgroup>
         </select>
-        <input id="aa-dest" class="grow" placeholder="172.16.5.10" autocomplete="off">
+        <input id="aa-dest" class="grow" placeholder="172.16.5.10" autocomplete="off" list="aa-dstlist">
+        <datalist id="aa-dstlist"></datalist>
       </div>
     </div>
   </div>
@@ -277,8 +279,19 @@ Content-Type: application/json
       else verb = '<span class="pill" style="background:var(--warn-bg);color:var(--warn);">create</span>';
       var extra = obj.ip ? ' <span class="muted">(' + esc(obj.ip) + ')</span>'
                 : (obj.kind && obj.kind !== 'ip' ? ' <span class="muted">(' + esc(obj.kind) + ')</span>' : '');
-      return '<tr><td class="nowrap"><b>' + label + '</b></td><td>' + verb +
-             ' <code>' + esc(obj.name) + '</code>' + extra + '</td></tr>';
+      var row = '<tr><td class="nowrap"><b>' + label + '</b></td><td>' + verb +
+                ' <code>' + esc(obj.name) + '</code>' + extra + '</td></tr>';
+      // a missing reuse-only object (role / zone / updatable) -> recommend the closest existing ones
+      if (obj.candidates && obj.candidates.length) {
+        var side = /dest/i.test(label) ? 'destination' : 'source';
+        var chips = obj.candidates.map(function (c) {
+          var tag = c.category || c.kind;
+          return '<button type="button" class="copybtn" data-objfill="' + escAttr(c.name) + '" data-objside="' + side +
+                 '" title="use this object">' + esc(c.name) + (tag ? ' <span class="muted">· ' + esc(tag) + '</span>' : '') + '</button>';
+        }).join(' ');
+        row += '<tr><td class="nowrap muted">did you mean</td><td><div class="row" style="gap:6px; flex-wrap:wrap;">' + chips + '</div></td></tr>';
+      }
+      return row;
     }
     function traceBlock(trace) {
       if (!trace || !trace.length) return '';
@@ -406,6 +419,15 @@ Content-Type: application/json
       call('preview', 'preview');
     });
 
+    // Pick a recommended source/destination object ("did you mean" chip) -> fill that endpoint, re-evaluate.
+    result.addEventListener('click', function (e) {
+      var chip = e.target.closest ? e.target.closest('[data-objfill]') : null;
+      if (!chip) return;
+      var side = chip.getAttribute('data-objside') === 'destination' ? 'aa-dest' : 'aa-source';
+      document.getElementById(side).value = chip.getAttribute('data-objfill');
+      call('preview', 'preview');
+    });
+
     // Re-preview (and lock apply) whenever an input changes, so apply always matches what's shown.
     ['aa-layer', 'aa-source', 'aa-dest', 'aa-srctype', 'aa-dsttype', 'aa-svctype', 'aa-port', 'aa-svc', 'aa-app', 'aa-ticket'].forEach(function (eid) {
       document.getElementById(eid).addEventListener('change', function () { setActionable(false); });
@@ -441,6 +463,11 @@ Content-Type: application/json
     }
     typeahead('aa-app', 'aa-applist', 'app-search');
     typeahead('aa-svc', 'aa-svclist', 'svc-search', function () { var t = svcType(); return PORT_BASED[t] || t === 'app' ? '' : t; });
+    // Source / destination type-ahead: recommend real Check Point typed objects for the chosen kind
+    // (domain / access-role / dynamic / updatable / zone). For an IP/CIDR endpoint the kind is '' so the
+    // search returns nothing (you type an address) — the datalist just stays empty.
+    typeahead('aa-source', 'aa-srclist', 'object-search', function () { var k = document.getElementById('aa-srctype').value; return k === 'ip' ? '' : k; });
+    typeahead('aa-dest', 'aa-dstlist', 'object-search', function () { var k = document.getElementById('aa-dsttype').value; return k === 'ip' ? '' : k; });
 
     fetch('/management/' + id + '/layers').then(function (r) { return r.json(); })
       .then(function (data) {
