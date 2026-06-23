@@ -1916,17 +1916,28 @@ def _apply(session, decision: Decision, req: AccessRequest, layer: str,
     dst_name = _resolve_endpoint_object(session, req, "destination")
     svc_name = _resolve_svc_object(session, req)
     from . import naming
+    # Customer naming/track/tag conventions (Settings → "Access automation"; data-driven templates). The
+    # PLACEMENT (position) is NOT a convention — the engine computes it for first-match correctness.
+    nctx = {"ticket": (ticket_id or "").strip(), "app": req.application or "",
+            "service": req.service or req.application or
+                       (f"{(req.protocol or '').lower()}/{req.ports}" if req.ports else ""),
+            "source": src_name, "src": src_name, "dest": dst_name, "destination": dst_name,
+            "layer": target_layer, "action": "Accept",
+            "proto": (req.protocol or "").lower(), "port": req.ports or ""}
     payload = {
         "layer": target_layer,
         "position": _position_payload(decision.position or {}),
-        "name": naming.rule_name(ticket_id),
+        "name": naming.rule_name(ticket_id, nctx),
         "source": src_name,
         "destination": dst_name,
         "service": svc_name,
         "action": "Accept",
-        "track": "Log",
-        "comments": f"Automated from ticket {ticket_id}".strip(),
+        "track": naming.rule_track(),
+        "comments": naming.rule_comment(nctx),
     }
+    tags = naming.rule_tags()
+    if tags:
+        payload["tags"] = tags
     session.call("add-access-rule", {k: v for k, v in payload.items() if v is not None})  # VERIFY
     out.update(source_object=src_name, destination_object=dst_name, service_object=svc_name,
                position=_position_human(decision.position, _rules_for_layer(decision, rules)))

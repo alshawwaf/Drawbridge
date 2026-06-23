@@ -66,11 +66,55 @@ def service_name(protocol: str, port) -> str:
                    f"{proto.upper()}-{port}")
 
 
-def rule_name(ticket: str):
+def rule_name(ticket: str, ctx: dict = None):
     """The name for a created rule, or None to leave it unnamed (Check Point auto-names it). Preserves
-    the prior behaviour: a ticket-based template with no ticket id stays unnamed."""
+    the prior behaviour: a ticket-based template with no ticket id stays unnamed. ``ctx`` adds extra
+    placeholders ({app}, {service}, {source}, {dest}, {layer}, {action}, {proto}, {port}) for richer
+    templates like ``TKT-{ticket}-{app}``."""
     template = _template("name_rule")
     ticket = (ticket or "").strip()
     if not ticket and "{ticket}" in template:
         return None
-    return _render(template, {"ticket": ticket}, "") or None
+    rctx = {"ticket": ticket}
+    if ctx:
+        rctx.update({k: ("" if v is None else str(v)) for k, v in ctx.items()})
+    return _render(template, rctx, "") or None
+
+
+def _render_text(template: str, ctx: dict, cap: int = 300) -> str:
+    """Render a FREE-TEXT template (e.g. a rule comment) — lenient like _render, but NOT sanitised to an
+    object name, so spaces/punctuation are kept. Never raises."""
+    try:
+        s = template.format_map(_Lenient(ctx))
+    except Exception:  # noqa: BLE001
+        s = ""
+    return " ".join((s or "").split())[:cap]   # collapse whitespace, trim
+
+
+def rule_comment(ctx: dict) -> str:
+    """The comment/justification written onto a created rule, from the ``aa_rule_comment`` template
+    (default: 'Automated from ticket {ticket}'). Same placeholders as rule_name's ctx."""
+    try:
+        tmpl = (app_settings.get("aa_rule_comment") or "").strip()
+    except Exception:  # noqa: BLE001
+        tmpl = ""
+    return _render_text(tmpl or "Automated from ticket {ticket}", ctx)
+
+
+def rule_track() -> str:
+    """The track/log setting for a created rule (``aa_rule_track``; default 'Log'). The choice Setting
+    constrains the value, so this is a plain read with a safe default."""
+    try:
+        return (app_settings.get("aa_rule_track") or "").strip() or "Log"
+    except Exception:  # noqa: BLE001
+        return "Log"
+
+
+def rule_tags() -> list:
+    """Tag names to attach to a created rule (``aa_rule_tags``, comma/semicolon-separated). Empty list if
+    unset. Tags must already exist on the SMS (add-access-rule won't auto-create them)."""
+    try:
+        raw = (app_settings.get("aa_rule_tags") or "").strip()
+    except Exception:  # noqa: BLE001
+        raw = ""
+    return [t.strip() for t in raw.replace(";", ",").split(",") if t.strip()]

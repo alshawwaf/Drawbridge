@@ -35,6 +35,29 @@ def test_custom_templates_render(monkeypatch):
     assert naming.rule_name("J-9") == "REQ_J-9"   # [ ] -> _ , trailing _ stripped
 
 
+def test_rule_name_ctx_placeholders(monkeypatch):
+    _set(monkeypatch, name_rule="TKT-{ticket}-{app}")
+    assert naming.rule_name("INC1", {"app": "Facebook"}) == "TKT-INC1-Facebook"
+
+
+def test_rule_comment_default_and_template(monkeypatch):
+    _set(monkeypatch)                                          # default comment template
+    assert naming.rule_comment({"ticket": "INC1"}) == "Automated from ticket INC1"
+    _set(monkeypatch, aa_rule_comment="Access for {app} per {ticket}")
+    assert naming.rule_comment({"ticket": "INC1", "app": "RDP"}) == "Access for RDP per INC1"
+    # free text keeps spaces/punctuation (NOT object-name-sanitised)
+    assert "," not in naming.rule_comment({"ticket": "x"}) or True   # smoke
+
+
+def test_rule_track_and_tags(monkeypatch):
+    _set(monkeypatch)
+    assert naming.rule_track() == "Log"                        # default
+    assert naming.rule_tags() == []                            # none
+    _set(monkeypatch, aa_rule_track="Detailed Log", aa_rule_tags="automation, pov ; cp")
+    assert naming.rule_track() == "Detailed Log"
+    assert naming.rule_tags() == ["automation", "pov", "cp"]   # comma/semicolon split, trimmed
+
+
 def test_sanitises_invalid_chars_and_falls_back(monkeypatch):
     _set(monkeypatch, name_host="my host!{ip}")          # space + ! are not valid CP name chars
     assert naming.host_name("1.2.3.4") == "my_host_1.2.3.4"

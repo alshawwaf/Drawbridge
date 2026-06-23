@@ -132,9 +132,26 @@ SETTINGS: list[Setting] = [
             "{PROTO} (TCP), {port}.", group="Access automation", max=100),
     Setting("name_rule", "str", "TKT-{ticket}",
             "New rule name",
-            "Name for a rule the engine creates. Placeholder: {ticket}. With no ticket id (and a "
+            "Name for a rule the engine creates. Placeholders: {ticket}, {app}, {service}, {source}, "
+            "{dest}, {layer}, {action}, {proto}, {port} (e.g. TKT-{ticket}-{app}). With no ticket id (and a "
             "ticket-based template) the rule is left unnamed and Check Point auto-names it.",
             group="Access automation", max=120),
+    Setting("aa_rule_comment", "str", "Automated from ticket {ticket}",
+            "New rule comment",
+            "Comment/justification written onto a created rule. Same placeholders as the rule name "
+            "({ticket}, {app}, {service}, {source}, {dest}, {layer}, …). Free text — spaces/punctuation kept.",
+            group="Access automation", max=300),
+    Setting("aa_rule_track", "choice", "Log",
+            "New rule track / log",
+            "The Track setting on a created rule.",
+            group="Access automation",
+            choices=(("Log", "Log"), ("None", "None"), ("Detailed Log", "Detailed Log"),
+                     ("Extended Log", "Extended Log"))),
+    Setting("aa_rule_tags", "str", "",
+            "New rule tags",
+            "Comma-separated tag names to attach to a created rule (e.g. automation, pov). The tags must "
+            "already exist on the management server — Check Point won't auto-create them. Blank = none.",
+            group="Access automation", max=300),
     # --- Decision / placement logic (tune the engine from here — no code) ----------------------------
     # Each knob maps to one judgment call in the reuse-or-create engine; defaults are the recommended
     # behaviour, so leaving them as-is decides exactly as documented. (See the "How it decides" diagram.)
