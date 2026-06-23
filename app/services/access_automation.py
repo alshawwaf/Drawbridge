@@ -2122,14 +2122,48 @@ _PROFILES: dict[str, dict] = {
 }
 
 
-def _decide_options() -> "DecideOptions":
-    """Build the engine's decision/placement knobs from the admin's Settings (best-effort). A named
-    ``aa_profile`` (Conservative/Balanced/Aggressive) bundles all knobs; ``custom`` (or anything unknown)
-    falls through to the individual ``aa_*`` toggles. Each Setting/profile carries the same default as
-    DecideOptions, so an unconfigured portal decides exactly as before."""
+def _scoped_profile(app_settings, server, layer) -> Optional[str]:
+    """A per-scope profile override (Settings → ``aa_scope_overrides``) matching this server/layer, or None.
+    Lines are ``scope = profile``; scope = server(name|id) | ``server:layer`` | ``*:layer``. Most-specific
+    wins (exact server+layer ▸ ``*:layer`` ▸ server). Only the named profile bundles are honored; blank /
+    ``#`` / malformed / unknown-profile lines are ignored (fail safe → falls back to the global profile)."""
+    raw = str(app_settings.get("aa_scope_overrides") or "").strip()
+    if not raw:
+        return None
+    sid = str(getattr(server, "id", "") or "").lower()
+    sname = (getattr(server, "name", "") or "").strip().lower()
+    lname = (layer or "").strip().lower()
+    best, best_score = None, -1
+    for line in raw.splitlines():
+        line = line.split("#", 1)[0].strip()
+        if not line or "=" not in line:
+            continue
+        scope, prof = (p.strip() for p in line.split("=", 1))
+        prof = prof.lower()
+        if prof not in _PROFILES:                      # named bundles only ('custom' isn't a per-scope value)
+            continue
+        if ":" in scope:
+            sp, lp = (p.strip().lower() for p in scope.split(":", 1))
+        else:
+            sp, lp = scope.strip().lower(), "*"
+        srv_ok = sp in ("", "*") or sp == sname or (sid and sp == sid)
+        lyr_ok = lp in ("", "*") or lp == lname
+        if srv_ok and lyr_ok:
+            score = (2 if sp not in ("", "*") else 0) + (1 if lp not in ("", "*") else 0)
+            if score > best_score:
+                best, best_score = prof, score
+    return best
+
+
+def _decide_options(server=None, layer=None) -> "DecideOptions":
+    """Build the engine's decision/placement knobs from the admin's Settings (best-effort). Resolution order:
+    a per-scope override (``aa_scope_overrides``) matching this server/layer wins; else the global
+    ``aa_profile`` bundle (Conservative/Balanced/Aggressive/Autopilot); else (``custom``/unknown) the
+    individual ``aa_*`` toggles. Each Setting/profile carries the same default as DecideOptions, so an
+    unconfigured portal decides exactly as before."""
     try:
         from . import app_settings
-        profile = str(app_settings.get("aa_profile") or "custom")
+        profile = _scoped_profile(app_settings, server, layer) or str(app_settings.get("aa_profile") or "custom")
         if profile in _PROFILES:
             return DecideOptions(**_PROFILES[profile])
         return DecideOptions(
@@ -2182,7 +2216,7 @@ def preview(server, secret, req: AccessRequest, layer: str, *, package: Optional
             if unresolved is not None:
                 return _obj_review(res, unresolved, kind, {"cached": False, "trace": s.trace})
             rules, cached = load_layer_cached(s, server, layer, package)
-            decision = decide(req, rules, _decide_options())
+            decision = decide(req, rules, _decide_options(server, layer))
             out = build_preview(s, decision, req, rules)
             return {"ok": True, **out, "cached": cached, "trace": s.trace, **res}
     except MgmtError as exc:
@@ -2212,7 +2246,7 @@ def execute(server, secret, req: AccessRequest, layer: str, *, package: Optional
                 return {"ok": True, "applied": False, "published": False,
                         **_obj_review(res, unresolved, kind, {"trace": s.trace})}
             rules = load_layer(s, layer, package)
-            decision = decide(req, rules, _decide_options())
+            decision = decide(req, rules, _decide_options(server, layer))
             base = {"outcome": decision.outcome.value, "reason": decision.reason,
                     "target_rule": _brief(decision.target_rule), **res}
             if decision.notes:

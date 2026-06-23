@@ -1638,6 +1638,37 @@ def test_decide_options_resolves_named_profiles(monkeypatch):
         and o.emit_notes
 
 
+def test_scoped_profile_overrides_global_by_specificity(monkeypatch):
+    import types
+    from app.services import app_settings
+    store = {"aa_profile": "balanced"}
+    monkeypatch.setattr(app_settings, "get", lambda k: store.get(k))
+    srv = types.SimpleNamespace(id=7, name="HQ-SMS")
+
+    store["aa_scope_overrides"] = (
+        "Production = conservative\n"
+        "*:DMZ = aggressive\n"
+        "HQ-SMS:DNS_Layer = autopilot\n"
+        "# a comment line and a junk line\n"
+        "garbage without equals\n")
+
+    # exact server+layer wins
+    assert aa._decide_options(srv, "DNS_Layer").ignore_conditions and aa._decide_options(srv, "DNS_Layer").emit_notes  # autopilot
+    # *:DMZ matches the layer on any server -> aggressive (quiet)
+    o = aa._decide_options(srv, "DMZ")
+    assert o.ignore_conditions and not o.emit_notes
+    # server name match (by name) on a different server -> conservative
+    prod = types.SimpleNamespace(id=9, name="Production")
+    c = aa._decide_options(prod, "AnyLayer")
+    assert not c.app_carveout and not c.override_blocking_deny and not c.prefer_widen
+    # no scope match -> global profile (balanced)
+    b = aa._decide_options(srv, "SomeOtherLayer")
+    assert b.app_carveout and b.override_blocking_deny and b.prefer_widen and not b.ignore_conditions
+    # server matched by ID also works
+    store["aa_scope_overrides"] = "7 = conservative\n"
+    assert not aa._decide_options(srv, "X").prefer_widen
+
+
 def test_decide_options_custom_uses_individual_toggles(monkeypatch):
     from app.services import app_settings
     store = {"aa_profile": "custom", "aa_app_carveout": False, "aa_override_blocking_deny": True,

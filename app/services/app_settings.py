@@ -186,6 +186,17 @@ SETTINGS: list[Setting] = [
             "data/content, install-on) as if that condition weren't there — so a conditional Accept can "
             "count as covering and a conditional Drop as blocking.",
             group="Access automation logic"),
+    Setting("aa_scope_overrides", "text", "",
+            "Per-scope profile overrides",
+            "Use a DIFFERENT profile for specific scopes — one per line, “scope = profile”. Scope is a "
+            "management server (its name or id), or “server:layer”, or “*:layer” (that layer on any server). "
+            "Profile is conservative / balanced / aggressive / autopilot. Most-specific match wins (exact "
+            "server+layer ▸ *:layer ▸ server); anything unmatched uses the profile above. Blank lines and "
+            "# comments are ignored. Example:\n"
+            "Production = conservative\n"
+            "*:DMZ = aggressive\n"
+            "HQ-SMS:DNS_Layer = autopilot",
+            group="Access automation logic", max=4000),
 
     # --- MCP / agent ---------------------------------------------------------------------------------
     # The /mcp endpoint (for n8n / LLM agents) is enabled by an active MCP-scope API KEY (Settings → API
@@ -270,8 +281,9 @@ def _coerce(s: Setting, raw):
     if s.kind == "choice":
         v = "" if raw is None else str(raw)
         return v if v in {c[0] for c in s.choices} else s.default   # unknown value -> default (fail safe)
-    if s.kind == "str":
-        return ("" if raw is None else str(raw))[: (s.max or 200)]
+    if s.kind in ("str", "text"):                                   # text = multiline (rendered as a textarea)
+        cap = s.max or (4000 if s.kind == "text" else 200)
+        return ("" if raw is None else str(raw))[:cap]
     try:
         v = int(raw)
     except (TypeError, ValueError):
@@ -283,7 +295,7 @@ def _to_text(s: Setting, value) -> str:
     if s.kind == "bool":
         truthy = value is True or str(value).strip().lower() in ("1", "true", "on", "yes")
         return "1" if truthy else "0"
-    if s.kind in ("str", "choice"):
+    if s.kind in ("str", "choice", "text"):
         return _coerce(s, value)
     return str(_coerce(s, str(value)))
 

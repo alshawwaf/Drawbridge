@@ -76,6 +76,11 @@
                    maxlength="{{ s.max or 200 }}" spellcheck="false" autocomplete="off"
                    style="min-width:240px;font-family:ui-monospace,monospace;">
           </label>
+        {% elif s.kind == 'text' %}
+          <div style="font-weight:600;">{{ s.label }}</div>
+          <textarea name="{{ s.key }}" rows="4" maxlength="{{ s.max or 4000 }}" spellcheck="false"
+                    style="display:block;width:100%;margin-top:6px;font-family:ui-monospace,monospace;
+                           font-size:12.5px;padding:8px 10px;box-sizing:border-box;">{{ vals[s.key] }}</textarea>
         {% else %}
           <label style="display:flex;align-items:center;gap:10px;font-weight:600;flex-wrap:wrap;">
             <span style="min-width:260px;">{{ s.label }}</span>
