@@ -14,12 +14,17 @@
   .mcp-tabs button { padding:7px 15px; border:1px solid var(--line); border-radius:9px; background:transparent;
     color:var(--text); font-weight:600; font-size:13px; cursor:pointer; }
   .mcp-tabs button.active { background:var(--accent); color:#fff; border-color:var(--accent); }
+  .mcp-field { margin:0 0 12px; }
+  .mcp-field-lab { font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.03em; margin:0 0 4px; }
   .mcp-cfg { position:relative; }
-  .mcp-cfg pre { background:var(--surface-2); border:1px solid var(--line); border-radius:11px; padding:14px;
+  .mcp-cfg pre { background:var(--surface-2); border:1px solid var(--line); border-radius:11px; padding:14px 70px 14px 14px;
     overflow:auto; font-size:12.5px; line-height:1.5; margin:0; color:var(--text);
     font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+  .mcp-cfg pre.one { white-space:pre-wrap; word-break:break-all; }   /* single-line value wraps, never scrolls */
   .mcp-tokrow { display:flex; align-items:center; gap:10px; margin:0 0 10px; flex-wrap:wrap; }
   .mcp-tokrow input { font-family:ui-monospace,monospace; min-width:340px; padding:7px 10px; }
+  #mcp-url { cursor:pointer; border-bottom:1px dashed var(--line); }   /* click to copy */
+  .copybtn.copied { background:var(--accent); color:#fff; border-color:var(--accent); }
   .mcp-note { font-size:12.5px; color:var(--muted); line-height:1.55; max-width:900px; }
   .mcp-note code { font-family:ui-monospace,monospace; }
 </style>
@@ -45,7 +50,8 @@ focused on the access-automation engine.</p>
     <label style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.03em;">MCP API key
       <input id="mcp-tok" placeholder="generate a key, or paste an mcp-scope key" autocomplete="off"></label>
     <button type="button" class="copybtn" id="mcp-gen">⚡ Generate key</button>
-    <span class="muted" style="font-size:12px;">Endpoint: <code id="mcp-url"></code></span>
+    <button type="button" class="copybtn" id="mcp-tok-copy" title="Copy the key">Copy key</button>
+    <span class="muted" style="font-size:12px;">Endpoint: <code id="mcp-url" title="Click to copy"></code></span>
   </div>
   <p class="mcp-note" id="mcp-genhint" style="margin:-2px 0 10px;"><b>Generate key</b> creates a revocable
     <b>mcp</b>-scope API key and drops it straight into the config below — it enables <code>/mcp</code> and is
@@ -57,10 +63,7 @@ focused on the access-automation engine.</p>
     <button data-c="vscode">VS Code</button>
     <button data-c="n8n">n8n</button>
   </div>
-  <div class="mcp-cfg">
-    <button type="button" class="copybtn" id="mcp-copy" style="position:absolute;right:8px;top:8px;">Copy</button>
-    <pre id="mcp-snippet"></pre>
-  </div>
+  <div id="mcp-fields"></div>
   <p class="mcp-note" id="mcp-clienthint" style="margin-top:8px;"></p>
 </div>
 
@@ -88,35 +91,62 @@ focused on the access-automation engine.</p>
 <script>
   (function () {
     var url = location.origin + '/mcp/';   // trailing slash = the canonical endpoint; a bare /mcp would
-    document.getElementById('mcp-url').textContent = url;   // 307-redirect and some clients drop the auth header
-    var tokEl = document.getElementById('mcp-tok'), snip = document.getElementById('mcp-snippet'),
+    var urlEl = document.getElementById('mcp-url');                       // 307-redirect and some clients
+    urlEl.textContent = url;                                             // drop the auth header on it
+    var tokEl = document.getElementById('mcp-tok'),
+        fieldsEl = document.getElementById('mcp-fields'),
         hint = document.getElementById('mcp-clienthint'), tabs = document.getElementById('mcp-tabs');
     var current = 'claude';
     function tok() { return tokEl.value.trim() || '<your-mcp-key>'; }
+    function flash(btn, label) {
+      var keep = btn.getAttribute('data-label') || btn.textContent;
+      btn.setAttribute('data-label', keep);
+      btn.textContent = label; btn.classList.add('copied');
+      setTimeout(function () { btn.textContent = keep; btn.classList.remove('copied'); }, 1200);
+    }
+    function copyText(btn, text) { if (navigator.clipboard) navigator.clipboard.writeText(text); flash(btn, 'Copied'); }
     function cfg() {
       var t = tok(), auth = 'Bearer ' + t;
       if (current === 'claude') {
-        return { code: JSON.stringify({ mcpServers: { drawbridge: {
-          command: 'npx', args: ['mcp-remote', url, '--header', 'Authorization: ' + auth] } } }, null, 2),
-          hint: 'Claude Desktop speaks stdio, so it bridges to our HTTP server via <code>mcp-remote</code>. Put this in <code>claude_desktop_config.json</code>, then restart Claude Desktop.' };
+        return { fields: [{ label: 'claude_desktop_config.json', pre: true, value: JSON.stringify({ mcpServers: { drawbridge: {
+          command: 'npx', args: ['mcp-remote', url, '--header', 'Authorization: ' + auth] } } }, null, 2) }],
+          hint: 'Claude Desktop speaks stdio, so it bridges to our HTTP server via <code>mcp-remote</code>. Paste this into <code>claude_desktop_config.json</code>, then restart Claude Desktop.' };
       }
       if (current === 'cursor') {
-        return { code: JSON.stringify({ mcpServers: { drawbridge: {
-          url: url, headers: { Authorization: auth } } } }, null, 2),
-          hint: 'Put this in <code>~/.cursor/mcp.json</code> (or the project <code>.cursor/mcp.json</code>).' };
+        return { fields: [{ label: '~/.cursor/mcp.json', pre: true, value: JSON.stringify({ mcpServers: { drawbridge: {
+          url: url, headers: { Authorization: auth } } } }, null, 2) }],
+          hint: 'Paste this into <code>~/.cursor/mcp.json</code> (or the project <code>.cursor/mcp.json</code>).' };
       }
       if (current === 'vscode') {
-        return { code: JSON.stringify({ servers: { drawbridge: {
-          type: 'http', url: url, headers: { Authorization: auth } } } }, null, 2),
-          hint: 'Put this in <code>.vscode/mcp.json</code> (GitHub Copilot Chat → MCP).' };
+        return { fields: [{ label: '.vscode/mcp.json', pre: true, value: JSON.stringify({ servers: { drawbridge: {
+          type: 'http', url: url, headers: { Authorization: auth } } } }, null, 2) }],
+          hint: 'Paste this into <code>.vscode/mcp.json</code> (GitHub Copilot Chat → MCP).' };
       }
-      return { code: 'HTTP Stream URL\n' + url + '\n\nAdditional Headers  (one NAME=VALUE per line)\nAuthorization=' + auth,
+      return { fields: [
+          { label: 'HTTP Stream URL', value: url },
+          { label: 'Additional Headers — community node (NAME=VALUE, one per line)', value: 'Authorization=' + auth } ],
         hint: 'Transport: <b>HTTP Streamable</b>, and use the <b>trailing-slash</b> URL above. Two different n8n nodes exist: ' +
               '<b>(a) the built-in MCP Client Tool</b> — set <b>Authentication = Bearer Auth</b> and paste just the key as the token (n8n adds <code>Authorization: Bearer …</code> for you); ' +
-              '<b>(b) the community node</b> (nerding-io, the credential literally named “MCP Client (HTTP Streamable) API”) — paste the line above into <b>Additional Headers</b>. ' +
-              'That field parses <code>NAME=VALUE</code> per line, so it must be <code>Authorization=Bearer&nbsp;…</code> with an <b>equals sign</b> — a colon (<code>Authorization:&nbsp;Bearer&nbsp;…</code>) is <b>silently dropped</b> and you get a 401 with no header at all.' };
+              '<b>(b) the community node</b> (nerding-io, the credential literally named “MCP Client (HTTP Streamable) API”) — copy the <b>Additional Headers</b> value above into that field. ' +
+              'It parses <code>NAME=VALUE</code> per line, so it must be <code>Authorization=Bearer&nbsp;…</code> with an <b>equals sign</b> — a colon (<code>Authorization:&nbsp;Bearer&nbsp;…</code>) is <b>silently dropped</b> and you get a 401 with no header at all.' };
     }
-    function render() { var c = cfg(); snip.textContent = c.code; hint.innerHTML = c.hint; }
+    function render() {
+      var c = cfg();
+      fieldsEl.textContent = '';
+      c.fields.forEach(function (f) {
+        var wrap = document.createElement('div'); wrap.className = 'mcp-field';
+        var lab = document.createElement('div'); lab.className = 'mcp-field-lab'; lab.textContent = f.label;
+        var box = document.createElement('div'); box.className = 'mcp-cfg';
+        var btn = document.createElement('button'); btn.type = 'button'; btn.className = 'copybtn';
+        btn.textContent = 'Copy'; btn.style.cssText = 'position:absolute;right:8px;top:8px;';
+        btn.addEventListener('click', function () { copyText(btn, f.value); });
+        var pre = document.createElement('pre'); pre.textContent = f.value; if (!f.pre) pre.className = 'one';
+        box.appendChild(btn); box.appendChild(pre);
+        wrap.appendChild(lab); wrap.appendChild(box);
+        fieldsEl.appendChild(wrap);
+      });
+      hint.innerHTML = c.hint;
+    }
     tabs.addEventListener('click', function (e) {
       var b = e.target.closest('button[data-c]'); if (!b) return;
       current = b.getAttribute('data-c');
@@ -124,6 +154,10 @@ focused on the access-automation engine.</p>
       render();
     });
     tokEl.addEventListener('input', render);
+    urlEl.addEventListener('click', function () { copyText(this, url); });
+    document.getElementById('mcp-tok-copy').addEventListener('click', function () {
+      var v = tokEl.value.trim(); if (!v) { flash(this, 'No key'); return; } copyText(this, v);
+    });
     var genBtn = document.getElementById('mcp-gen'), genHint = document.getElementById('mcp-genhint');
     genBtn.addEventListener('click', function () {
       genBtn.disabled = true; var old = genBtn.textContent; genBtn.textContent = 'Generating…';
@@ -137,10 +171,6 @@ focused on the access-automation engine.</p>
         })
         .catch(function (e) { genHint.innerHTML = '<span style="color:var(--danger);">Could not generate a key: ' + (e.message || e) + '</span>'; })
         .finally(function () { genBtn.disabled = false; genBtn.textContent = old; });
-    });
-    document.getElementById('mcp-copy').addEventListener('click', function () {
-      navigator.clipboard && navigator.clipboard.writeText(snip.textContent);
-      var btn = this, old = btn.textContent; btn.textContent = 'Copied'; setTimeout(function () { btn.textContent = old; }, 1200);
     });
     render();
   })();
