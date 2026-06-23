@@ -392,6 +392,7 @@
        rounded top corners, which is what left a white notch when the whole modal was the scroll area). */
     #form-modal .modal { max-width:670px; text-align:left; padding:0; overflow:hidden;
       display:flex; flex-direction:column; }
+    #form-modal.fm-wide .modal { max-width:880px; }   /* a read view (detail) needs more room than a form */
     #form-modal .fm-head { flex:none; z-index:3; display:flex; align-items:center; gap:12px;
       margin:0; padding:8px 14px 8px 22px; color:#fff;
       background:linear-gradient(100deg, var(--accent) 0%, #c026d3 46%, #7b3ff2 100%);
@@ -706,33 +707,51 @@
             .catch(function () { if (btn) { btn.disabled = false; btn.textContent = btn.dataset.t || 'Save'; } });
         });
       }
-      function fragmentOf(html) {
+      function fragmentOf(html, keepActions) {
         // A route may return just the form (X-Fragment) OR a full page. For a full page, extract the
-        // main content and drop the page-head (the modal has its own title) — so ANY short create page
-        // works in the modal with no per-route changes.
+        // main content. FORM mode drops the whole page-head (the modal has its own title bar). VIEW mode
+        // keeps the page-head's ACTION buttons (Edit / Delete) but drops its title + icon (the modal
+        // already titles it) — so a detail page works in the modal with its actions intact.
         if (!/<!doctype|<html|<header/i.test(html)) return html;
         var doc = new DOMParser().parseFromString(html, 'text/html');
         var main = doc.querySelector('main') || doc.body;
-        var ph = main.querySelector('.page-head'); if (ph) ph.remove();
+        var ph = main.querySelector('.page-head');
+        if (ph) {
+          if (keepActions) { ph.querySelectorAll('.ph-main, .icon-chip').forEach(function (el) { el.remove(); });
+                             ph.style.margin = '0 0 14px'; }
+          else { ph.remove(); }
+        }
         return main.innerHTML;
       }
-      function open(url, title) {
+      function open(url, title, view) {
         titleEl.textContent = title || '';
+        fm.classList.toggle('fm-wide', !!view);     // a read view needs more room than a form
         bodyEl.innerHTML = '<p class="muted">Loading…</p>';
         fm.hidden = false;
         fetch(url, { headers: { 'X-Fragment': '1' } })
           .then(function (r) { return r.text(); })
           .then(function (html) {
-            bodyEl.innerHTML = fragmentOf(html); runScripts(bodyEl); wire();
-            var f = bodyEl.querySelector('input:not([type=hidden]),select,textarea'); if (f) f.focus();
+            bodyEl.innerHTML = fragmentOf(html, view); runScripts(bodyEl);
+            // FORM mode wires the submit hijack + focuses the first field. A VIEW (e.g. a datacenter
+            // detail) keeps its OWN scripts (inline edit, copy, delete) and must not be hijacked.
+            if (view) { initFieldHelp(bodyEl); }
+            else { wire(); var f = bodyEl.querySelector('input:not([type=hidden]),select,textarea'); if (f) f.focus(); }
           })
-          .catch(function () { bodyEl.innerHTML = '<p class="err">Could not load the form. <a href="' + url + '">Open the page instead.</a></p>'; });
+          .catch(function () { bodyEl.innerHTML = '<p class="err">Could not load it. <a href="' + url + '">Open the page instead.</a></p>'; });
       }
       document.addEventListener('click', function (e) {
         // Cancel closes the modal (a [data-fm-cancel] link, or any secondary button-link in the body —
         // e.g. a create page's "Cancel"). On the full page these just navigate, as a fallback.
         var cancel = e.target.closest('[data-fm-cancel], #form-modal .fm-body a.btn.secondary, #form-modal .fm-body a.secondary');
-        if (cancel && !fm.hidden) { e.preventDefault(); close(); return; }
+        // …but a secondary-styled link that is itself a modal trigger (e.g. a detail view's "Edit" button)
+        // must OPEN, not be mistaken for Cancel.
+        if (cancel && !cancel.hasAttribute('data-modal-form') && !cancel.hasAttribute('data-modal-view') && !fm.hidden) {
+          e.preventDefault(); close(); return;
+        }
+        var v = e.target.closest('[data-modal-view]');
+        if (v && !e.target.closest('#form-modal')) {    // open a read view (not a trigger already in the modal)
+          e.preventDefault(); open(v.getAttribute('data-modal-view'), v.getAttribute('data-modal-title'), true); return;
+        }
         var t = e.target.closest('[data-modal-form]'); if (!t) return;
         e.preventDefault();
         open(t.getAttribute('data-modal-form'), t.getAttribute('data-modal-title'));
