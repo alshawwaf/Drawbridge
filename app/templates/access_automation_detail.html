@@ -139,27 +139,49 @@ Content-Type: application/json
     .dtzoom{display:inline-flex;align-items:center;gap:4px;}
     .dtzoom .copybtn{padding:5px 11px;}
     #dt-zreset{min-width:52px;text-align:center;font-variant-numeric:tabular-nums;}
-    #aa-flow-dt{background:transparent;border:0;margin:0;padding:0;line-height:1.3;
-      position:absolute;top:0;left:0;transform-origin:0 0;will-change:transform;}
-    #aa-flow-dt:not([data-processed]){font-family:ui-monospace,monospace;font-size:11px;color:var(--muted);white-space:pre-wrap;}
-    /* a true canvas viewport: fixed box, content clipped, panned/zoomed by an absolute transform */
-    .dtwrap{position:relative;overflow:hidden;height:70vh;min-height:360px;border:1px solid var(--line);
-      border-radius:12px;background:
-        radial-gradient(circle at 1px 1px, var(--line) 1px, transparent 0) 0 0 / 22px 22px,
-        var(--surface-2);
-      cursor:grab;touch-action:none;}
-    .dtwrap.grabbing{cursor:grabbing;}
-    .dtwrap svg{display:block;user-select:none;}
-    .dtwrap svg g.node{filter:drop-shadow(0 2px 5px rgba(0,0,0,.28));}
-    .dtwrap svg .edgePath path{stroke-width:1.6px;}
-    /* crisp labels on the richer gradient fills (dark canvas only; light keeps its dark theme text) */
-    html:not([data-theme="light"]) .dtwrap svg g.node .nodeLabel,
-    html:not([data-theme="light"]) .dtwrap svg g.node .nodeLabel *{text-shadow:0 1px 2px rgba(0,0,0,.55);}
-    /* the entry node wears the brand gradient (painted in JS) -> force white label for contrast */
-    .dtwrap svg g.node.start .nodeLabel,
-    .dtwrap svg g.node.start .nodeLabel *{color:#fff !important;fill:#fff !important;}
     .dthint{font-size:11.5px;color:var(--muted);margin:0 0 8px;}
     .dthint b{color:var(--info,#0ea5e9);font-weight:700;}
+    /* --- custom decision-tree canvas (no Mermaid): positioned cards + SVG edges --- */
+    .dtwrap{position:relative;overflow:hidden;height:70vh;min-height:380px;border:1px solid var(--line);
+      border-radius:14px;cursor:grab;touch-action:none;
+      background:radial-gradient(circle at 1px 1px, var(--line) 1px, transparent 0) 0 0/24px 24px, var(--surface-2);}
+    .dtwrap.grabbing{cursor:grabbing;}
+    .dtcanvas{position:absolute;top:0;left:0;transform-origin:0 0;will-change:transform;}
+    .dtedges{position:absolute;top:0;left:0;overflow:visible;pointer-events:none;}
+    .dtedges>path{fill:none;stroke:var(--dt-edge);stroke-width:1.8px;}
+    .dtedges marker path{fill:var(--dt-edge);stroke:none;}
+    .dtedge-label{position:absolute;transform:translate(-50%,-50%);font-size:11px;color:var(--muted);
+      background:var(--surface-2);padding:0 6px;border-radius:6px;white-space:nowrap;pointer-events:none;}
+    /* a node = a modern rounded card with a kind-coloured gradient + accent border + soft shadow */
+    .dtnode{position:absolute;box-sizing:border-box;border-radius:14px;padding:11px 15px;text-align:center;
+      border:1.5px solid var(--dt-bd);color:var(--dt-fg);background:linear-gradient(160deg,var(--dt-top),var(--dt-bot));
+      box-shadow:0 5px 16px rgba(0,0,0,.20), inset 0 1px 0 rgba(255,255,255,.07);}
+    .dtn-title{font-weight:650;font-size:13.5px;line-height:1.3;}
+    .dtn-sub{font-size:11.5px;line-height:1.36;margin-top:4px;opacity:.93;}
+    .dtn-more{position:absolute;right:-11px;bottom:-11px;min-width:28px;height:25px;padding:0 8px;border-radius:13px;
+      border:1.5px solid var(--accent);background:var(--accent-grad);color:#fff;font:700 12px/1 inherit;
+      cursor:pointer;box-shadow:0 3px 9px rgba(0,0,0,.34);}
+    .dtn-more:hover{filter:brightness(1.12);}
+    /* kind palette — dark (default). Each card: top→bottom gradient, accent border, readable text. */
+    .dtwrap{--dt-edge:#566782;}
+    .dtnode{--dt-top:#26324a;--dt-bot:#1a2336;--dt-bd:#46587a;--dt-fg:#eaf1fb;}        /* process */
+    .k-start{--dt-top:var(--accent);--dt-bot:#7b3ff2;--dt-bd:var(--accent);--dt-fg:#fff;background:var(--accent-grad);}
+    .k-decision{--dt-top:#27375a;--dt-bot:#1a2740;--dt-bd:#516790;--dt-fg:#eaf1fb;}
+    .k-note{--dt-top:#1f4a7e;--dt-bot:#14294a;--dt-bd:#4f97f6;--dt-fg:#e3eefb;}
+    .k-noop{--dt-top:#16633f;--dt-bot:#0e3327;--dt-bd:#2bd06a;--dt-fg:#d6f7e4;}
+    .k-widen{--dt-top:#125a7c;--dt-bot:#0b2c44;--dt-bd:#45c4fb;--dt-fg:#d4eefb;}
+    .k-create{--dt-top:#7a5414;--dt-bot:#33270f;--dt-bd:#fcc83a;--dt-fg:#fce2b0;}
+    .k-review{--dt-top:#7a2930;--dt-bot:#36161a;--dt-bd:#f4686d;--dt-fg:#ffd7d6;}
+    /* light theme overrides */
+    html[data-theme="light"] .dtwrap{--dt-edge:#94a3b8;}
+    html[data-theme="light"] .dtnode{--dt-top:#ffffff;--dt-bot:#eef2f9;--dt-bd:#cdd7e6;--dt-fg:#334155;
+      box-shadow:0 4px 12px rgba(2,6,23,.08), inset 0 1px 0 rgba(255,255,255,.6);}
+    html[data-theme="light"] .k-decision{--dt-top:#f3f7fc;--dt-bot:#e3ecf7;--dt-bd:#9aa8be;--dt-fg:#1e293b;}
+    html[data-theme="light"] .k-note{--dt-top:#eef5ff;--dt-bot:#dbeafe;--dt-bd:#3b82f6;--dt-fg:#1e497f;}
+    html[data-theme="light"] .k-noop{--dt-top:#e9f9ef;--dt-bot:#d2f0de;--dt-bd:#16a34a;--dt-fg:#0c6b34;}
+    html[data-theme="light"] .k-widen{--dt-top:#e9f5fe;--dt-bot:#d0e9fb;--dt-bd:#0ea5e9;--dt-fg:#0b6a96;}
+    html[data-theme="light"] .k-create{--dt-top:#fef6e0;--dt-bot:#fbeaca;--dt-bd:#f59e0b;--dt-fg:#92610a;}
+    html[data-theme="light"] .k-review{--dt-top:#feeceb;--dt-bot:#fcdcdc;--dt-bd:#e5484d;--dt-fg:#b01e22;}
   </style>
   <div class="dtbar">
     <span class="dtzoom" role="group" aria-label="Diagram zoom">
@@ -182,9 +204,8 @@ Content-Type: application/json
       </div>
     </div>
   </div>
-  <p class="dthint" id="dt-hint" hidden>Collapsed to the first levels — click a <b>＋ more</b> stub to reveal the next step, or “Expand all”. <b>Drag</b> to pan · <b>pinch</b> / Ctrl-scroll / <b>＋ −</b> to zoom.</p>
-  <div class="dtwrap" id="aa-flow-wrap"><pre class="mermaid" id="aa-flow-dt">{{ decision_mermaid_dark }}</pre></div>
-  <pre id="aa-flow-dt-light" hidden>{{ decision_mermaid_light }}</pre>
+  <p class="dthint" id="dt-hint" hidden>Showing the core flow — click a node’s <b>＋N</b> chip to reveal that branch’s detail, or “Expand all”. <b>Drag</b> to pan · <b>pinch</b> / Ctrl-scroll / <b>＋ −</b> to zoom.</p>
+  <div class="dtwrap" id="aa-flow-wrap"><div class="dtcanvas" id="aa-flow-canvas"></div></div>
   <script id="dt-graph-data" type="application/json">{{ decision_graph_json|safe }}</script>
   <div class="row" style="gap:8px;margin-top:14px;flex-wrap:wrap;justify-content:center;">
     <span class="pill ok">No-op · already allowed</span>
@@ -507,219 +528,160 @@ Content-Type: application/json
       .catch(function () { layerSel.innerHTML = '<option>Failed to load layers</option>'; });
   })();
 </script>
-<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
 <script>
+  /* Custom decision-tree renderer (no Mermaid): positioned cards from decision_tree.py's hand-placed
+     coords + SVG bezier edges, level-based collapse via per-node ＋N chips, transform pan/zoom. */
   (function () {
-    var el = document.getElementById('aa-flow-dt');
-    if (!el || !window.mermaid) return;            // CDN blocked -> the Mermaid source stays visible (graceful)
     var wrap = document.getElementById('aa-flow-wrap');
-    var darkSrc = el.textContent;
-    var lightEl = document.getElementById('aa-flow-dt-light');
-    var lightSrc = lightEl ? lightEl.textContent : darkSrc;   // theme styling is baked into each source
-    function isLight(){ return document.documentElement.getAttribute('data-theme') === 'light'; }
-
-    // --- collapsible tree: rebuild the Mermaid source from the engine's graph, filtered to `visible` ---
+    var canvas = document.getElementById('aa-flow-canvas');
+    if (!wrap || !canvas) return;
     var GRAPH = null;
     try { GRAPH = JSON.parse(document.getElementById('dt-graph-data').textContent); } catch (e) {}
-    var visible = new Set();                                  // node ids currently shown (survives re-render)
-    // Collapse by DETAIL TIER (level), not BFS depth: the whole core flow (level 0) shows at once; each
-    // detail branch sits behind a "＋ more" stub until expanded. (Fallback to depth if level is absent.)
-    function isCore(n){ return (n.level != null) ? n.level === 0 : (n.depth <= 1); }
-    function resetVisible(){ visible = new Set(); if (GRAPH) GRAPH.nodes.forEach(function (n){ if (isCore(n)) visible.add(n.id); }); }
+    if (!GRAPH || !GRAPH.nodes) return;
+    var SVGNS = 'http://www.w3.org/2000/svg';
+    function esc(s) { var d = document.createElement('div'); d.textContent = (s == null ? '' : s); return d.innerHTML; }
+
+    // collapse by detail tier (level): the core (level 0) shows; each branch sits behind its parent's ＋N chip
+    var visible = new Set();
+    function isCore(n) { return (n.level != null) ? n.level === 0 : (n.depth <= 1); }
+    function resetVisible() { visible = new Set(); GRAPH.nodes.forEach(function (n) { if (isCore(n)) visible.add(n.id); }); }
     resetVisible();
-    function childrenOf(id){ return GRAPH.edges.filter(function (e){ return e.src === id; }).map(function (e){ return e.dst; }); }
-    function hiddenChildren(id){ return childrenOf(id).filter(function (c){ return !visible.has(c); }); }
-    // map a Mermaid <g id="flowchart-X-N"> back to X; a "＋ more" stub is "stub_<parentId>"
-    function rawId(g){ return (g.id || '').replace(/^flowchart-/, '').replace(/-\d+$/, ''); }
-    function expandTarget(g){ var r = rawId(g); if (!r) return null; return r.indexOf('stub_') === 0 ? r.slice(5) : r; }
+    function childrenOf(id) { return GRAPH.edges.filter(function (e) { return e.src === id; }).map(function (e) { return e.dst; }); }
+    function hiddenChildren(id) { return childrenOf(id).filter(function (c) { return !visible.has(c); }); }
 
-    function buildSource(dark){          // the SAME node/edge declarations decision_tree emits, filtered to
-      var T = dark ? GRAPH.themes.dark : GRAPH.themes.light;   // the visible set + a "＋ N more" stub at each cut
-      var lines = [T.init, 'flowchart TD'];
-      var vnodes = GRAPH.nodes.filter(function (n){ return visible.has(n.id); });
-      vnodes.forEach(function (n){ lines.push('  ' + n.mm); });
-      var stubs = [];                                          // a stub wherever a visible node hides children
-      vnodes.forEach(function (n){
-        var h = hiddenChildren(n.id).length;
-        if (h) { var sid = 'stub_' + n.id; stubs.push(sid); lines.push('  ' + sid + '(["＋ ' + h + ' more"])'); }
-      });
-      lines.push('');
-      GRAPH.edges.forEach(function (e){ if (visible.has(e.src) && visible.has(e.dst)) lines.push('  ' + e.mm); });
-      stubs.forEach(function (sid){ lines.push('  ' + sid.slice(5) + ' -.-> ' + sid); });   // parent -.-> stub
-      lines.push('');
-      T.classDefs.forEach(function (c){ lines.push('  ' + c); });
-      lines.push('  classDef stub ' + (dark ? 'fill:#16202f,stroke:#3f5170,color:#aebfd6'
-                                            : 'fill:#eef2f9,stroke:#9aa8be,color:#51607a') + ',stroke-dasharray:5 4;');
-      var byKind = {};
-      vnodes.forEach(function (n){ (byKind[n.kind] = byKind[n.kind] || []).push(n.id); });
-      Object.keys(byKind).forEach(function (k){ lines.push('  class ' + byKind[k].join(',') + ' ' + k + ';'); });
-      if (stubs.length) lines.push('  class ' + stubs.join(',') + ' stub;');
-      return lines.join('\n');
-    }
-    function activeSrc(){ return GRAPH ? buildSource(!isLight()) : (isLight() ? lightSrc : darkSrc); }
-
-    function markStubs(){                 // a pointer cursor on whatever can be expanded (stub or its parent)
-      if (!GRAPH) return;
-      var svg = el.querySelector('svg'); if (!svg) return;
-      svg.querySelectorAll('g.node').forEach(function (g){
-        var t = expandTarget(g);
-        g.style.cursor = (t && hiddenChildren(t).length) ? 'pointer' : '';
-      });
-    }
-    // --- on-page gradient polish (the .mmd/.drawio/.dot downloads stay flat + portable) -----------
-    // Every node gets a real diagonal gradient: in DARK mode it runs from a vivid tint of the node's OWN
-    // accent (its border colour) down to its dark body — so each box looks "designed" in its kind's
-    // colour, not flat; in LIGHT mode it stays a soft top-light. The entry node wears the portal's brand
-    // magenta→violet. Colours are read from the rendered shapes, so it auto-adapts to theme + palette.
-    var SVGNS = "http://www.w3.org/2000/svg";
-    function _rgb(s){ var m = (s || "").match(/\d+(\.\d+)?/g); return (m && m.length >= 3) ? [+m[0], +m[1], +m[2]] : null; }
-    function _lighten(rgb, amt){
-      var c = _rgb(rgb); if (!c) return rgb;
-      function up(x){ return Math.round(x + (255 - x) * amt); }
-      return "rgb(" + up(c[0]) + "," + up(c[1]) + "," + up(c[2]) + ")";
-    }
-    function _mix(a, b, t){                 // blend colour a toward colour b by t (0..1)
-      var x = _rgb(a), y = _rgb(b); if (!x || !y) return a;
-      function m(i){ return Math.round(x[i] + (y[i] - x[i]) * t); }
-      return "rgb(" + m(0) + "," + m(1) + "," + m(2) + ")";
-    }
-    function _grad(defs, gid, c0, c1, diag){
-      if (defs.querySelector("#" + gid)) return;
-      var lg = document.createElementNS(SVGNS, "linearGradient");
-      lg.setAttribute("id", gid); lg.setAttribute("x1", "0"); lg.setAttribute("y1", "0");
-      lg.setAttribute("x2", diag ? "1" : "0"); lg.setAttribute("y2", "1");
-      [["0", c0], ["1", c1]].forEach(function (p){
-        var s = document.createElementNS(SVGNS, "stop");
-        s.setAttribute("offset", p[0]); s.setAttribute("stop-color", p[1]); lg.appendChild(s);
-      });
-      defs.appendChild(lg);
-    }
-    function _outline(g){                  // the node's main shape (first direct-child rect/poly/path)
-      for (var i = 0; i < g.children.length; i++) {
-        if (/^(rect|polygon|path|circle|ellipse)$/i.test(g.children[i].tagName)) return g.children[i];
-      }
-      return null;
-    }
-    function paintGradients(svg){
-      var defs = svg.querySelector("defs");
-      if (!defs) { defs = document.createElementNS(SVGNS, "defs"); svg.insertBefore(defs, svg.firstChild); }
-      var dark = !isLight();
-      var cs = getComputedStyle(document.documentElement);
-      var acc = (cs.getPropertyValue("--accent") || "#ff3d9a").trim();
-      _grad(defs, "dtg-brand", acc, "#7b3ff2", true);
-      svg.querySelectorAll("g.node").forEach(function (g){
-        var shape = _outline(g); if (!shape) return;
-        var isStart = /\bstart\b/.test(g.getAttribute("class") || "");
-        // Mermaid's classDef sets fill with !important, so the override must be !important too.
-        if (isStart) {
-          shape.style.setProperty("fill", "url(#dtg-brand)", "important");
-        } else {
-          var fill = getComputedStyle(shape).fill, stroke = getComputedStyle(shape).stroke;
-          if (fill && fill !== "none" && fill.indexOf("url(") !== 0) {
-            // dark: vivid (40% toward the kind's accent) -> body; light: gentle top-light
-            var top = dark ? _mix(fill, stroke, 0.42) : _lighten(fill, 0.10);
-            var gid = "dtg-" + (fill + stroke).replace(/[^0-9]/g, "") + (dark ? "d" : "l");
-            _grad(defs, gid, top, fill, true);
-            shape.style.setProperty("fill", "url(#" + gid + ")", "important");
-          }
-        }
-        // Brighten the label in DARK mode for crisp contrast on the richer fills (light mode keeps its
-        // theme-correct dark text). The start node is forced white by CSS.
-        if (dark && !isStart) {
-          g.querySelectorAll(".nodeLabel, .nodeLabel *, text, tspan").forEach(function (t){
-            t.style.setProperty("fill", "#eef4fc", "important");
-            t.style.setProperty("color", "#eef4fc", "important");
-          });
-        }
-      });
-    }
-
-    // --- canvas pan + zoom: an absolute transform on `el`, grab-drag to pan at ANY zoom ------------
+    // pan / zoom — an absolute transform on the canvas
     var s = 1, tx = 0, ty = 0, fitS = 1, natW = 600, natH = 400, panMoved = false;
-    function vpW(){ return wrap.clientWidth; }
-    function vpH(){ return wrap.clientHeight; }
-    function measure(){
-      var svg = el.querySelector("svg"); if (!svg) return null;
-      var vb = svg.viewBox && svg.viewBox.baseVal;
-      natW = (vb && vb.width) ? vb.width : (svg.getBBox ? svg.getBBox().width : 600);
-      natH = (vb && vb.height) ? vb.height : (svg.getBBox ? svg.getBBox().height : 400);
-      svg.removeAttribute("height"); svg.style.maxWidth = "none";
-      svg.style.width = natW + "px"; svg.style.height = natH + "px";
-      el.style.width = natW + "px"; el.style.height = natH + "px";
-      return svg;
-    }
-    function clampPan(){                    // free panning, but never let the diagram leave a 60px sliver
+    function vpW() { return wrap.clientWidth; }
+    function vpH() { return wrap.clientHeight; }
+    function clampPan() {
       var cw = natW * s, ch = natH * s, M = 60;
       tx = (cw <= vpW()) ? (vpW() - cw) / 2 : Math.min(M, Math.max(vpW() - cw - M, tx));
       ty = (ch <= vpH()) ? (vpH() - ch) / 2 : Math.min(M, Math.max(vpH() - ch - M, ty));
     }
-    function apply(){
-      el.style.transform = "translate(" + tx + "px," + ty + "px) scale(" + s + ")";
-      var lbl = document.getElementById("dt-zreset"); if (lbl) lbl.textContent = Math.round(s / fitS * 100) + "%";
+    function apply() {
+      canvas.style.transform = 'translate(' + tx + 'px,' + ty + 'px) scale(' + s + ')';
+      var l = document.getElementById('dt-zreset'); if (l) l.textContent = Math.round(s * 100) + '%';
     }
-    function fit(){                         // scale to fit the viewport, then centre (top-align if too tall)
-      fitS = Math.max(0.12, Math.min(vpW() / natW, vpH() / natH, 1.5)); s = fitS;
+    function fit() {                         // readable default (fit-width, floor 70%, no upscale); pan/zoom for more
+      var fw = vpW() / natW; s = Math.min(fw, 1); if (s < 0.7) s = 0.7; fitS = s;
       tx = (vpW() - natW * s) / 2;
-      ty = (natH * s <= vpH()) ? (vpH() - natH * s) / 2 : 18;
-      apply();
+      ty = (natH * s <= vpH()) ? (vpH() - natH * s) / 2 : 16;
+      clampPan(); apply();
     }
-    function zoomTo(ns, cx, cy){            // zoom toward a viewport point (defaults to centre), keep it fixed
+    function zoomTo(ns, cx, cy) {
       cx = (cx == null) ? vpW() / 2 : cx; cy = (cy == null) ? vpH() / 2 : cy;
-      ns = Math.max(fitS * 0.5, Math.min(fitS * 6, ns));
+      ns = Math.max(0.15, Math.min(2.5, ns));
       tx = cx - (cx - tx) * ns / s; ty = cy - (cy - ty) * ns / s; s = ns; clampPan(); apply();
     }
-    function render(refit){
-      el.removeAttribute("data-processed"); el.innerHTML = ""; el.style.transform = ""; el.textContent = activeSrc();
-      mermaid.initialize({ startOnLoad: false, securityLevel: "loose" });   // theme + font baked into the source
-      // Defer measure + fit to the next frame so the SVG and the .dtwrap are fully laid out first —
-      // measuring mid-layout gave a wrong fit scale (the diagram came up at the wrong zoom after expand).
-      function after(){ requestAnimationFrame(function (){
-        var svg = measure(); if (svg) paintGradients(svg); markStubs();
+
+    // edges — anchor on the box sides facing each other, smooth cubic bezier
+    function anchors(a, b) {
+      var acx = a.x + a.w / 2, acy = a.y + a.h / 2, bcx = b.x + b.w / 2, bcy = b.y + b.h / 2;
+      var dx = bcx - acx, dy = bcy - acy;
+      if (Math.abs(dy) >= Math.abs(dx)) {
+        return dy >= 0 ? [[acx, a.y + a.h], [bcx, b.y]] : [[acx, a.y], [bcx, b.y + b.h]];
+      }
+      return dx >= 0 ? [[a.x + a.w, acy], [b.x, bcy]] : [[a.x, acy], [b.x + b.w, bcy]];
+    }
+    function bezier(p, q) {
+      var dx = q[0] - p[0], dy = q[1] - p[1], c = 0.5, c1, c2;
+      if (Math.abs(dy) >= Math.abs(dx)) { c1 = [p[0], p[1] + dy * c]; c2 = [q[0], q[1] - dy * c]; }
+      else { c1 = [p[0] + dx * c, p[1]]; c2 = [q[0] - dx * c, q[1]]; }
+      return 'M' + p[0] + ',' + p[1] + ' C' + c1[0] + ',' + c1[1] + ' ' + c2[0] + ',' + c2[1] + ' ' + q[0] + ',' + q[1];
+    }
+
+    function render(refit) {
+      canvas.innerHTML = '';
+      var vnodes = GRAPH.nodes.filter(function (n) { return visible.has(n.id); });
+      var divs = {};
+      vnodes.forEach(function (n) {
+        var d = document.createElement('div');
+        d.className = 'dtnode k-' + n.kind;
+        d.style.left = n.x + 'px'; d.style.top = n.y + 'px'; d.style.width = n.w + 'px';
+        d.innerHTML = '<div class="dtn-title">' + esc(n.label) + '</div>' +
+                      (n.sub ? '<div class="dtn-sub">' + esc(n.sub) + '</div>' : '');
+        canvas.appendChild(d); divs[n.id] = d;
+      });
+      // labels wrap, so measure actual heights next frame, then draw edges + size the canvas + fit
+      requestAnimationFrame(function () {
+        var pos = {}, maxX = 0, maxY = 0;
+        vnodes.forEach(function (n) {
+          var h = divs[n.id].offsetHeight || n.h;
+          pos[n.id] = { x: n.x, y: n.y, w: n.w, h: h };
+          maxX = Math.max(maxX, n.x + n.w); maxY = Math.max(maxY, n.y + h);
+        });
+        natW = maxX + 48; natH = maxY + 48;
+        canvas.style.width = natW + 'px'; canvas.style.height = natH + 'px';
+        var svg = document.createElementNS(SVGNS, 'svg');
+        svg.setAttribute('class', 'dtedges'); svg.setAttribute('width', natW); svg.setAttribute('height', natH);
+        svg.innerHTML = '<defs><marker id="dtarrow" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" ' +
+          'markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z"/></marker></defs>';
+        GRAPH.edges.forEach(function (e) {
+          if (!visible.has(e.src) || !visible.has(e.dst)) return;
+          var an = anchors(pos[e.src], pos[e.dst]);
+          var path = document.createElementNS(SVGNS, 'path');
+          path.setAttribute('d', bezier(an[0], an[1])); path.setAttribute('marker-end', 'url(#dtarrow)');
+          svg.appendChild(path);
+          if (e.label) {
+            var lab = document.createElement('div'); lab.className = 'dtedge-label'; lab.textContent = e.label;
+            lab.style.left = ((an[0][0] + an[1][0]) / 2) + 'px';
+            lab.style.top = ((an[0][1] + an[1][1]) / 2) + 'px';
+            canvas.appendChild(lab);
+          }
+        });
+        canvas.insertBefore(svg, canvas.firstChild);   // edges behind the cards
+        vnodes.forEach(function (n) {
+          var hc = hiddenChildren(n.id); if (!hc.length) return;
+          var b = document.createElement('button'); b.type = 'button'; b.className = 'dtn-more';
+          b.textContent = '+' + hc.length; b.title = 'Show ' + hc.length + ' more';
+          b.setAttribute('data-expand', n.id); divs[n.id].appendChild(b);
+        });
         if (refit) fit(); else { clampPan(); apply(); }
-      }); }
-      try { var p = mermaid.run({ nodes: [el] }); if (p && p.then) p.then(after); else after(); } catch (e) {}
-    }
-
-    document.getElementById("dt-zin").addEventListener("click", function () { zoomTo(s * 1.25); });
-    document.getElementById("dt-zout").addEventListener("click", function () { zoomTo(s * 0.8); });
-    document.getElementById("dt-zreset").addEventListener("click", function () { fit(); });
-
-    if (GRAPH && GRAPH.nodes.length > visible.size) {        // there IS hidden detail -> show the controls + hint
-      var detail = document.getElementById("dt-detail"); if (detail) detail.hidden = false;
-      var hint = document.getElementById("dt-hint"); if (hint) hint.hidden = false;
-      el.addEventListener("click", function (ev){            // click a "＋ more" stub (or its node) -> next level
-        if (panMoved) return;                               // (a real pan already swallowed this click)
-        var g = ev.target.closest ? ev.target.closest("g.node") : null; if (!g) return;
-        var id = expandTarget(g); if (!id) return;
-        var hc = hiddenChildren(id); if (!hc.length) return;
-        hc.forEach(function (c){ visible.add(c); }); render(false);   // keep the user's pan/zoom on expand
       });
-      var eb = document.getElementById("dt-expand");
-      if (eb) eb.addEventListener("click", function (){ GRAPH.nodes.forEach(function (n){ visible.add(n.id); }); render(true); });
-      var cb = document.getElementById("dt-collapse");
-      if (cb) cb.addEventListener("click", function (){ resetVisible(); render(true); });
     }
 
-    // Grab-drag to pan (pointer events -> mouse + touch). A real drag suppresses the next click so it
-    // never accidentally expands a stub. Pinch / Ctrl-scroll zooms toward the cursor.
-    (function (){
-      var down = false, sx = 0, sy = 0, stx = 0, sty = 0, pid = null;
-      wrap.addEventListener("pointerdown", function (e){
+    // controls
+    document.getElementById('dt-zin').addEventListener('click', function () { zoomTo(s * 1.25); });
+    document.getElementById('dt-zout').addEventListener('click', function () { zoomTo(s * 0.8); });
+    document.getElementById('dt-zreset').addEventListener('click', function () { fit(); });
+    if (GRAPH.nodes.some(function (n) { return !isCore(n); })) {
+      var det = document.getElementById('dt-detail'); if (det) det.hidden = false;
+      var hint = document.getElementById('dt-hint'); if (hint) hint.hidden = false;
+      var eb = document.getElementById('dt-expand');
+      if (eb) eb.addEventListener('click', function () { GRAPH.nodes.forEach(function (n) { visible.add(n.id); }); render(true); });
+      var cb = document.getElementById('dt-collapse');
+      if (cb) cb.addEventListener('click', function () { resetVisible(); render(true); });
+    }
+    // expand a node's hidden branch via its ＋N chip (a real drag suppresses the click)
+    canvas.addEventListener('click', function (e) {
+      var b = e.target.closest ? e.target.closest('[data-expand]') : null;
+      if (!b || panMoved) return;
+      var id = b.getAttribute('data-expand'); var hc = hiddenChildren(id); if (!hc.length) return;
+      hc.forEach(function (c) { visible.add(c); }); render(false);
+    });
+
+    // grab-drag pan (pointer events) + pinch / Ctrl-wheel zoom. Capture only once a real drag starts, so a
+    // clean click still reaches a ＋N chip.
+    (function () {
+      var down = false, sx = 0, sy = 0, stx = 0, sty = 0, pid = null, captured = false;
+      wrap.addEventListener('pointerdown', function (e) {
         if (e.button && e.button !== 0) return;
-        down = true; panMoved = false; sx = e.clientX; sy = e.clientY; stx = tx; sty = ty; pid = e.pointerId;
-        try { wrap.setPointerCapture(pid); } catch (_) {}
-        wrap.classList.add("grabbing");
+        down = true; panMoved = false; captured = false;
+        sx = e.clientX; sy = e.clientY; stx = tx; sty = ty; pid = e.pointerId;
+        wrap.classList.add('grabbing');
       });
-      wrap.addEventListener("pointermove", function (e){
+      wrap.addEventListener('pointermove', function (e) {
         if (!down) return;
         var dx = e.clientX - sx, dy = e.clientY - sy;
-        if (Math.abs(dx) > 4 || Math.abs(dy) > 4) panMoved = true;
-        tx = stx + dx; ty = sty + dy; clampPan(); apply();
+        if (!panMoved && (Math.abs(dx) > 4 || Math.abs(dy) > 4)) {
+          panMoved = true; try { wrap.setPointerCapture(pid); captured = true; } catch (_) {}
+        }
+        if (panMoved) { tx = stx + dx; ty = sty + dy; clampPan(); apply(); }
       });
-      function up(){ down = false; wrap.classList.remove("grabbing"); if (pid != null) { try { wrap.releasePointerCapture(pid); } catch (_) {} pid = null; } }
-      wrap.addEventListener("pointerup", up); wrap.addEventListener("pointercancel", up);
-      wrap.addEventListener("click", function (e){ if (panMoved) { e.stopPropagation(); e.preventDefault(); } }, true);
-      wrap.addEventListener("wheel", function (e){            // pinch (trackpad) / Ctrl+wheel -> zoom toward cursor
+      function up() { down = false; wrap.classList.remove('grabbing'); if (captured && pid != null) { try { wrap.releasePointerCapture(pid); } catch (_) {} } captured = false; pid = null; }
+      wrap.addEventListener('pointerup', up); wrap.addEventListener('pointercancel', up);
+      wrap.addEventListener('click', function (e) { if (panMoved) { e.stopPropagation(); e.preventDefault(); } }, true);
+      wrap.addEventListener('wheel', function (e) {
         if (e.ctrlKey || e.metaKey) {
           var r = wrap.getBoundingClientRect();
           zoomTo(s * (e.deltaY < 0 ? 1.12 : 0.89), e.clientX - r.left, e.clientY - r.top);
@@ -729,10 +691,7 @@ Content-Type: application/json
     })();
 
     render(true);
-    var rt; window.addEventListener("resize", function (){ clearTimeout(rt); rt = setTimeout(function (){ fit(); }, 140); });
-    var t; new MutationObserver(function (m){
-      if (m.some(function (x){ return x.attributeName === "data-theme"; })) { clearTimeout(t); t = setTimeout(function (){ render(true); }, 60); }
-    }).observe(document.documentElement, { attributes:true });
+    var rt; window.addEventListener('resize', function () { clearTimeout(rt); rt = setTimeout(function () { fit(); }, 140); });
   })();
 </script>
 

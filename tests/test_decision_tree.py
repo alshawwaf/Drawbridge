@@ -132,16 +132,17 @@ def test_to_graph_is_client_consumable_and_matches_mermaid():
 
 
 def test_inline_layer_recursion_and_automation_modes_are_drawn():
-    # guards the two engine features shipped alongside this: they must stay represented in the visual
+    # guards the two engine features shipped alongside this: they must stay represented in the visual.
+    # The inline branch is summarised in ONE node (recurse) — its outcomes are described in the text, so
+    # it adds no extra review box; only a genuine split across layers is left for a human (worded there).
     ids = {n.id for n in dt.NODES}
-    assert {"inline", "recurse", "inlineEnd", "opts"} <= ids
+    assert {"inline", "recurse", "opts", "odCreate"} <= ids
     edges = {(e.src, e.dst) for e in dt.EDGES}
     assert ("resolve", "inline") in edges                               # inline branch wired off resolve
     assert ("inline", "recurse") in edges                               # the recursion step
-    assert ("inlineEnd", "inCreate") in edges and ("inlineEnd", "inNoop") in edges   # drop / accept cleanup
     assert ("opts", "odCreate") in edges                                # override-deny -> create above the deny
-    inline_end = next(n for n in dt.NODES if n.id == "inlineEnd")
-    assert "cleanup" in inline_end.label.lower()
+    recurse = next(n for n in dt.NODES if n.id == "recurse")
+    assert "inline" in (recurse.label + recurse.sub).lower()
 
 
 def test_detail_branch_is_self_contained_no_cross_edges():
@@ -173,7 +174,8 @@ def test_object_materialisation_branch_is_drawn():
     edges = {(e.src, e.dst) for e in dt.EDGES}
     assert ("create", "apply") in edges and ("doWiden", "apply") in edges   # off both write outcomes
     assert ("apply", "matIP") in edges and ("apply", "matMk") in edges and ("apply", "matReuse") in edges
-    assert ("matReuse", "matMissing") in edges           # reuse-only-missing -> review leaf
+    assert ("matReuse", "matMissing") in edges           # reuse-only-missing -> a note (define it first)
+    assert next(n for n in dt.NODES if n.id == "matMissing").kind == "note"   # not a crimson review
 
 
 def test_every_typed_request_kind_is_named_in_the_tree():
