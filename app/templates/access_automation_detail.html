@@ -139,11 +139,21 @@ Content-Type: application/json
     .dtzoom{display:inline-flex;align-items:center;gap:4px;}
     .dtzoom .copybtn{padding:5px 11px;}
     #dt-zreset{min-width:52px;text-align:center;font-variant-numeric:tabular-nums;}
-    #aa-flow-dt{background:transparent;border:0;margin:0;padding:0;line-height:1.3;}
+    #aa-flow-dt{background:transparent;border:0;margin:0;padding:0;line-height:1.3;
+      position:absolute;top:0;left:0;transform-origin:0 0;will-change:transform;}
     #aa-flow-dt:not([data-processed]){font-family:ui-monospace,monospace;font-size:11px;color:var(--muted);white-space:pre-wrap;}
-    .dtwrap{overflow:auto;max-height:74vh;border:1px solid var(--line);border-radius:12px;padding:12px;background:var(--surface-2);cursor:grab;}
-    .dtwrap.grabbing{cursor:grabbing;user-select:none;}
-    .dtwrap svg{height:auto;display:block;margin:0 auto;}
+    /* a true canvas viewport: fixed box, content clipped, panned/zoomed by an absolute transform */
+    .dtwrap{position:relative;overflow:hidden;height:70vh;min-height:360px;border:1px solid var(--line);
+      border-radius:12px;background:
+        radial-gradient(circle at 1px 1px, var(--line) 1px, transparent 0) 0 0 / 22px 22px,
+        var(--surface-2);
+      cursor:grab;touch-action:none;}
+    .dtwrap.grabbing{cursor:grabbing;}
+    .dtwrap svg{display:block;user-select:none;}
+    .dtwrap svg g.node{filter:drop-shadow(0 1px 3px rgba(0,0,0,.22));}
+    /* the entry node wears the brand gradient (painted in JS) -> force white label for contrast */
+    .dtwrap svg g.node.start .nodeLabel,
+    .dtwrap svg g.node.start .nodeLabel *{color:#fff !important;fill:#fff !important;}
     .dthint{font-size:11.5px;color:var(--muted);margin:0 0 8px;}
     .dthint b{color:var(--info,#0ea5e9);font-weight:700;}
   </style>
@@ -168,7 +178,7 @@ Content-Type: application/json
       </div>
     </div>
   </div>
-  <p class="dthint" id="dt-hint" hidden>Collapsed to the first levels — click a <b>＋ more</b> stub to reveal the next step, or “Expand all”. When zoomed in, <b>drag</b> to pan.</p>
+  <p class="dthint" id="dt-hint" hidden>Collapsed to the first levels — click a <b>＋ more</b> stub to reveal the next step, or “Expand all”. <b>Drag</b> to pan · <b>pinch</b> / Ctrl-scroll / <b>＋ −</b> to zoom.</p>
   <div class="dtwrap" id="aa-flow-wrap"><pre class="mermaid" id="aa-flow-dt">{{ decision_mermaid_dark }}</pre></div>
   <pre id="aa-flow-dt-light" hidden>{{ decision_mermaid_light }}</pre>
   <script id="dt-graph-data" type="application/json">{{ decision_graph_json|safe }}</script>
@@ -177,6 +187,7 @@ Content-Type: application/json
     <span class="pill" style="background:var(--info-bg);color:var(--info);">Widen · extend a rule</span>
     <span class="pill" style="background:var(--warn-bg);color:var(--warn);">Create · new rule</span>
     <span class="pill bad">Review · a human decides</span>
+    <span class="pill" style="background:rgba(59,130,246,.16);color:#5b9bf3;">Note · flag &amp; keep going</span>
   </div>
 </div>
 
@@ -501,7 +512,6 @@ Content-Type: application/json
     var darkSrc = el.textContent;
     var lightEl = document.getElementById('aa-flow-dt-light');
     var lightSrc = lightEl ? lightEl.textContent : darkSrc;   // theme styling is baked into each source
-    var f = 1;                                                // zoom factor; 1 = fit-to-width (original)
     function isLight(){ return document.documentElement.getAttribute('data-theme') === 'light'; }
 
     // --- collapsible tree: rebuild the Mermaid source from the engine's graph, filtered to `visible` ---
@@ -550,81 +560,152 @@ Content-Type: application/json
         g.style.cursor = (t && hiddenChildren(t).length) ? 'pointer' : '';
       });
     }
-    function applyZoom(){
-      var svg = el.querySelector('svg'); if (!svg) return;
-      // Mermaid renders with useMaxWidth -> it stamps a max-width on the SVG that DEFEATS CSS `zoom`
-      // (the box can't grow past the container). So scale by an EXPLICIT width instead: f=1 = fit-to-width
-      // (or the diagram's natural size if it's narrower), f>1 grows it and the .dtwrap (overflow:auto)
-      // scrolls. Height is derived from the viewBox so the aspect ratio is preserved.
+    // --- on-page gradient polish (the .mmd/.drawio/.dot downloads stay flat + portable) -----------
+    // Each node fill becomes a subtle top-lit gradient of its OWN colour (depth without changing the
+    // palette); the entry "start" node wears the portal's brand magenta→violet. Colours are read from
+    // the already-rendered shapes, so this auto-adapts to the dark/light theme + any palette change.
+    var SVGNS = "http://www.w3.org/2000/svg";
+    function _lighten(rgb, amt){
+      var m = (rgb || "").match(/\d+(\.\d+)?/g); if (!m || m.length < 3) return rgb;
+      function up(x){ x = +x; return Math.round(x + (255 - x) * amt); }
+      return "rgb(" + up(m[0]) + "," + up(m[1]) + "," + up(m[2]) + ")";
+    }
+    function _grad(defs, gid, c0, c1){
+      if (defs.querySelector("#" + gid)) return;
+      var lg = document.createElementNS(SVGNS, "linearGradient");
+      lg.setAttribute("id", gid); lg.setAttribute("x1", "0"); lg.setAttribute("y1", "0");
+      lg.setAttribute("x2", "0"); lg.setAttribute("y2", "1");
+      [["0", c0], ["1", c1]].forEach(function (p){
+        var s = document.createElementNS(SVGNS, "stop");
+        s.setAttribute("offset", p[0]); s.setAttribute("stop-color", p[1]); lg.appendChild(s);
+      });
+      defs.appendChild(lg);
+    }
+    function _outline(g){                  // the node's main shape (first direct-child rect/poly/path)
+      for (var i = 0; i < g.children.length; i++) {
+        if (/^(rect|polygon|path|circle|ellipse)$/i.test(g.children[i].tagName)) return g.children[i];
+      }
+      return null;
+    }
+    function paintGradients(svg){
+      var defs = svg.querySelector("defs");
+      if (!defs) { defs = document.createElementNS(SVGNS, "defs"); svg.insertBefore(defs, svg.firstChild); }
+      var cs = getComputedStyle(document.documentElement);
+      var acc = (cs.getPropertyValue("--accent") || "#ff3d9a").trim();
+      _grad(defs, "dtg-brand", acc, "#7b3ff2");
+      svg.querySelectorAll("g.node").forEach(function (g){
+        var shape = _outline(g); if (!shape) return;
+        // Mermaid's classDef sets `fill` with !important, so the override must be !important too (inline
+        // !important wins over a stylesheet !important).
+        if (/\bstart\b/.test(g.getAttribute("class") || "")) {
+          shape.style.setProperty("fill", "url(#dtg-brand)", "important"); return;
+        }
+        var fill = getComputedStyle(shape).fill;
+        if (!fill || fill === "none" || fill.indexOf("url(") === 0) return;
+        var gid = "dtg-" + fill.replace(/[^0-9]/g, "");
+        _grad(defs, gid, _lighten(fill, 0.18), fill);
+        shape.style.setProperty("fill", "url(#" + gid + ")", "important");
+      });
+    }
+
+    // --- canvas pan + zoom: an absolute transform on `el`, grab-drag to pan at ANY zoom ------------
+    var s = 1, tx = 0, ty = 0, fitS = 1, natW = 600, natH = 400, panMoved = false;
+    function vpW(){ return wrap.clientWidth; }
+    function vpH(){ return wrap.clientHeight; }
+    function measure(){
+      var svg = el.querySelector("svg"); if (!svg) return null;
       var vb = svg.viewBox && svg.viewBox.baseVal;
-      var natW = (vb && vb.width) ? vb.width : (svg.getBBox ? svg.getBBox().width : 600);
-      var ratio = (vb && vb.width) ? (vb.height / vb.width) : 0.6;
-      var avail = (((wrap && wrap.clientWidth) || el.clientWidth || 600) - 24);   // minus .dtwrap padding
-      var base = Math.min(natW, avail);                  // fit-to-width, but never upscale a small diagram
-      var w = Math.max(120, base * f);
-      svg.style.maxWidth = 'none';
-      svg.style.width = w + 'px';
-      svg.style.height = (w * ratio) + 'px';
-      // The <pre> wrapper must grow to the scaled width too, otherwise the SVG overflows it and gets
-      // CLIPPED instead of scrolled — so size `el` to match (centered when it's narrower than the box).
-      el.style.width = w + 'px';
-      el.style.margin = '0 auto';
-      var lbl = document.getElementById('dt-zreset'); if (lbl) lbl.textContent = Math.round(f * 100) + '%';
+      natW = (vb && vb.width) ? vb.width : (svg.getBBox ? svg.getBBox().width : 600);
+      natH = (vb && vb.height) ? vb.height : (svg.getBBox ? svg.getBBox().height : 400);
+      svg.removeAttribute("height"); svg.style.maxWidth = "none";
+      svg.style.width = natW + "px"; svg.style.height = natH + "px";
+      el.style.width = natW + "px"; el.style.height = natH + "px";
+      return svg;
     }
-    function render(){
-      el.removeAttribute('data-processed'); el.innerHTML = ''; el.textContent = activeSrc();
-      mermaid.initialize({ startOnLoad: false, securityLevel: 'loose' });   // theme + font baked into the source
-      try {
-        var p = mermaid.run({ nodes: [el] });
-        if (p && p.then) p.then(function (){ markStubs(); applyZoom(); });
-        else { markStubs(); applyZoom(); }
-      } catch (e) {}
+    function clampPan(){                    // free panning, but never let the diagram leave a 60px sliver
+      var cw = natW * s, ch = natH * s, M = 60;
+      tx = (cw <= vpW()) ? (vpW() - cw) / 2 : Math.min(M, Math.max(vpW() - cw - M, tx));
+      ty = (ch <= vpH()) ? (vpH() - ch) / 2 : Math.min(M, Math.max(vpH() - ch - M, ty));
     }
-    document.getElementById('dt-zin').addEventListener('click', function () { f = Math.min(3, +(f + 0.25).toFixed(2)); applyZoom(); });
-    document.getElementById('dt-zout').addEventListener('click', function () { f = Math.max(0.4, +(f - 0.25).toFixed(2)); applyZoom(); });
-    document.getElementById('dt-zreset').addEventListener('click', function () { f = 1; applyZoom(); });   // back to fit
+    function apply(){
+      el.style.transform = "translate(" + tx + "px," + ty + "px) scale(" + s + ")";
+      var lbl = document.getElementById("dt-zreset"); if (lbl) lbl.textContent = Math.round(s / fitS * 100) + "%";
+    }
+    function fit(){                         // scale to fit the viewport, then centre (top-align if too tall)
+      fitS = Math.max(0.12, Math.min(vpW() / natW, vpH() / natH, 1.5)); s = fitS;
+      tx = (vpW() - natW * s) / 2;
+      ty = (natH * s <= vpH()) ? (vpH() - natH * s) / 2 : 18;
+      apply();
+    }
+    function zoomTo(ns, cx, cy){            // zoom toward a viewport point (defaults to centre), keep it fixed
+      cx = (cx == null) ? vpW() / 2 : cx; cy = (cy == null) ? vpH() / 2 : cy;
+      ns = Math.max(fitS * 0.5, Math.min(fitS * 6, ns));
+      tx = cx - (cx - tx) * ns / s; ty = cy - (cy - ty) * ns / s; s = ns; clampPan(); apply();
+    }
+    function render(refit){
+      el.removeAttribute("data-processed"); el.innerHTML = ""; el.style.transform = ""; el.textContent = activeSrc();
+      mermaid.initialize({ startOnLoad: false, securityLevel: "loose" });   // theme + font baked into the source
+      // Defer measure + fit to the next frame so the SVG and the .dtwrap are fully laid out first —
+      // measuring mid-layout gave a wrong fit scale (the diagram came up at the wrong zoom after expand).
+      function after(){ requestAnimationFrame(function (){
+        var svg = measure(); if (svg) paintGradients(svg); markStubs();
+        if (refit) fit(); else { clampPan(); apply(); }
+      }); }
+      try { var p = mermaid.run({ nodes: [el] }); if (p && p.then) p.then(after); else after(); } catch (e) {}
+    }
+
+    document.getElementById("dt-zin").addEventListener("click", function () { zoomTo(s * 1.25); });
+    document.getElementById("dt-zout").addEventListener("click", function () { zoomTo(s * 0.8); });
+    document.getElementById("dt-zreset").addEventListener("click", function () { fit(); });
 
     if (GRAPH && GRAPH.nodes.length > visible.size) {        // there IS hidden detail -> show the controls + hint
-      var detail = document.getElementById('dt-detail'); if (detail) detail.hidden = false;
-      var hint = document.getElementById('dt-hint'); if (hint) hint.hidden = false;
-      el.addEventListener('click', function (ev){            // click a "＋ more" stub (or its node) -> next level
-        var g = ev.target.closest ? ev.target.closest('g.node') : null; if (!g) return;
+      var detail = document.getElementById("dt-detail"); if (detail) detail.hidden = false;
+      var hint = document.getElementById("dt-hint"); if (hint) hint.hidden = false;
+      el.addEventListener("click", function (ev){            // click a "＋ more" stub (or its node) -> next level
+        if (panMoved) return;                               // (a real pan already swallowed this click)
+        var g = ev.target.closest ? ev.target.closest("g.node") : null; if (!g) return;
         var id = expandTarget(g); if (!id) return;
         var hc = hiddenChildren(id); if (!hc.length) return;
-        hc.forEach(function (c){ visible.add(c); }); render();
+        hc.forEach(function (c){ visible.add(c); }); render(false);   // keep the user's pan/zoom on expand
       });
-      var eb = document.getElementById('dt-expand');
-      if (eb) eb.addEventListener('click', function (){ GRAPH.nodes.forEach(function (n){ visible.add(n.id); }); render(); });
-      var cb = document.getElementById('dt-collapse');
-      if (cb) cb.addEventListener('click', function (){ resetVisible(); render(); });
+      var eb = document.getElementById("dt-expand");
+      if (eb) eb.addEventListener("click", function (){ GRAPH.nodes.forEach(function (n){ visible.add(n.id); }); render(true); });
+      var cb = document.getElementById("dt-collapse");
+      if (cb) cb.addEventListener("click", function (){ resetVisible(); render(true); });
     }
-    // Drag-to-pan: grab the canvas and move a zoomed-in diagram any direction (the .dtwrap also keeps its
-    // native scrollbars + trackpad/shift-wheel). A real drag suppresses the click so it never expands a
-    // stub mid-pan.
+
+    // Grab-drag to pan (pointer events -> mouse + touch). A real drag suppresses the next click so it
+    // never accidentally expands a stub. Pinch / Ctrl-scroll zooms toward the cursor.
     (function (){
-      var down = false, sx = 0, sy = 0, sl = 0, st = 0, moved = false;
-      wrap.addEventListener('mousedown', function (e){
-        if (e.button !== 0) return;
-        down = true; moved = false; sx = e.clientX; sy = e.clientY; sl = wrap.scrollLeft; st = wrap.scrollTop;
-        wrap.classList.add('grabbing');
+      var down = false, sx = 0, sy = 0, stx = 0, sty = 0, pid = null;
+      wrap.addEventListener("pointerdown", function (e){
+        if (e.button && e.button !== 0) return;
+        down = true; panMoved = false; sx = e.clientX; sy = e.clientY; stx = tx; sty = ty; pid = e.pointerId;
+        try { wrap.setPointerCapture(pid); } catch (_) {}
+        wrap.classList.add("grabbing");
       });
-      window.addEventListener('mousemove', function (e){
+      wrap.addEventListener("pointermove", function (e){
         if (!down) return;
         var dx = e.clientX - sx, dy = e.clientY - sy;
-        if (Math.abs(dx) > 4 || Math.abs(dy) > 4) moved = true;
-        wrap.scrollLeft = sl - dx; wrap.scrollTop = st - dy;
+        if (Math.abs(dx) > 4 || Math.abs(dy) > 4) panMoved = true;
+        tx = stx + dx; ty = sty + dy; clampPan(); apply();
       });
-      window.addEventListener('mouseup', function (){ down = false; wrap.classList.remove('grabbing'); });
-      wrap.addEventListener('click', function (e){            // capture: swallow the click if we just panned
-        if (moved) { e.stopPropagation(); e.preventDefault(); moved = false; }
-      }, true);
-      wrap.addEventListener('wheel', function (e){            // shift+wheel -> horizontal scroll (convenience)
-        if (e.shiftKey && wrap.scrollWidth > wrap.clientWidth) { wrap.scrollLeft += e.deltaY; e.preventDefault(); }
+      function up(){ down = false; wrap.classList.remove("grabbing"); if (pid != null) { try { wrap.releasePointerCapture(pid); } catch (_) {} pid = null; } }
+      wrap.addEventListener("pointerup", up); wrap.addEventListener("pointercancel", up);
+      wrap.addEventListener("click", function (e){ if (panMoved) { e.stopPropagation(); e.preventDefault(); } }, true);
+      wrap.addEventListener("wheel", function (e){            // pinch (trackpad) / Ctrl+wheel -> zoom toward cursor
+        if (e.ctrlKey || e.metaKey) {
+          var r = wrap.getBoundingClientRect();
+          zoomTo(s * (e.deltaY < 0 ? 1.12 : 0.89), e.clientX - r.left, e.clientY - r.top);
+          e.preventDefault();
+        }
       }, { passive: false });
     })();
-    render();
+
+    render(true);
+    var rt; window.addEventListener("resize", function (){ clearTimeout(rt); rt = setTimeout(function (){ fit(); }, 140); });
     var t; new MutationObserver(function (m){
-      if (m.some(function (x){ return x.attributeName === 'data-theme'; })) { clearTimeout(t); t = setTimeout(render, 60); }
+      if (m.some(function (x){ return x.attributeName === "data-theme"; })) { clearTimeout(t); t = setTimeout(function (){ render(true); }, 60); }
     }).observe(document.documentElement, { attributes:true });
   })();
 </script>
