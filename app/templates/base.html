@@ -667,6 +667,7 @@
       var fm = document.getElementById('form-modal');
       if (!fm) return;
       var titleEl = fm.querySelector('.fm-title'), bodyEl = fm.querySelector('.fm-body');
+      var fmIsView = false;     // true while a read VIEW is open (its action links navigate, not "cancel")
       function close() { fm.hidden = true; bodyEl.innerHTML = ''; }
       function runScripts(root) {            // innerHTML doesn't execute <script>; re-create them so it does
         root.querySelectorAll('script').forEach(function (old) {
@@ -737,6 +738,7 @@
       function open(url, title, view) {
         titleEl.textContent = title || '';
         fm.classList.toggle('fm-wide', !!view);     // a read view needs more room than a form
+        fmIsView = !!view;
         bodyEl.innerHTML = '<p class="muted">Loading…</p>';
         fm.hidden = false;
         fetch(url, { headers: { 'X-Fragment': '1' } })
@@ -753,7 +755,10 @@
       document.addEventListener('click', function (e) {
         // Cancel closes the modal (a [data-fm-cancel] link, or any secondary button-link in the body —
         // e.g. a create page's "Cancel"). On the full page these just navigate, as a fallback.
-        var cancel = e.target.closest('[data-fm-cancel], #form-modal .fm-body a.btn.secondary, #form-modal .fm-body a.secondary');
+        // In a VIEW modal the body's secondary links are real actions (e.g. "Gaia config →") that must
+        // navigate, so the blanket secondary-as-cancel heuristic applies to FORM modals only.
+        var cancel = e.target.closest('[data-fm-cancel]')
+          || (fmIsView ? null : e.target.closest('#form-modal .fm-body a.btn.secondary, #form-modal .fm-body a.secondary'));
         // …but a secondary-styled link that is itself a modal trigger (e.g. a detail view's "Edit" button)
         // must OPEN, not be mistaken for Cancel.
         if (cancel && !cancel.hasAttribute('data-modal-form') && !cancel.hasAttribute('data-modal-view') && !fm.hidden) {

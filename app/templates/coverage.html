@@ -59,7 +59,6 @@
     <h1>Automation coverage <span class="pill">API · Terraform · Ansible</span></h1>
     <p class="ph-sub">Every object/command from the Check Point API, compared with the Terraform provider and the Ansible collection — generated from the API spec and bundled per version. Expand a row for its full <b>web_api JSON</b>, <b>mgmt_cli</b>, <b>Terraform</b> and <b>Ansible</b> example, with each field colour-coded by where it's supported.</p>
   </div>
-  <div class="ph-actions">{{ export_menu('coverage', 'api=' ~ api_type ~ '&version=' ~ version) }}</div>
 </div>
 
 <div class="cov-tabs">
@@ -76,6 +75,7 @@
   <span class="muted">{{ object_count }} objects</span>
   <span class="muted">vs Terraform <code>{{ tool_versions.get('terraform','') }}</code> · Ansible <code>{{ tool_versions.get('ansible_mgmt' if api_type=='management' else 'ansible_gaia','') }}</code></span>
   <button class="copybtn" id="cov-update" type="button">Check for updates ↻</button>
+  {{ export_menu('coverage', 'api=' ~ api_type ~ '&version=' ~ version) }}
   <input id="filter" type="text" placeholder="filter objects…" style="margin-left:auto; min-width:180px;">
 </div>
 {% set total_gap = groups | sum(attribute='incomplete') %}
