@@ -10,7 +10,6 @@
     <p class="ph-sub">Turn a ticket request — <code>source → destination : service</code> — into the minimal correct change on a layer: reuse a rule that already permits it, widen one that almost does, or create a least-privilege rule at the right position. Pick a management server to start. Approvals stay in your ticketing system; this is the technical apply.</p>
   </div>
   <div class="ph-actions">
-    {{ export_menu('access-servers') }}
     <a class="btn secondary" href="/management">Manage servers →</a>
   </div>
 </div>
@@ -24,7 +23,7 @@
 <div class="card" style="padding:6px 6px 2px;">
 <div class="tablewrap">
 <table data-paginate="10">
-  <thead><tr><th>Name</th>{% if 'address' in vis %}<th class="nowrap">Address</th>{% endif %}{% if 'domain' in vis %}<th class="nowrap">Domain</th>{% endif %}{% if 'secret' in vis %}<th class="nowrap">Secret</th>{% endif %}<th style="text-align:right; padding-top:6px; padding-bottom:6px;">{{ columns_menu('access-servers', cols, vis, '/access-automation', compact=true) }}</th></tr></thead>
+  <thead><tr><th>Name</th>{% if 'address' in vis %}<th class="nowrap">Address</th>{% endif %}{% if 'domain' in vis %}<th class="nowrap">Domain</th>{% endif %}{% if 'secret' in vis %}<th class="nowrap">Secret</th>{% endif %}<th style="text-align:right; padding-top:6px; padding-bottom:6px;"><span class="thead-tools">{{ export_menu('access-servers') }}{{ columns_menu('access-servers', cols, vis, '/access-automation', compact=true) }}</span></th></tr></thead>
   <tbody>
   {% for r in rows %}
     <tr>
