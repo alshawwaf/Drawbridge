@@ -219,3 +219,18 @@ def test_mcp_guide_generate_key_route(monkeypatch):
     r = TestClient(app).post("/mcp-guide/key")
     body = r.json()
     assert r.status_code == 200 and body["scope"] == "mcp" and body["key"].startswith("SECRET-")
+
+
+# --- /mcp must be reachable WITHOUT a 307 -> /mcp/ redirect (which can drop the Authorization header) ---
+def test_mcp_canonical_path_rewrites_bare_mcp():
+    from app.main import _MCPCanonicalPath
+    seen = {}
+    async def inner(scope, receive, send):
+        seen["path"] = scope.get("path")
+    mw = _MCPCanonicalPath(inner)
+    asyncio.run(mw({"type": "http", "path": "/mcp"}, None, None))
+    assert seen["path"] == "/mcp/"            # bare /mcp rewritten in-place -> no client redirect
+    asyncio.run(mw({"type": "http", "path": "/mcp/"}, None, None))
+    assert seen["path"] == "/mcp/"            # already-slashed left as-is
+    asyncio.run(mw({"type": "http", "path": "/settings"}, None, None))
+    assert seen["path"] == "/settings"        # unrelated paths untouched

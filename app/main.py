@@ -94,6 +94,22 @@ async def lifespan(app: FastAPI):
         close_pool()
 
 
+class _MCPCanonicalPath:
+    """Serve a bare ``/mcp`` WITHOUT the 307 → ``/mcp/`` redirect. The Streamable-HTTP endpoint is mounted
+    at ``/mcp`` with its handler at ``/`` (so it lives at ``/mcp/``); Starlette redirects the slash-less
+    ``/mcp`` to ``/mcp/``, and some MCP clients — or a TLS-terminating reverse proxy — drop the
+    ``Authorization`` header on that redirect, so the bearer arrives empty and the server answers 401. We
+    rewrite the EXACT path ``/mcp`` to ``/mcp/`` in-place (no client-visible redirect); everything else is
+    untouched, so both ``/mcp`` and ``/mcp/`` now work and keep the auth header."""
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") == "http" and scope.get("path") == "/mcp":
+            scope = dict(scope, path="/mcp/", raw_path=b"/mcp/")
+        await self.app(scope, receive, send)
+
+
 def create_app() -> FastAPI:
     settings = get_settings()
     app = FastAPI(title=settings.app_name, lifespan=lifespan)
@@ -109,6 +125,7 @@ def create_app() -> FastAPI:
     app.add_middleware(SessionMiddleware, secret_key=session_secret, same_site="lax",
                        https_only=settings.base_url.startswith("https"), max_age=14 * 24 * 3600)
     app.add_middleware(ActivityLogMiddleware)
+    app.add_middleware(_MCPCanonicalPath)   # /mcp served without the auth-dropping 307 -> /mcp/ redirect
 
     app.include_router(ui.router)
     app.include_router(feeds.router)

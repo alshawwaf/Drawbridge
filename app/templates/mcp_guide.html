@@ -87,8 +87,8 @@ focused on the access-automation engine.</p>
 
 <script>
   (function () {
-    var url = location.origin + '/mcp';
-    document.getElementById('mcp-url').textContent = url;
+    var url = location.origin + '/mcp/';   // trailing slash = the canonical endpoint; a bare /mcp would
+    document.getElementById('mcp-url').textContent = url;   // 307-redirect and some clients drop the auth header
     var tokEl = document.getElementById('mcp-tok'), snip = document.getElementById('mcp-snippet'),
         hint = document.getElementById('mcp-clienthint'), tabs = document.getElementById('mcp-tabs');
     var current = 'claude';
