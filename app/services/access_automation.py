@@ -46,9 +46,12 @@ named services are handled, while truly unparsable cells fall through to REVIEW.
 from __future__ import annotations
 
 import ipaddress
+import logging
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional
+
+logger = logging.getLogger("dcsim.access_automation")
 
 try:  # keep the engine import-safe outside the app runtime (offline smoke test)
     from .mgmt_api import (MgmtError, MgmtSession, _is_lock_error, cached_raw, invalidate_cache,
@@ -2123,6 +2126,11 @@ def preview(server, secret, req: AccessRequest, layer: str, *, package: Optional
             return {"ok": True, **out, "cached": cached, "trace": s.trace, **res}
     except MgmtError as exc:
         return {"ok": False, "error": str(exc)}
+    except Exception as exc:  # noqa: BLE001 — never let a non-MgmtError (connection/TLS reset, a degraded
+        # SDK import leaving read_session=None, an engine bug) propagate to an API/MCP/webhook caller as an
+        # opaque "Internal error". Log the stack server-side; hand the caller the real one-line reason.
+        logger.exception("access preview failed (layer=%r)", layer)
+        return {"ok": False, "error": f"preview failed: {type(exc).__name__}: {exc}"}
 
 
 def execute(server, secret, req: AccessRequest, layer: str, *, package: Optional[str] = None,
@@ -2183,6 +2191,11 @@ def execute(server, secret, req: AccessRequest, layer: str, *, package: Optional
             out["lock_conflict"] = True
             out["sessions"] = locking_sessions(server, secret)
         return out
+    except Exception as exc:  # noqa: BLE001 — a non-MgmtError before/around the session (unreachable SMS,
+        # TLS/cert failure, MgmtSession=None from a degraded import, an engine bug) must come back as a
+        # structured error, not an uncaught exception the MCP/webhook layer renders as "Internal error".
+        logger.exception("access execute failed (layer=%r, publish=%s)", layer, publish)
+        return {"ok": False, "error": f"apply failed: {type(exc).__name__}: {exc}"}
 
 
 # --------------------------------------------------------------------------- #

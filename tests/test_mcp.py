@@ -59,6 +59,33 @@ def test_apply_dry_run_always_allowed(monkeypatch):
     assert out["ok"] is True and seen["publish"] is False
 
 
+# --- an unexpected (non-MgmtError) failure comes back STRUCTURED, never an opaque MCP "Internal error" ---
+def test_decide_access_wraps_unexpected_engine_error(monkeypatch):
+    _fake_server(monkeypatch)
+    monkeypatch.setattr(aa, "preview", lambda *a, **k: (_ for _ in ()).throw(ConnectionError("SMS unreachable")))
+    out = mcp_tools.decide_access(1, "10.1.2.222", "1.2.3.4", "Network", port="53", protocol="udp")
+    assert out["ok"] is False and "SMS unreachable" in out["error"]   # the real reason, not a raise
+
+
+def test_apply_access_wraps_unexpected_engine_error(monkeypatch):
+    monkeypatch.setattr(app_settings, "get", lambda k: False)
+    _fake_server(monkeypatch)
+    monkeypatch.setattr(aa, "execute", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+    out = mcp_tools.apply_access(1, "10.1.2.222", "1.2.3.4", "Network", port="53", protocol="udp")
+    assert out["ok"] is False and out["applied"] is False and "boom" in out["error"]
+
+
+def test_engine_preview_execute_wrap_non_mgmt_errors(monkeypatch):
+    # preview/execute must catch ANY exception (unreachable SMS, TLS reset, MgmtSession=None from a degraded
+    # import) and return {"ok": False, "error": <reason>} so no caller ever gets an opaque "Internal error".
+    monkeypatch.setattr(aa, "read_session", lambda *a, **k: (_ for _ in ()).throw(ConnectionError("refused")))
+    prev = aa.preview(object(), "s", object(), "Network")
+    assert prev["ok"] is False and "refused" in prev["error"]
+    monkeypatch.setattr(aa, "MgmtSession", None)             # the degraded-import / connect-failure case
+    ex = aa.execute(object(), "s", object(), "Network")
+    assert ex["ok"] is False and "apply failed" in ex["error"]
+
+
 # --- coverage_lookup (uses the bundled artifacts) -------------------------------------------------
 def test_coverage_lookup_object_and_list():
     detail = mcp_tools.coverage_lookup("management", "host")
