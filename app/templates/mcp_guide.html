@@ -83,6 +83,12 @@ focused on the access-automation engine.</p>
     <button type="button" data-v="community">Community node (List + Execute)</button>
   </div>
   <p class="mcp-note" id="mcp-sys-desc" style="margin:0 0 10px;"></p>
+  <label style="display:inline-flex;align-items:center;gap:8px;font-size:13px;font-weight:600;margin:0 0 10px;cursor:pointer;">
+    <input type="checkbox" id="mcp-sys-autopilot"> ⚡ Autopilot — one sentence applies <b>&amp; publishes</b> (lab demo)
+  </label>
+  <p class="mcp-note" id="mcp-sys-autohint" style="margin:-4px 0 10px;display:none;">Appends a standing authorization so the
+    agent completes the whole flow — resolve → decide → apply → <b>publish to live policy</b> — in one turn, no confirmation.
+    Pair with the <b>Autopilot</b> behavior profile and <b>Settings → MCP / agent → enable publish</b>. Lab/demo use.</p>
   <div class="mcp-sys-actions">
     <button type="button" class="copybtn" id="mcp-sys-toggle" aria-expanded="false">Show prompt</button>
     <button type="button" class="copybtn" id="mcp-sys-copy">Copy</button>
@@ -228,10 +234,16 @@ EXAMPLE call: Tool Name = decide_access ; Tool Parameters = {"server_id": 1, "so
       builtin: "For n8n's <b>built-in MCP Client Tool</b> (and Claude Desktop / Cursor / VS Code) — each Drawbridge tool is exposed to the agent directly, so it calls <code>list_management_servers</code>, <code>decide_access</code>, … by name.",
       community: "For the <b>community node</b> (nerding-io) <b>Execute Tool</b> wrapper: the model sets <b>Tool Name</b> to a real Drawbridge tool and <b>Tool Parameters</b> to that tool's arguments (NOT a literal “EXECUTE-TOOL”, and no <code>{toolName, arguments}</code> wrapper). ⚠️ This wrapper is easy to get wrong — if your n8n is ≥ 1.104, prefer the <b>Built-in MCP node</b> tab instead: it exposes each tool directly with typed arguments and avoids this whole class of error."
     };
+    var AUTOPILOT = `
+
+AUTOPILOT MODE (lab demo — standing authorization): complete the WHOLE flow in ONE turn without asking for confirmation — resolve, decide, apply, and PUBLISH the change to live policy. You still MUST resolve the server / layer / service first (never guess), report exactly what each tool returned, and on ok:false STOP and report it. Call apply_access with publish=true. (Requires the admin to have enabled MCP publish; if publish is refused, say so. Pair with the "Autopilot" behavior profile.)`;
     var sysVariant = 'builtin';
+    var autopilotEl = document.getElementById('mcp-sys-autopilot');
+    function currentPrompt() { return SYS[sysVariant] + (autopilotEl.checked ? AUTOPILOT : ''); }
     function renderSys() {
-      document.getElementById('mcp-sysprompt').textContent = SYS[sysVariant];
+      document.getElementById('mcp-sysprompt').textContent = currentPrompt();
       document.getElementById('mcp-sys-desc').innerHTML = SYS_DESC[sysVariant];
+      document.getElementById('mcp-sys-autohint').style.display = autopilotEl.checked ? '' : 'none';
     }
     var sysVarTabs = document.getElementById('mcp-sys-variant');
     sysVarTabs.addEventListener('click', function (e) {
@@ -240,8 +252,9 @@ EXAMPLE call: Tool Name = decide_access ; Tool Parameters = {"server_id": 1, "so
       sysVarTabs.querySelectorAll('button').forEach(function (x) { x.classList.toggle('active', x === b); });
       renderSys();
     });
+    autopilotEl.addEventListener('change', renderSys);
     renderSys();
-    document.getElementById('mcp-sys-copy').addEventListener('click', function () { copyText(this, SYS[sysVariant]); });
+    document.getElementById('mcp-sys-copy').addEventListener('click', function () { copyText(this, currentPrompt()); });
     var sysBox = document.getElementById('mcp-sys-box'), sysToggle = document.getElementById('mcp-sys-toggle');
     sysToggle.addEventListener('click', function () {
       var opening = sysBox.hasAttribute('hidden');

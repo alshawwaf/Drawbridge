@@ -2114,6 +2114,11 @@ _PROFILES: dict[str, dict] = {
     # unconditional and stay quiet (no advisory notes).
     "aggressive": dict(app_carveout=True, override_blocking_deny=True, prefer_widen=True,
                        emit_notes=False, ignore_conditions=True),
+    # AUTOPILOT — the lab-demo profile: maximally decisive (like Aggressive) but keeps the advisory notes ON
+    # so the agent can NARRATE what it did ("widened rule 2 above the Silent Drop…"). Pair it with the
+    # Autopilot agent prompt + MCP publish enabled for the one-sentence-does-everything-and-publishes demo.
+    "autopilot": dict(app_carveout=True, override_blocking_deny=True, prefer_widen=True,
+                      emit_notes=True, ignore_conditions=True),
 }
 
 
