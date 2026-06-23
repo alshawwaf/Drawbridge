@@ -66,7 +66,7 @@ class Settings(BaseSettings):
     # Optional BUILT-IN write-back: post the decision + rule UID to a ServiceNow incident's work notes
     # via the Table API. (Other vendors use the generic per-request `callback_url`, or just read the
     # synchronous response.) TLS verification is always on. NOTE: these are FALLBACKS — Settings →
-    # ServiceNow write-back (DB-backed, password encrypted at rest) takes precedence over the env vars.
+    # Ticket write-back (DB-backed, password encrypted at rest) takes precedence over the env vars.
     servicenow_instance: str = ""   # e.g. https://dev12345.service-now.com
     servicenow_user: str = ""
     servicenow_password: str = ""
