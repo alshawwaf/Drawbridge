@@ -1492,13 +1492,24 @@ def resolve_typed_object(session, kind: str, value: str) -> str:
 
 
 def typed_object_preview(session, kind: str, value: str) -> dict:
-    """Read-only: the object execute() would place for a typed endpoint + whether it already exists."""
+    """Read-only: the object execute() would place for a typed endpoint + whether it already exists. When
+    a REUSE-ONLY object (access-role / security-zone / updatable-object) is missing — it can't be created
+    from a request — attach the closest existing objects as ``candidates`` so the form can recommend a
+    'did you mean' (a creatable domain/dynamic-object just gets made, so it needs no suggestions)."""
     try:
         ex = lookup_typed_object(session, kind, value)
     except MgmtError:
         ex = None
+    creatable = _TYPED_OBJ[kind]["creatable"]
     name = ex or (("." + value.lstrip(".")) if kind == "domain" else value)
-    return {"name": name, "exists": bool(ex), "kind": kind, "creatable": _TYPED_OBJ[kind]["creatable"]}
+    out = {"name": name, "exists": bool(ex), "kind": kind, "creatable": creatable}
+    if not ex and not creatable:
+        try:
+            from . import typed_objects
+            out["candidates"] = typed_objects.suggest(session, kind, value)
+        except Exception:  # noqa: BLE001 — recommendations are best-effort; never break the preview
+            out["candidates"] = []
+    return out
 
 
 def _resolve_endpoint_object(session, req: "AccessRequest", side: str) -> str:

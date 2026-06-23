@@ -22,7 +22,7 @@ from ..db import get_db
 from ..models import ManagementServer, User
 from ..security import get_user_or_none
 from ..services import access_automation as aa
-from ..services import api_keys, app_settings, applications, decision_tree, mgmt_api, mgmt_creds, services, table_prefs, ticketing
+from ..services import api_keys, app_settings, applications, decision_tree, mgmt_api, mgmt_creds, services, table_prefs, ticketing, typed_objects
 from ..services.gaia_client import ensure_pinned
 from .ui import _pop_flash, templates
 
@@ -168,6 +168,25 @@ def aa_svc_search(sid: int, request: Request, q: str = "", kind: str = "", db: S
         return JSONResponse({"candidates": []})
     try:
         return JSONResponse({"candidates": services.search_server(ms, secret, q, kind=kind)})
+    except Exception:  # noqa: BLE001
+        return JSONResponse({"candidates": []})
+
+
+@router.get("/access-automation/{sid}/object-search")
+def aa_object_search(sid: int, request: Request, q: str = "", kind: str = "",
+                     db: Session = Depends(get_db)):
+    """Type-ahead: real Check Point TYPED source/destination objects (domain / access-role / dynamic-
+    object / updatable-object / security-zone) matching ``q`` for the chosen endpoint ``kind`` — the
+    recommendations behind the Source/Destination value field. Best-effort -> [] (never errors the UI)."""
+    user = get_user_or_none(request, db)
+    if user is None:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    ms = _owned(db, sid, user)
+    secret, err = _secret_or_error(db, ms)
+    if err:
+        return JSONResponse({"candidates": []})
+    try:
+        return JSONResponse({"candidates": typed_objects.search_server(ms, secret, kind, q)})
     except Exception:  # noqa: BLE001
         return JSONResponse({"candidates": []})
 
