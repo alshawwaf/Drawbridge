@@ -60,6 +60,15 @@
                 the env var.</span>
             {% endif %}
           </label>
+        {% elif s.kind == 'choice' %}
+          <label style="display:flex;align-items:center;gap:10px;font-weight:600;flex-wrap:wrap;">
+            <span style="min-width:260px;">{{ s.label }}</span>
+            <select name="{{ s.key }}" style="min-width:300px;padding:6px 10px;">
+              {% for val, lbl in s.choices %}
+              <option value="{{ val }}" {% if vals[s.key] == val %}selected{% endif %}>{{ lbl }}</option>
+              {% endfor %}
+            </select>
+          </label>
         {% elif s.kind == 'str' %}
           <label style="display:flex;align-items:center;gap:10px;font-weight:600;flex-wrap:wrap;">
             <span style="min-width:260px;">{{ s.label }}</span>
@@ -226,6 +235,35 @@
       });
     }, { rootMargin: '-72px 0px -55% 0px', threshold: 0 });
     secs.forEach(function (s) { io.observe(s); });
+  })();
+
+  // Access-automation behavior profile: when a named profile (not "Custom") is active, the individual
+  // knob toggles are managed BY the profile, so grey them as a visual cue. They stay ENABLED (so their
+  // saved values still submit and aren't clobbered) — switching the profile back to Custom re-applies them.
+  (function () {
+    var sel = document.querySelector('select[name="aa_profile"]'); if (!sel) return;
+    var KNOBS = ['aa_app_carveout', 'aa_override_blocking_deny', 'aa_prefer_widen', 'aa_emit_notes',
+                 'aa_ignore_conditions'];
+    var rows = KNOBS.map(function (k) {
+      var el = document.querySelector('[name="' + k + '"]');
+      return el ? el.closest('.setrow') : null;
+    }).filter(Boolean);
+    var hint = document.createElement('div');
+    hint.className = 'muted small';
+    hint.style.cssText = 'margin-top:6px;color:var(--accent);';
+    var selRow = sel.closest('.setrow'); if (selRow) selRow.appendChild(hint);
+    function sync() {
+      var custom = sel.value === 'custom';
+      hint.textContent = custom ? '' :
+        'The toggles below are set by the “' + sel.options[sel.selectedIndex].text.split(' —')[0] +
+        '” profile. Switch to Custom to edit them individually.';
+      rows.forEach(function (r) {
+        r.style.opacity = custom ? '' : '0.5';
+        r.style.pointerEvents = custom ? '' : 'none';
+      });
+    }
+    sel.addEventListener('change', sync);
+    sync();
   })();
 </script>
 {% endblock %}

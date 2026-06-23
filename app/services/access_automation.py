@@ -2098,11 +2098,35 @@ def _correlate(session, req: AccessRequest):
     return res, None, ""
 
 
+# Behavior PROFILES — one-click bundles of the decision knobs (data, not code; org policy forbids user
+# scripting). "balanced" == the recommended defaults; "custom" is NOT here (it falls through to the
+# individual toggles). Each must set every DecideOptions field. Surfaced as the `aa_profile` choice Setting.
+_PROFILES: dict[str, dict] = {
+    # Never touch existing rules and never override a deny: always create a fresh rule, place it BELOW any
+    # block (so it may be shadowed) and flag it. The least-disruptive, most hands-off posture.
+    "conservative": dict(app_carveout=False, override_blocking_deny=False, prefer_widen=False,
+                         emit_notes=True, ignore_conditions=False),
+    # The recommended engine defaults: reuse/widen where exact, carve apps + override denies by placement so
+    # the access actually works, conditions respected, advisories on.
+    "balanced": dict(app_carveout=True, override_blocking_deny=True, prefer_widen=True,
+                     emit_notes=True, ignore_conditions=False),
+    # Make it work in the fewest rules with the least friction: also treat conditional rules as
+    # unconditional and stay quiet (no advisory notes).
+    "aggressive": dict(app_carveout=True, override_blocking_deny=True, prefer_widen=True,
+                       emit_notes=False, ignore_conditions=True),
+}
+
+
 def _decide_options() -> "DecideOptions":
-    """Build the engine's decision/placement knobs from the admin's Settings (best-effort). Each Setting is
-    registered with the same default as DecideOptions, so an unconfigured portal decides exactly as before."""
+    """Build the engine's decision/placement knobs from the admin's Settings (best-effort). A named
+    ``aa_profile`` (Conservative/Balanced/Aggressive) bundles all knobs; ``custom`` (or anything unknown)
+    falls through to the individual ``aa_*`` toggles. Each Setting/profile carries the same default as
+    DecideOptions, so an unconfigured portal decides exactly as before."""
     try:
         from . import app_settings
+        profile = str(app_settings.get("aa_profile") or "custom")
+        if profile in _PROFILES:
+            return DecideOptions(**_PROFILES[profile])
         return DecideOptions(
             ignore_conditions=bool(app_settings.get("aa_ignore_conditions")),
             app_carveout=bool(app_settings.get("aa_app_carveout")),
