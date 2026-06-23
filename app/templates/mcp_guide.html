@@ -21,8 +21,12 @@
     overflow:auto; font-size:12.5px; line-height:1.5; margin:0; color:var(--text);
     font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
   .mcp-cfg pre.one { white-space:pre-wrap; word-break:break-all; }   /* single-line value wraps, never scrolls */
+  .mcp-keyhead { font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.03em; margin:0 0 4px; }
   .mcp-tokrow { display:flex; align-items:center; gap:10px; margin:0 0 10px; flex-wrap:wrap; }
-  .mcp-tokrow input { font-family:ui-monospace,monospace; min-width:340px; padding:7px 10px; }
+  /* override the global input{width:100%} so the field doesn't eat the row and wrap the buttons */
+  .mcp-tokrow input { font-family:ui-monospace,monospace; flex:0 1 360px; width:auto; min-width:0; padding:8px 10px; margin:0; }
+  .mcp-tokrow .copybtn { flex:0 0 auto; padding:8px 14px; }   /* button height matches the input; stays on the row */
+  .endpoint { font-size:12px; }
   #mcp-url { cursor:pointer; border-bottom:1px dashed var(--line); }   /* click to copy */
   .copybtn.copied { background:var(--accent); color:#fff; border-color:var(--accent); }
   .mcp-note { font-size:12.5px; color:var(--muted); line-height:1.55; max-width:900px; }
@@ -46,12 +50,12 @@ focused on the access-automation engine.</p>
 
 <div class="card">
   <h3 style="margin:0 0 6px;">Connect a client</h3>
+  <div class="mcp-keyhead">MCP API key</div>
   <div class="mcp-tokrow">
-    <label style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.03em;">MCP API key
-      <input id="mcp-tok" placeholder="generate a key, or paste an mcp-scope key" autocomplete="off"></label>
+    <input id="mcp-tok" placeholder="generate a key, or paste an mcp-scope key" autocomplete="off">
     <button type="button" class="copybtn" id="mcp-gen">⚡ Generate key</button>
     <button type="button" class="copybtn" id="mcp-tok-copy" title="Copy the key">Copy key</button>
-    <span class="muted" style="font-size:12px;">Endpoint: <code id="mcp-url" title="Click to copy"></code></span>
+    <span class="muted endpoint">Endpoint: <code id="mcp-url" title="Click to copy"></code></span>
   </div>
   <p class="mcp-note" id="mcp-genhint" style="margin:-2px 0 10px;"><b>Generate key</b> creates a revocable
     <b>mcp</b>-scope API key and drops it straight into the config below — it enables <code>/mcp</code> and is
@@ -65,6 +69,18 @@ focused on the access-automation engine.</p>
   </div>
   <div id="mcp-fields"></div>
   <p class="mcp-note" id="mcp-clienthint" style="margin-top:8px;"></p>
+</div>
+
+<div class="card">
+  <h3 style="margin:0 0 6px;">Suggested agent system prompt</h3>
+  <p class="mcp-note" style="margin:0 0 10px;">Paste this into your agent's <b>system message</b> (n8n AI Agent node, Claude project instructions, etc.).
+    It teaches the order — <b>pick the management server &amp; layer → decide (read-only) → apply on your OK</b> — so a smaller
+    model doesn't guess a server/layer or loop. Drawbridge can hold <b>several management servers</b>, so the agent always
+    resolves <i>which</i> one (and asks you when it's ambiguous).</p>
+  <div class="mcp-cfg">
+    <button type="button" class="copybtn" id="mcp-sys-copy" style="position:absolute;right:8px;top:8px;">Copy</button>
+    <pre id="mcp-sysprompt"></pre>
+  </div>
 </div>
 
 <div class="card">
@@ -158,6 +174,29 @@ focused on the access-automation engine.</p>
     document.getElementById('mcp-tok-copy').addEventListener('click', function () {
       var v = tokEl.value.trim(); if (!v) { flash(this, 'No key'); return; } copyText(this, v);
     });
+
+    var SYSPROMPT = `You are Drawbridge's access-automation agent. You turn a plain-language access request into the correct Check Point policy change by calling Drawbridge's MCP tools. Drawbridge does the policy reasoning — whether to widen an existing rule or create a new one in the right place; you orchestrate the tools and confirm with the user.
+
+Follow this order. One tool call per step. Never guess an ID or a name.
+1. list_management_servers — list the management servers (SMS / MDS domains) Drawbridge knows. Drawbridge may hold several. If the request doesn't say which one, ASK the user by name before continuing. Use the chosen server's id as server_id.
+2. list_access_layers(server_id) — list that server's policy layers. Use the EXACT layer name from the result (copy it verbatim; never assume "Network").
+3. If the request names a service or application in words (DNS, RDP, "Office 365"), call correlate_service or correlate_application to resolve it first. On "did you mean" candidates, pick the closest or ask.
+4. decide_access(server_id, source, destination, layer, port-or-service, protocol) — READ-ONLY. Report the outcome (no_op / widen / create) and the reason to the user. This changes nothing.
+5. Only after the user confirms, call apply_access with the same arguments. Keep publish=false (a dry-run: validated on the server, nothing committed) unless the user explicitly asks to publish to live policy.
+
+From each request extract: management server / environment (if named), source, destination, protocol (tcp/udp/icmp), and a port OR a service/application name.
+Examples:
+- "on HQ-SMS, allow 10.1.2.222 to reach 1.2.3.4 on udp 53 in the Network layer" -> server=HQ-SMS, layer=Network, source=10.1.2.222, destination=1.2.3.4, protocol=udp, port=53
+- "open RDP from 10.0.0.0/24 to 10.1.5.10" -> protocol=tcp, service=RDP (correlate first), source=10.0.0.0/24, destination=10.1.5.10; then ask which management server + layer
+- "can the web servers reach the internet on 443?" -> ask which server + layer, and which objects "web servers" means, before deciding
+
+Rules:
+- Never invent a result. Report exactly what each tool returns: ok, outcome, reason, and any error text verbatim. If a tool returns ok:false, show the error and stop — do not retry blindly or fabricate an id.
+- If you don't yet have a server_id or the exact layer name, get them from steps 1-2 before deciding.
+- Trust decide_access: it already decides widen-vs-create and the correct rule position — don't second-guess placement.
+- Be concise. Don't loop. If a step fails, surface the error and ask how to proceed.`;
+    document.getElementById('mcp-sysprompt').textContent = SYSPROMPT;
+    document.getElementById('mcp-sys-copy').addEventListener('click', function () { copyText(this, SYSPROMPT); });
     var genBtn = document.getElementById('mcp-gen'), genHint = document.getElementById('mcp-genhint');
     genBtn.addEventListener('click', function () {
       genBtn.disabled = true; var old = genBtn.textContent; genBtn.textContent = 'Generating…';
