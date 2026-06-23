@@ -279,8 +279,17 @@
         .then(function (res) {
           $('fetch-sub').style.display = 'none';
           var p = res.j, html = '';
-          if (!res.ok || p.error) { html += '<div class="err" style="margin-bottom:10px;">' + esc(p.error || 'Failed to read from gateway.') + '</div>'; }
-          html += renderLayers(p.layers);
+          if (!res.ok || p.error) {
+            // A failed read is NOT an empty result — show only the error (well-marked), never the
+            // contradictory "No dynamic layers reported". A fetch before anything is pushed is the
+            // common cause, so say so.
+            html += '<div class="err" style="margin-bottom:10px;"><b>Couldn’t read dynamic layers.</b> ' +
+              esc(p.error || 'Failed to read from gateway.') +
+              '<div style="margin-top:7px; font-weight:400; font-size:12.5px; opacity:.9;">If no dynamic ' +
+              'layer has been pushed to this gateway yet, this is expected — <b>Apply</b> one first, then fetch.</div></div>';
+          } else {
+            html += renderLayers(p.layers);
+          }
           html += renderTrace(p.trace);
           $('fetch-result').innerHTML = html; $('fetch-close').style.display = '';
         })
