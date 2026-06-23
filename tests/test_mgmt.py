@@ -449,10 +449,10 @@ def test_settings_spec_is_wellformed():
     keys = [s.key for s in app_settings.SETTINGS]
     assert len(keys) == len(set(keys))                       # unique keys
     for s in app_settings.SETTINGS:
-        assert s.kind in ("bool", "int", "str", "secret", "choice") and s.label and s.help
+        assert s.kind in ("bool", "int", "str", "secret", "choice", "text") and s.label and s.help
         if s.kind == "int":
             assert s.min <= s.default <= s.max               # default is in range
-        if s.kind == "str":
+        if s.kind in ("str", "text"):
             assert isinstance(s.default, str)                # may be "" (e.g. integration config)
         if s.kind == "secret":
             assert s.default == ""                           # secrets never carry a default value
