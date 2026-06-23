@@ -148,44 +148,52 @@ Content-Type: application/json
     .dtwrap.grabbing{cursor:grabbing;}
     .dtcanvas{position:absolute;top:0;left:0;transform-origin:0 0;will-change:transform;}
     .dtedges{position:absolute;top:0;left:0;overflow:visible;pointer-events:none;}
-    .dtedges>path{fill:none;stroke:var(--dt-edge);stroke-width:1.8px;}
+    .dtedges>path{fill:none;stroke:var(--dt-edge);stroke-width:2px;stroke-linecap:round;stroke-linejoin:round;}
     .dtedges marker path{fill:var(--dt-edge);stroke:none;}
-    .dtedge-label{position:absolute;transform:translate(-50%,-50%);font-size:11px;color:var(--muted);
-      background:var(--surface-2);padding:0 6px;border-radius:6px;white-space:nowrap;pointer-events:none;}
-    /* a node = a modern rounded card with a kind-coloured gradient + accent border + soft shadow */
-    .dtnode{position:absolute;box-sizing:border-box;border-radius:14px;padding:11px 15px;text-align:center;
-      border:1.5px solid var(--dt-bd);color:var(--dt-fg);background:linear-gradient(160deg,var(--dt-top),var(--dt-bot));
-      box-shadow:0 5px 16px rgba(0,0,0,.20), inset 0 1px 0 rgba(255,255,255,.07);
-      cursor:grab;user-select:none;transition:box-shadow .12s;}
-    .dtnode:hover{box-shadow:0 7px 22px rgba(0,0,0,.30), inset 0 1px 0 rgba(255,255,255,.08);}
-    .dtnode.dragging{cursor:grabbing;opacity:.92;}
+    .dtedge-label{position:absolute;transform:translate(-50%,-50%);font-size:11px;font-weight:600;
+      color:var(--dt-elabel-fg);background:var(--dt-elabel-bg);padding:1px 7px;border-radius:7px;
+      white-space:nowrap;pointer-events:none;backdrop-filter:blur(2px);box-shadow:0 1px 3px rgba(0,0,0,.16);}
+    /* a node = a modern "lit-glass" chip: a top sheen layered over a kind gradient, saturated border, depth shadow */
+    .dtnode{position:absolute;box-sizing:border-box;border-radius:13px;padding:11px 15px;text-align:center;
+      border:1.75px solid var(--dt-bd);color:var(--dt-fg);
+      background:linear-gradient(180deg, rgba(255,255,255,.16), rgba(255,255,255,0) 46%), linear-gradient(160deg,var(--dt-top),var(--dt-bot));
+      box-shadow:0 6px 20px -6px rgba(0,0,0,.60), 0 2px 6px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.14);
+      cursor:grab;user-select:none;transition:box-shadow .14s, transform .14s;}
+    .dtnode:hover{box-shadow:0 12px 30px -7px rgba(0,0,0,.66), 0 4px 10px rgba(0,0,0,.40), inset 0 1px 0 rgba(255,255,255,.18);transform:translateY(-1px);}
+    .dtnode.dragging{cursor:grabbing;opacity:.95;transform:none;}
     /* Save-layout button: glows when there are unsaved moves, flashes a confirmation on save */
     #dt-savelayout.dirty{border-color:var(--accent);color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset;}
     #dt-savelayout.saved{border-color:var(--ok,#16a34a);color:var(--ok,#16a34a);}
-    .dtn-title{font-weight:650;font-size:13.5px;line-height:1.3;}
-    .dtn-sub{font-size:11.5px;line-height:1.36;margin-top:4px;opacity:.93;}
+    .dtn-title{font-weight:650;font-size:13.5px;line-height:1.3;color:var(--dt-fg);}
+    .dtn-sub{font-size:11.5px;line-height:1.36;margin-top:4px;color:var(--dt-sub);}
     .dtn-more{position:absolute;right:-11px;bottom:-11px;min-width:28px;height:25px;padding:0 8px;border-radius:13px;
       border:1.5px solid var(--accent);background:var(--accent-grad);color:#fff;font:700 12px/1 inherit;
       cursor:pointer;box-shadow:0 3px 9px rgba(0,0,0,.34);}
     .dtn-more:hover{filter:brightness(1.12);}
-    /* kind palette — dark (default). Each card: top→bottom gradient, accent border, readable text. */
-    .dtwrap{--dt-edge:#566782;}
-    .dtnode{--dt-top:#26324a;--dt-bot:#1a2336;--dt-bd:#46587a;--dt-fg:#eaf1fb;}        /* process */
-    .k-start{--dt-top:var(--accent);--dt-bot:#7b3ff2;--dt-bd:var(--accent);--dt-fg:#fff;background:var(--accent-grad);}
-    .k-decision{--dt-top:#27375a;--dt-bot:#1a2740;--dt-bd:#516790;--dt-fg:#eaf1fb;}
-    .k-note{--dt-top:#1f4a7e;--dt-bot:#14294a;--dt-bd:#4f97f6;--dt-fg:#e3eefb;}
-    .k-noop{--dt-top:#16633f;--dt-bot:#0e3327;--dt-bd:#2bd06a;--dt-fg:#d6f7e4;}
-    .k-widen{--dt-top:#125a7c;--dt-bot:#0b2c44;--dt-bd:#45c4fb;--dt-fg:#d4eefb;}
-    .k-create{--dt-top:#7a5414;--dt-bot:#33270f;--dt-bd:#fcc83a;--dt-fg:#fce2b0;}
-    /* light theme overrides */
-    html[data-theme="light"] .dtwrap{--dt-edge:#94a3b8;}
-    html[data-theme="light"] .dtnode{--dt-top:#ffffff;--dt-bot:#eef2f9;--dt-bd:#cdd7e6;--dt-fg:#334155;
-      box-shadow:0 4px 12px rgba(2,6,23,.08), inset 0 1px 0 rgba(255,255,255,.6);}
-    html[data-theme="light"] .k-decision{--dt-top:#f3f7fc;--dt-bot:#e3ecf7;--dt-bd:#9aa8be;--dt-fg:#1e293b;}
-    html[data-theme="light"] .k-note{--dt-top:#eef5ff;--dt-bot:#dbeafe;--dt-bd:#3b82f6;--dt-fg:#1e497f;}
-    html[data-theme="light"] .k-noop{--dt-top:#e9f9ef;--dt-bot:#d2f0de;--dt-bd:#16a34a;--dt-fg:#0c6b34;}
-    html[data-theme="light"] .k-widen{--dt-top:#e9f5fe;--dt-bot:#d0e9fb;--dt-bd:#0ea5e9;--dt-fg:#0b6a96;}
-    html[data-theme="light"] .k-create{--dt-top:#fef6e0;--dt-bot:#fbeaca;--dt-bd:#f59e0b;--dt-fg:#92610a;}
+    /* kind palette — dark (default). Lit-glass chips: a brighter "lit" top stop drops to a deep base
+       (≈2.3–3.1× luminance drop) for real depth; a saturated same-hue border carries identity; text is
+       white with a tinted sub-line, WCAG-verified ≥4.89:1 against the lighter (top) stop. */
+    .dtwrap{--dt-edge:#64769a;--dt-elabel-bg:rgba(14,23,38,.80);--dt-elabel-fg:#cdd8ec;}
+    .dtnode{--dt-top:#3a4865;--dt-bot:#1d2740;--dt-bd:#6c7fa0;--dt-fg:#ffffff;--dt-sub:#d4dcec;}   /* process */
+    .k-start{--dt-top:#a8186a;--dt-bot:#481896;--dt-bd:#ff5aa8;--dt-fg:#ffffff;--dt-sub:#ffe1f0;}
+    .k-decision{--dt-top:#3647a8;--dt-bot:#1c2570;--dt-bd:#7184ee;--dt-fg:#ffffff;--dt-sub:#dde2ff;}
+    .k-note{--dt-top:#1f5aa0;--dt-bot:#123866;--dt-bd:#56a0f0;--dt-fg:#ffffff;--dt-sub:#d9e8fb;}
+    .k-noop{--dt-top:#0f6f44;--dt-bot:#0a4429;--dt-bd:#38d68a;--dt-fg:#ffffff;--dt-sub:#d4f3e4;}
+    .k-widen{--dt-top:#0a6a86;--dt-bot:#06465a;--dt-bd:#3fc2da;--dt-fg:#ffffff;--dt-sub:#dbf1f9;}
+    .k-create{--dt-top:#8a5a0e;--dt-bot:#553306;--dt-bd:#e8ad3c;--dt-fg:#ffffff;--dt-sub:#fbe7c6;}
+    /* light theme overrides — deliberate (not washed-out) gradients: a tinted top drops to a deeper same-hue
+       base, a stronger white top-sheen for the glass read, dark text per kind, WCAG-verified ≥5.39:1. The
+       per-kind rules set --dt-fg so the start node is dark text on light magenta (fixes the old white-on-light bug). */
+    html[data-theme="light"] .dtwrap{--dt-edge:#94a3b8;--dt-elabel-bg:rgba(255,255,255,.85);--dt-elabel-fg:#3d4a60;}
+    html[data-theme="light"] .dtnode{--dt-top:#e8edf6;--dt-bot:#c8d2e2;--dt-bd:#7385a0;--dt-fg:#1c2638;--dt-sub:#3a4860;
+      background:linear-gradient(180deg, rgba(255,255,255,.50), rgba(255,255,255,0) 46%), linear-gradient(160deg,var(--dt-top),var(--dt-bot));
+      box-shadow:0 6px 16px -7px rgba(31,45,71,.24), 0 2px 5px rgba(31,45,71,.12), inset 0 1px 0 rgba(255,255,255,.60);}
+    html[data-theme="light"] .k-start{--dt-top:#f6a6e6;--dt-bot:#cf57c6;--dt-bd:#b21f86;--dt-fg:#5a0d52;--dt-sub:#7a1568;}
+    html[data-theme="light"] .k-decision{--dt-top:#d2dcff;--dt-bot:#9aa8ee;--dt-bd:#4f5fcf;--dt-fg:#1a2060;--dt-sub:#2d3680;}
+    html[data-theme="light"] .k-note{--dt-top:#d4e6fb;--dt-bot:#9cc4ee;--dt-bd:#2f7ad1;--dt-fg:#103a66;--dt-sub:#1d4a82;}
+    html[data-theme="light"] .k-noop{--dt-top:#c8eed6;--dt-bot:#92d4ad;--dt-bd:#1c9a64;--dt-fg:#0b4428;--dt-sub:#115f38;}
+    html[data-theme="light"] .k-widen{--dt-top:#c6ecf6;--dt-bot:#8cd2e4;--dt-bd:#1391b5;--dt-fg:#0a4655;--dt-sub:#0d5e74;}
+    html[data-theme="light"] .k-create{--dt-top:#fbe7c2;--dt-bot:#f0c468;--dt-bd:#c88812;--dt-fg:#5e3606;--dt-sub:#7c4a0c;}
   </style>
   <div class="dtbar">
     <span class="dtzoom" role="group" aria-label="Diagram zoom">
