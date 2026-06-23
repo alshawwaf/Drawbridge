@@ -16,17 +16,44 @@ from ..models import ManagementServer
 logger = logging.getLogger("dcsim.mcp_tools")
 
 
-def _server_secret(db, server_id: int):
-    """(ManagementServer, secret) for ``server_id`` or a ValueError the caller turns into {"error": …}."""
-    from . import mgmt_creds
-    ms = db.get(ManagementServer, int(server_id))
+def _resolve_server(db, server_ref):
+    """Find a ManagementServer by numeric id OR by name / host / domain (case-insensitive), so an agent can
+    pass what the USER said ("HQ-Management", a hostname) — not only the numeric id (the portal's server name
+    rarely matches the user's words). On no match, raise a ValueError that LISTS the available servers, so the
+    error itself tells the agent/user what to pick."""
+    ms = sid = None
+    if isinstance(server_ref, int) and not isinstance(server_ref, bool):
+        sid = server_ref
+    elif isinstance(server_ref, str) and server_ref.strip().isdigit():
+        sid = int(server_ref.strip())
+    if sid is not None:
+        ms = db.get(ManagementServer, sid)
+    if ms is None and isinstance(server_ref, str) and server_ref.strip():
+        ref = server_ref.strip().lower()
+        rows = db.query(ManagementServer).all()
+        ms = next((m for m in rows
+                   if ref in ((m.name or "").lower(), (m.host or "").lower(), (m.domain or "").lower())), None)
+        if ms is None:                                  # fall back to a UNIQUE partial match on name/host
+            hits = [m for m in rows if ref in (m.name or "").lower() or ref in (m.host or "").lower()]
+            ms = hits[0] if len(hits) == 1 else None
     if ms is None:
-        raise ValueError(f"management server {server_id} not found")
+        avail = "; ".join(f"id {m.id} = {m.name} ({m.host})" for m in db.query(ManagementServer).all())
+        raise ValueError(f"could not resolve management server “{server_ref}”. "
+                         f"Available — {avail or 'none configured'}. "
+                         f"Call list_management_servers and ask the user which one to use.")
+    return ms
+
+
+def _server_secret(db, server_id):
+    """(ManagementServer, secret) for a server id OR name/host, or a ValueError the caller turns into
+    {"error": …}."""
+    from . import mgmt_creds
+    ms = _resolve_server(db, server_id)
     if not ms.username:
-        raise ValueError(f"management server {server_id} has no username configured")
+        raise ValueError(f"management server “{ms.name}” (id {ms.id}) has no username configured")
     secret = mgmt_creds.get_secret(db, ms)
     if not secret:
-        raise ValueError(f"management server {server_id} has no stored credential")
+        raise ValueError(f"management server “{ms.name}” (id {ms.id}) has no stored credential")
     try:
         from .gaia_client import ensure_pinned
         ensure_pinned(db, ms)            # trust-on-first-use before the TLS handshake
@@ -36,7 +63,9 @@ def _server_secret(db, server_id: int):
 
 
 def list_management_servers() -> dict:
-    """The Check Point management servers Drawbridge knows about (so an agent can pick a target)."""
+    """The Check Point management servers Drawbridge knows about — returns id, name, host, domain for each.
+    Call this first; when the request doesn't clearly name a server, PRESENT this list to the user and ask
+    which one. The other tools accept either the numeric id or the name/host as ``server_id``."""
     db = SessionLocal()
     try:
         rows = db.query(ManagementServer).all()
@@ -46,7 +75,7 @@ def list_management_servers() -> dict:
         db.close()
 
 
-def list_access_layers(server_id: int) -> dict:
+def list_access_layers(server_id: str) -> dict:
     """The access layers (policy rulebases) on a server, so the agent names a real layer."""
     db = SessionLocal()
     try:
@@ -59,7 +88,7 @@ def list_access_layers(server_id: int) -> dict:
     try:
         with read_session(ms, secret) as s:
             layers = [L.get("name") for L in s.list_access_layers() if L.get("name")]
-        return {"server_id": int(server_id), "layers": layers}
+        return {"server_id": ms.id, "server_name": ms.name, "layers": layers}
     except MgmtError as exc:
         return {"error": str(exc)}
 
@@ -73,7 +102,7 @@ def _build(source, destination, service, port, protocol, application,
                                    destination_kind=destination_kind or "ip")
 
 
-def decide_access(server_id: int, source: str, destination: str, layer: str, service: str | None = None,
+def decide_access(server_id: str, source: str, destination: str, layer: str, service: str | None = None,
                   port: str | None = None, protocol: str = "tcp", application: str | None = None,
                   package: str | None = None,
                   source_kind: str = "ip", destination_kind: str = "ip") -> dict:
@@ -84,7 +113,9 @@ def decide_access(server_id: int, source: str, destination: str, layer: str, ser
     Source/destination default to IP/CIDR/Any; set ``source_kind``/``destination_kind`` to a typed kind
     (domain / access-role / dynamic-object / updatable-object / security-zone) to reason in that identity
     space — e.g. does a host have access to the domain ``alshawwaf.ca`` (source_kind stays ip,
-    destination_kind=domain, destination='alshawwaf.ca')."""
+    destination_kind=domain, destination='alshawwaf.ca').
+
+    ``server_id`` is the numeric id OR the server name/host from list_management_servers."""
     db = SessionLocal()
     try:
         ms, secret = _server_secret(db, server_id)
@@ -105,13 +136,15 @@ def decide_access(server_id: int, source: str, destination: str, layer: str, ser
         return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}                          # MCP error
 
 
-def apply_access(server_id: int, source: str, destination: str, layer: str, service: str | None = None,
+def apply_access(server_id: str, source: str, destination: str, layer: str, service: str | None = None,
                  port: str | None = None, protocol: str = "tcp", application: str | None = None,
                  package: str | None = None, publish: bool = False, ticket_id: str = "",
                  source_kind: str = "ip", destination_kind: str = "ip") -> dict:
     """APPLY an access request. With publish=false it DRY-RUNS (applies inside a session, then discards —
     nothing is committed) — always allowed. With publish=true it COMMITS to the live server — allowed ONLY
-    when an admin has enabled the 'mcp_allow_publish' setting; otherwise it's refused (dry-run instead)."""
+    when an admin has enabled the 'mcp_allow_publish' setting; otherwise it's refused (dry-run instead).
+
+    ``server_id`` is the numeric id OR the server name/host from list_management_servers."""
     if publish:
         from . import app_settings
         try:
@@ -143,7 +176,7 @@ def apply_access(server_id: int, source: str, destination: str, layer: str, serv
         return {"ok": False, "applied": False, "published": False, "error": f"{type(exc).__name__}: {exc}"}
 
 
-def correlate_service(server_id: int, name: str) -> dict:
+def correlate_service(server_id: str, name: str) -> dict:
     """Map a service/protocol name (icmp, GRE, sctp, …) to the real Check Point service object, or return
     candidate matches ('did you mean'). Lets an agent fix a name before deciding."""
     db = SessionLocal()
@@ -162,7 +195,7 @@ def correlate_service(server_id: int, name: str) -> dict:
         return {"error": str(exc)}
 
 
-def correlate_application(server_id: int, name: str) -> dict:
+def correlate_application(server_id: str, name: str) -> dict:
     """Map an application/site name (Facebook, …) to the real Check Point application-site object, or
     return candidates."""
     db = SessionLocal()
@@ -181,7 +214,7 @@ def correlate_application(server_id: int, name: str) -> dict:
         return {"error": str(exc)}
 
 
-def _load_layer_rules(server_id: int, layer: str):
+def _load_layer_rules(server_id: str, layer: str):
     db = SessionLocal()
     try:
         ms, secret = _server_secret(db, server_id)
@@ -194,7 +227,7 @@ def _load_layer_rules(server_id: int, layer: str):
     return rules
 
 
-def summarize_layer(server_id: int, layer: str) -> dict:
+def summarize_layer(server_id: str, layer: str) -> dict:
     """A high-level overview of an access layer (read-only): rule counts, Accept/Drop split, how many
     rules are Any on source/destination/service, inline layers, whether a cleanup drop exists."""
     try:
@@ -202,10 +235,10 @@ def summarize_layer(server_id: int, layer: str) -> dict:
     except Exception as exc:  # noqa: BLE001
         return {"error": str(exc)}
     from . import access_automation as aa
-    return {"server_id": int(server_id), "layer": layer, "summary": aa.summarize_rules(rules)}
+    return {"server_id": server_id, "layer": layer, "summary": aa.summarize_rules(rules)}
 
 
-def analyze_policy(server_id: int, layer: str) -> dict:
+def analyze_policy(server_id: str, layer: str) -> dict:
     """Read-only policy INSIGHTS for an access layer: the summary, plus rules that can never match
     (shadowed by an earlier broader Accept/Drop) and overly-permissive Accept rules (Any on a whole
     dimension) — to help tighten the policy. Provably-conservative: only flags what it can prove."""
@@ -214,7 +247,7 @@ def analyze_policy(server_id: int, layer: str) -> dict:
     except Exception as exc:  # noqa: BLE001
         return {"error": str(exc)}
     from . import access_automation as aa
-    return {"server_id": int(server_id), "layer": layer,
+    return {"server_id": server_id, "layer": layer,
             "summary": aa.summarize_rules(rules),
             "shadowed_rules": aa.find_shadowed(rules),
             "overly_permissive": aa.find_permissive(rules)}
