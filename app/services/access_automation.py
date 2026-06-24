@@ -1605,11 +1605,12 @@ def decide_removal(req: AccessRequest, rules: list[ParsedRule], options: "Decide
         interferes = not (_provably_disjoint(rel_src, src_unknown or src_approx)
                           or _provably_disjoint(rel_dst, dst_unknown or dst_approx)
                           or _provably_disjoint(rel_svc, r.svc_unknown or svc_indeterminate))
+        # GOLDEN RULE: a DYNAMIC layer (sk182252) is managed out-of-band (Gaia pushes its content straight to
+        # the GW) — invisible to us, so it is SKIPPED from matching. Look PAST it for the real, management-
+        # visible rule that grants the flow rather than bailing to REVIEW. (The DISABLE-vs-DENY safety for a
+        # dynamic layer sitting BELOW the grant is kept in _still_granted_below — there we prefer an explicit
+        # Drop-above over a reversible-looking disable that would leave the divert reachable.)
         if r.dynamic_layer:
-            if interferes:
-                return RemovalDecision(RemovalOutcome.REVIEW,
-                                       f"rule {r.number} ({r.name}) applies a Dynamic Layer (sk182252) managed "
-                                       f"out-of-band — remove this access there, not here")
             continue
         if not interferes:
             continue
