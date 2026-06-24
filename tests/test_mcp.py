@@ -121,14 +121,26 @@ def test_revert_change_marks_reverted_then_refuses_again(monkeypatch, cdb):
     monkeypatch.setattr(mcp_tools, "_server_secret",
                         lambda db, sid: (types.SimpleNamespace(id=int(sid), host="h"), "secret"))
     seen = {}
-    monkeypatch.setattr(aa, "revert_execute", lambda srv, sec, ops, publish=False:
-                        seen.update(ops=ops, publish=publish) or {"ok": True, "reverted": publish})
+    monkeypatch.setattr(aa, "revert_execute", lambda srv, sec, ops, publish=False, disable_added_rules=False:
+                        seen.update(ops=ops, publish=publish, disable=disable_added_rules) or {"ok": True, "reverted": publish})
     cid = _seed_change(cdb)
     out = mcp_tools.revert_change(cid, publish=True)
     assert out["ok"] and out["reverted"] is True and out["change_id"] == cid
-    assert seen["ops"] == [{"op": "delete-access-rule", "uid": "u9", "layer": "Network"}]
+    assert seen["ops"] == [{"op": "delete-access-rule", "uid": "u9", "layer": "Network"}] and seen["disable"] is False
     again = mcp_tools.revert_change(cid, publish=True)           # idempotent guard
     assert again["ok"] is False and "already" in again["error"]
+
+
+def test_revert_change_disable_mode_passthrough(monkeypatch, cdb):
+    monkeypatch.setattr(app_settings, "get", lambda k: True if k == "mcp_allow_publish" else None)
+    monkeypatch.setattr(mcp_tools, "_server_secret",
+                        lambda db, sid: (types.SimpleNamespace(id=int(sid), host="h"), "secret"))
+    seen = {}
+    monkeypatch.setattr(aa, "revert_execute", lambda srv, sec, ops, publish=False, disable_added_rules=False:
+                        seen.update(disable=disable_added_rules) or
+                        {"ok": True, "reverted": publish, "mode": "disable" if disable_added_rules else "delete"})
+    out = mcp_tools.revert_change(_seed_change(cdb), publish=True, disable_instead_of_delete=True)
+    assert out["ok"] and seen["disable"] is True and out["mode"] == "disable"
 
 
 def test_revert_change_unknown_id(cdb):

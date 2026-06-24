@@ -282,6 +282,7 @@ def aa_apply(sid: int, body: AccessReqBody, request: Request, db: Session = Depe
 
 class RevertBody(BaseModel):
     publish: bool = True
+    disable: bool = False     # undo an added-rule change by DISABLING the rule instead of deleting it
 
 
 def _change_row(r) -> dict:
@@ -323,7 +324,8 @@ def aa_revert(sid: int, cid: int, body: RevertBody, request: Request, db: Sessio
         return JSONResponse({"error": "This change was already rolled back."}, status_code=400)
     if not change.inverse_json:
         return JSONResponse({"error": "This change has no recorded inverse to roll back."}, status_code=400)
-    result = aa.revert_execute(ms, secret, list(change.inverse_json or []), publish=body.publish)
+    result = aa.revert_execute(ms, secret, list(change.inverse_json or []), publish=body.publish,
+                               disable_added_rules=body.disable)
     if result.get("ok") and result.get("reverted"):
         change_log.mark_reverted(db, change, actor=f"user:{user.username}")
     elif not result.get("ok"):

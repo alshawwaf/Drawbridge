@@ -2614,19 +2614,38 @@ def _apply_inverse_op(session, op: dict) -> str:
     raise MgmtError(f"unsupported rollback op: {op!r}")
 
 
-def revert_execute(server, secret, inverse_ops: list[dict], *, publish: bool = False) -> dict:
+def _effective_revert_ops(inverse_ops: list[dict], disable_added_rules: bool) -> list[dict]:
+    """Resolve the delete-vs-disable choice for an added-rule rollback. Check Point lets a rule be disabled
+    rather than deleted, which is the gentler, reversible, auditable undo (the rule stays in the rulebase,
+    greyed out, easy to re-enable). When ``disable_added_rules`` is set, every ``delete-access-rule`` op is
+    rewritten to disable that rule instead; all other ops (re-enable, remove-from-cell) are unaffected."""
+    if not disable_added_rules:
+        return inverse_ops
+    out = []
+    for op in inverse_ops:
+        if op.get("op") == "delete-access-rule" and op.get("uid") and op.get("layer"):
+            out.append({"op": "set-access-rule", "uid": op["uid"], "layer": op["layer"], "enabled": False})
+        else:
+            out.append(op)
+    return out
+
+
+def revert_execute(server, secret, inverse_ops: list[dict], *, publish: bool = False,
+                   disable_added_rules: bool = False) -> dict:
     """Replay precomputed INVERSE op(s) (from a recorded AppliedChange) in ONE write session to roll back a
     published change — surgically (delete the rule we added / re-enable the rule we disabled / remove the
-    object we widened in), never a heavy full-DB revision rollback. publish commits; otherwise validate then
-    discard (zero commit). Discards on any error (mirrors execute()/remove_execute())."""
+    object we widened in), never a heavy full-DB revision rollback. ``disable_added_rules`` undoes an
+    added-rule change by DISABLING the rule instead of deleting it (reversible, leaves it visible). publish
+    commits; otherwise validate then discard (zero commit). Discards on any error (mirrors execute())."""
     if not inverse_ops:
         return {"ok": False, "error": "this change has no recorded inverse — it can't be rolled back here"}
+    ops = _effective_revert_ops(inverse_ops, disable_added_rules)
     try:
         with MgmtSession(server, secret, session_timeout=write_session_timeout(),
                          session_description="DC-Sim access automation (revert)") as s:
             ops_done: list[str] = []
             try:
-                for op in inverse_ops:
+                for op in ops:
                     ops_done.append(_apply_inverse_op(s, op))
                 if publish:
                     s.publish()
@@ -2648,7 +2667,7 @@ def revert_execute(server, secret, inverse_ops: list[dict], *, publish: bool = F
                     raise
                 return {"ok": False, "error": f"rollback failed: {exc}", "trace": s.trace}
             return {"ok": True, "reverted": publish, "validated": not publish, "ops": ops_done,
-                    "trace": s.trace}
+                    "mode": "disable" if disable_added_rules else "delete", "trace": s.trace}
     except MgmtError as exc:
         msg = str(exc)
         out = {"ok": False, "error": msg}

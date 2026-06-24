@@ -275,12 +275,14 @@ def list_changes(limit: int = 20) -> dict:
         db.close()
 
 
-def revert_change(change_id: int, publish: bool = False) -> dict:
+def revert_change(change_id: int, publish: bool = False, disable_instead_of_delete: bool = False) -> dict:
     """ROLL BACK a previously published change by its id (from list_changes): replays the recorded inverse —
     delete the rule that was added / re-enable the rule that was disabled / remove the object that was widened
-    in — surgically, without touching the rest of the policy. With publish=false it DRY-RUNS (validate then
-    discard); publish=true COMMITS, allowed ONLY when an admin has enabled 'mcp_allow_publish'. Refuses if the
-    change was already rolled back. Objects the change created are left in place (they may be referenced now)."""
+    in — surgically, without touching the rest of the policy. For a change that ADDED a rule (create / a Drop
+    from a removal), set disable_instead_of_delete=true to DISABLE that rule rather than delete it — the
+    gentler, reversible undo (the rule stays in the rulebase, greyed out). With publish=false it DRY-RUNS
+    (validate then discard); publish=true COMMITS, allowed ONLY when an admin has enabled 'mcp_allow_publish'.
+    Refuses if the change was already rolled back. Objects the change created are left in place."""
     if publish:
         from . import app_settings
         try:
@@ -307,7 +309,8 @@ def revert_change(change_id: int, publish: bool = False) -> dict:
             ms, secret = _server_secret(db, str(change.server_id))
         except ValueError as exc:
             return {"ok": False, "error": str(exc)}
-        result = aa.revert_execute(ms, secret, list(change.inverse_json or []), publish=publish)
+        result = aa.revert_execute(ms, secret, list(change.inverse_json or []), publish=publish,
+                                   disable_added_rules=disable_instead_of_delete)
         if result.get("ok") and result.get("reverted"):
             change_log.mark_reverted(db, change, actor="mcp")
         elif not result.get("ok"):

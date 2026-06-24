@@ -1877,6 +1877,21 @@ def test_revert_execute_no_inverse_is_an_error():
     assert res["ok"] is False and "inverse" in res["error"]
 
 
+def test_revert_execute_disable_mode_maps_delete_to_disable(monkeypatch):
+    # Check Point lets a rule be disabled instead of deleted -> the gentler, reversible undo. With
+    # disable_added_rules, a delete-access-rule inverse becomes set-access-rule enabled=false; the
+    # widen-remove (and re-enable) inverses are untouched.
+    calls = []
+    monkeypatch.setattr(aa, "MgmtSession", _fake_session_factory(calls))
+    ops = [{"op": "delete-access-rule", "uid": "u1", "layer": "L"},
+           {"op": "set-access-rule", "uid": "u2", "layer": "L", "field": "source", "remove": "h-x"}]
+    res = aa.revert_execute(object(), "secret", ops, publish=True, disable_added_rules=True)
+    assert res["ok"] and res["mode"] == "disable"
+    assert ("set-access-rule", {"uid": "u1", "layer": "L", "enabled": False}) in calls   # delete -> disable
+    assert not any(c == "delete-access-rule" for c, _ in calls)                          # never deleted
+    assert ("set-access-rule", {"uid": "u2", "layer": "L", "source": {"remove": "h-x"}}) in calls  # untouched
+
+
 # ===== services-group / named-service request must MATCH dereferenced rule cells (DNS-layer miss) =====
 def test_services_group_request_descends_into_matching_inline_layer():
     # a 'dns' services-group request, expanded by correlation to its member ports, matches a rule that
