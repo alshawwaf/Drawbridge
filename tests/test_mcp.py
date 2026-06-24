@@ -24,6 +24,17 @@ def test_decide_access_builds_request_and_previews(monkeypatch):
     assert seen["req"].service == "icmp" and seen["layer"] == "Network"
 
 
+def test_decide_access_signals_autopilot_from_profile(monkeypatch):
+    # The Autopilot behavior profile must surface in the tool result so a prompt-driven agent knows it may
+    # apply+publish in one turn. Any other profile (or read failure) -> autopilot False (agent confirms).
+    _fake_server(monkeypatch)
+    monkeypatch.setattr(aa, "preview", lambda *a, **k: {"ok": True, "outcome": "widen"})
+    monkeypatch.setattr(app_settings, "get", lambda k: "autopilot" if k == "aa_profile" else None)
+    assert mcp_tools.decide_access(1, "10.1.1.5", "Any", "Network", application="Facebook")["autopilot"] is True
+    monkeypatch.setattr(app_settings, "get", lambda k: "balanced" if k == "aa_profile" else None)
+    assert mcp_tools.decide_access(1, "10.1.1.5", "Any", "Network", application="Facebook")["autopilot"] is False
+
+
 def test_decide_access_bad_input_returns_error_not_raise(monkeypatch):
     _fake_server(monkeypatch)
     monkeypatch.setattr(aa, "preview", lambda *a, **k: {"ok": True})
