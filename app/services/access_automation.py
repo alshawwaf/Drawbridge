@@ -1498,7 +1498,7 @@ def _still_granted_below(req: AccessRequest, req_src, req_dst, req_svc,
     fully-covering resolved DROP denies it -> False. Reaching the end with neither -> the implicit cleanup
     denies it -> False. Partial drops and provably-disjoint rules are stepped over."""
     for r in rules_below:
-        if not r.enabled or r.dynamic_layer:
+        if not r.enabled:
             continue
         rel_src, src_unknown, src_approx = _dim_relation(req.src_kind, req.src_value, req_src, r, "source")
         rel_dst, dst_unknown, dst_approx = _dim_relation(req.dst_kind, req.dst_value, req_dst, r, "destination")
@@ -1509,7 +1509,12 @@ def _still_granted_below(req: AccessRequest, req_src, req_dst, req_svc,
         if (_provably_disjoint(rel_src, src_unknown or src_approx)
                 or _provably_disjoint(rel_dst, dst_unknown or dst_approx)
                 or _provably_disjoint(rel_svc, r.svc_unknown or svc_indeterminate)):
-            continue                                      # out of this request's path
+            continue                                      # out of this request's path (incl. a disjoint dyn layer)
+        # An interfering Dynamic Layer (sk182252, "Apply Layer") is managed out-of-band: its sub-rulebase is
+        # invisible to us (inline_rules is None) and MAY grant the flow once the exact ACCEPT above it is
+        # disabled. So it can't be proven harmless -> the flow could survive -> force the safe Drop-above.
+        if r.dynamic_layer:
+            return True
         if (r.inline_rules is not None or (r.conditional and not options.ignore_conditions)
                 or complex_eff or svc_indeterminate or not r.is_resolved_action):
             return True                                   # can't prove the flow is denied below -> assume it survives

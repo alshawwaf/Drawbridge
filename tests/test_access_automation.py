@@ -1834,6 +1834,29 @@ def test_decide_removal_exact_disables_despite_unrelated_accept_below():
     assert d.outcome is aa.RemovalOutcome.DISABLE and d.target_rule.uid == "rx"
 
 
+def test_decide_removal_disable_blocked_by_dynamic_layer_below_falls_back_to_deny():
+    # an exact-match ACCEPT, but a Dynamic Layer (sk182252 "Apply Layer") COVERING the request sits BELOW it.
+    # Disabling the ACCEPT would expose the dynamic layer, whose out-of-band sub-rulebase (invisible to us)
+    # MAY still grant the flow -> a silent UNDER-removal. The walk must fall back to the safe Drop-above.
+    exact = _rule("ex", 1, "Accept", _host("10.0.0.5"), _host("1.1.1.1"), _tcp(443))
+    dyn = _rule("dl", 2, "Accept", _net("10.0.0.0/24"), _host("1.1.1.1"), ServiceSet(any=True))
+    dyn.dynamic_layer = True
+    req = AccessRequest(["10.0.0.5/32"], ["1.1.1.1/32"], "tcp", "443")
+    d = aa.decide_removal(req, [exact, dyn, CLEANUP])
+    assert d.outcome is aa.RemovalOutcome.DENY and d.position == {"above": "ex"}
+
+
+def test_decide_removal_disables_past_a_disjoint_dynamic_layer_below():
+    # a Dynamic Layer below that is PROVABLY disjoint (different source/destination) can't re-grant THIS flow
+    # -> the exact ACCEPT is still the sole granter -> DISABLE stays safe (the dyn-layer guard must not over-fire).
+    exact = _rule("ex", 1, "Accept", _host("10.0.0.5"), _host("1.1.1.1"), _tcp(443))
+    dyn = _rule("dl", 2, "Accept", _net("192.168.0.0/24"), _host("2.2.2.2"), ServiceSet(any=True))
+    dyn.dynamic_layer = True
+    req = AccessRequest(["10.0.0.5/32"], ["1.1.1.1/32"], "tcp", "443")
+    d = aa.decide_removal(req, [exact, dyn, CLEANUP])
+    assert d.outcome is aa.RemovalOutcome.DISABLE and d.target_rule.uid == "ex"
+
+
 # ===== Rollback / undo: each applied change records its exact INVERSE op-list =====================
 def test_execute_create_records_inverse_delete(monkeypatch):
     calls = []
