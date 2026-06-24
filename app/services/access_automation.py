@@ -322,16 +322,9 @@ def _portset_overlaps(a: dict, b: dict) -> bool:
     return any(proto in b and _overlaps(b[proto], iv) for proto, iv in a.items())
 
 
-def svc_relation(req: ServiceSet, rule: ServiceSet) -> Relation:
-    """Relate a request's service to a rule's 'Services & Applications' cell. A request is either
-    port-based (by_proto) or application-based (apps); the two kinds are disjoint from each other.
+def _svc_single(req: ServiceSet, rule: ServiceSet) -> Relation:
+    """Relation for a SINGLE-kind request service (apps XOR named XOR ports) against the rule's cell.
     An opaque app container in the rule yields OVERLAP for a non-matching app request (uncertain)."""
-    if rule.any and req.any:
-        return Relation.EQUAL
-    if rule.any:
-        return Relation.SUBSET            # a specific request is a subset of Any
-    if req.any:
-        return Relation.SUPERSET
     if req.apps:                          # APPLICATION request, e.g. {"Facebook"}
         if req.apps & rule.apps:
             exact = rule.apps == req.apps and not rule.by_proto and not rule.named and not rule.opaque
@@ -358,6 +351,42 @@ def svc_relation(req: ServiceSet, rule: ServiceSet) -> Relation:
     if b_in_a:
         return Relation.SUPERSET
     return Relation.OVERLAP if _portset_overlaps(req.by_proto, rule.by_proto) else Relation.DISJOINT
+
+
+def svc_relation(req: ServiceSet, rule: ServiceSet) -> Relation:
+    """Relate a request's service to a rule's 'Services & Applications' cell. A request may be port-based
+    (by_proto), application-based (apps), or named (icmp/GRE/…) — and a real Check Point service-GROUP can
+    bundle MORE THAN ONE kind at once (e.g. tcp/443 + icmp, or an app-site + a port). The kinds are distinct
+    spaces, so a multi-kind request is covered ONLY when EVERY kind it spans is covered: we combine the
+    per-kind relations by MEET. This stops a rule that grants only one leg of a group from reading EQUAL/
+    SUBSET (a false NO_OP / under-grant) or DISJOINT (a false step-over). A single-kind request keeps the
+    exact prior behavior."""
+    if rule.any and req.any:
+        return Relation.EQUAL
+    if rule.any:
+        return Relation.SUBSET            # a specific request is a subset of Any
+    if req.any:
+        return Relation.SUPERSET
+    present = [k for k, v in (("apps", req.apps), ("named", req.named), ("ports", req.by_proto)) if v]
+    if len(present) <= 1:
+        return _svc_single(req, rule)
+    rels = []
+    for k in present:
+        leg = ServiceSet(apps=req.apps if k == "apps" else set(),
+                         named=req.named if k == "named" else set(),
+                         by_proto=req.by_proto if k == "ports" else {})
+        rels.append(_svc_single(leg, rule))
+    covered = (Relation.SUBSET, Relation.EQUAL)
+    if all(r in covered for r in rels):
+        rule_kinds = sum(1 for v in (rule.apps, rule.named, rule.by_proto, rule.opaque) if v)
+        # EQUAL only if every leg is exactly EQUAL AND the rule holds nothing beyond these kinds; otherwise
+        # the rule covers the request but is broader -> SUBSET (still a valid no-op, never an over-claim).
+        if all(r == Relation.EQUAL for r in rels) and rule_kinds == len(present):
+            return Relation.EQUAL
+        return Relation.SUBSET
+    if all(r == Relation.DISJOINT for r in rels):
+        return Relation.DISJOINT
+    return Relation.OVERLAP               # some legs covered, some not -> not a no-op, not a clean step-over
 
 
 def _typed_other(typed: TypedExtent, keep_field: str) -> bool:
@@ -2332,7 +2361,9 @@ def _scoped_profile(app_settings, server, layer) -> Optional[str]:
         srv_ok = sp in ("", "*") or sp == sname or (sid and sp == sid)
         lyr_ok = lp in ("", "*") or lp == lname
         if srv_ok and lyr_ok:
-            score = (2 if sp not in ("", "*") else 0) + (1 if lp not in ("", "*") else 0)
+            # Layer-specificity outranks server-specificity, matching the documented order
+            # exact(server+layer)=3 ▸ *:layer=2 ▸ server=1 ▸ *:*=0.
+            score = (1 if sp not in ("", "*") else 0) + (2 if lp not in ("", "*") else 0)
             if score > best_score:
                 best, best_score = prof, score
     return best
