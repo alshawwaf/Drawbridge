@@ -589,8 +589,11 @@ def _ports_to_iv(spec: str):
         part = part.strip()
         try:
             if "-" in part:
-                lo, hi = part.split("-", 1)
-                out.append((int(lo), int(hi)))
+                lo, hi = (int(x) for x in part.split("-", 1))
+                if lo > hi:
+                    continue   # inverted range (e.g. "443-1") is malformed -> drop it, never an interval that
+                    #            reads 'covered-by-everything / overlaps-nothing' (a false SUBSET/NO_OP)
+                out.append((lo, hi))
             elif part:
                 out.append((int(part), int(part)))
         except ValueError:
@@ -925,11 +928,13 @@ def _rule_may_bear_web_app(rule_svc: ServiceSet) -> bool:
     (Facebook, YouTube, Office365, …)? Those apps are identified over HTTP/HTTPS, so a rule scoped to ports
     that don't include 80/443 — NetBIOS, DHCP/bootp, SSH, SMTP, … — can NEVER match one (provably disjoint).
     Only a rule whose ports cover 80 or 443 (incl. a broad range that does) keeps the app-vs-L4 uncertainty
-    the carve-out / removal logic must respect. Checks every protocol leg (tcp 80/443, udp 443 for QUIC)."""
-    for ivs in (rule_svc.by_proto or {}).values():
-        if any(lo <= p <= hi for lo, hi in ivs for p in _WEB_APP_PORTS):
-            return True
-    return False
+    the carve-out / removal logic must respect. PROTOCOL-AWARE: web is TCP 80/443 (+ UDP 443 for QUIC); a
+    udp/80 or sctp/443 leg is NOT web-bearing, so it stays provably disjoint."""
+    by = rule_svc.by_proto or {}
+    tcp = by.get("tcp") or []
+    udp = by.get("udp") or []
+    return (any(lo <= p <= hi for lo, hi in tcp for p in (80, 443))
+            or any(lo <= 443 <= hi for lo, hi in udp))
 
 
 def _svc_indeterminate(req_svc: ServiceSet, rule_svc: ServiceSet) -> bool:
@@ -2086,6 +2091,19 @@ def build_preview(session, decision: Decision, req: AccessRequest, rules: list[P
     return out
 
 
+def _naming_ctx(req: AccessRequest, ticket_id: str, src_name: str, dst_name: str,
+                layer: str, action: str) -> dict:
+    """Template context for the customer rule naming / comment / tag conventions. IDENTICAL field set for an
+    Accept (apply) and a Drop (removal), so a customized template using {proto}/{port}/{src}/{destination}/…
+    renders the same on both surfaces (the removal ctx previously omitted proto/port/src and read truncated)."""
+    return {"ticket": (ticket_id or "").strip(), "app": req.application or "",
+            "service": req.service or req.application or
+                       (f"{(req.protocol or '').lower()}/{req.ports}" if req.ports else ""),
+            "source": src_name, "src": src_name, "dest": dst_name, "destination": dst_name,
+            "layer": layer, "action": action,
+            "proto": (req.protocol or "").lower(), "port": req.ports or ""}
+
+
 def _apply(session, decision: Decision, req: AccessRequest, layer: str,
            rules: list[ParsedRule], ticket_id: str) -> dict:
     out: dict = {"ops": []}
@@ -2127,12 +2145,7 @@ def _apply(session, decision: Decision, req: AccessRequest, layer: str,
     from . import naming
     # Customer naming/track/tag conventions (Settings → "Access automation"; data-driven templates). The
     # PLACEMENT (position) is NOT a convention — the engine computes it for first-match correctness.
-    nctx = {"ticket": (ticket_id or "").strip(), "app": req.application or "",
-            "service": req.service or req.application or
-                       (f"{(req.protocol or '').lower()}/{req.ports}" if req.ports else ""),
-            "source": src_name, "src": src_name, "dest": dst_name, "destination": dst_name,
-            "layer": target_layer, "action": "Accept",
-            "proto": (req.protocol or "").lower(), "port": req.ports or ""}
+    nctx = _naming_ctx(req, ticket_id, src_name, dst_name, target_layer, "Accept")
     payload = {
         "layer": target_layer,
         "position": _position_payload(decision.position or {}),
@@ -2538,6 +2551,12 @@ def _apply_removal(session, decision: RemovalDecision, req: AccessRequest, layer
     """Materialise a removal: DISABLE = turn the granting rule off; DENY = add a least-privilege Drop ABOVE
     it for exactly src->dst:svc. NO_OP / REVIEW write nothing (handled by the caller)."""
     out: dict = {"ops": []}
+    # DENY materializes one object per endpoint, so (like _apply) a multi-CIDR IP endpoint would write less
+    # than was reasoned — fail loud. build_request() always yields single-element lists; this guards a
+    # directly-built request. (DISABLE writes no object, but the guard is cheap and keeps the two symmetric.)
+    if (req.src_kind == "ip" and len(req.src_cidrs) != 1) or (req.dst_kind == "ip" and len(req.dst_cidrs) != 1):
+        raise MgmtError("multi-CIDR source/destination is not supported on remove — "
+                        "submit one request per source and destination CIDR")
     r = decision.target_rule
     if decision.outcome == RemovalOutcome.DISABLE:
         session.call("set-access-rule", {"uid": r.uid, "layer": layer, "enabled": False})  # VERIFY
@@ -2551,9 +2570,7 @@ def _apply_removal(session, decision: RemovalDecision, req: AccessRequest, layer
         dst_name = _resolve_endpoint_object(session, req, "destination")
         svc_name = _resolve_svc_object(session, req)
         from . import naming
-        ctx = {"ticket": (ticket_id or "").strip(), "app": req.application or "",
-               "service": req.service or req.application or "", "source": src_name, "dest": dst_name,
-               "layer": layer, "action": "Drop"}
+        ctx = _naming_ctx(req, ticket_id, src_name, dst_name, layer, "Drop")
         payload = {"layer": layer, "position": _position_payload(decision.position or {}),
                    "name": naming.rule_name(ticket_id, ctx), "source": src_name, "destination": dst_name,
                    "service": svc_name, "action": "Drop", "track": naming.rule_track(),
@@ -2732,8 +2749,13 @@ def revert_execute(server, secret, inverse_ops: list[dict], *, publish: bool = F
                 if isinstance(exc, MgmtError):
                     raise
                 return {"ok": False, "error": f"rollback failed: {exc}", "trace": s.trace}
+            # ``mode`` describes how an ADDED rule was undone — only meaningful when the inverse deletes a rule
+            # (create / deny revert). A widen-revert (remove object from a cell) or disable-revert (re-enable)
+            # has no rule deletion -> "edit", so it isn't mislabeled "disable"/"delete".
+            had_delete = any(op.get("op") == "delete-access-rule" for op in inverse_ops)
+            mode = ("disable" if disable_added_rules else "delete") if had_delete else "edit"
             return {"ok": True, "reverted": publish, "validated": not publish, "ops": ops_done,
-                    "mode": "disable" if disable_added_rules else "delete", "trace": s.trace}
+                    "mode": mode, "trace": s.trace}
     except MgmtError as exc:
         msg = str(exc)
         out = {"ok": False, "error": msg}

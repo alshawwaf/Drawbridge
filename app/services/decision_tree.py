@@ -66,6 +66,9 @@ NODES: list[Node] = [
          "process", 40, 200, 320, 104),
     Node("noteO", "Note & keep going", "anything we can’t fully resolve — an OPAQUE rule (updatable feed · negated / unparsable cell · non-Accept/Drop action), a CONDITIONAL rule (VPN / time / data / install-on), or a request that SPLITS across an inline layer — is flagged “review later”, NOT stopped. The walk continues; the new rule is placed BELOW it. A rule that provably CAN’T cover the request (e.g. a specific destination vs an Any request) is NOT flagged as a possible allow.",
          "note", 430, 196, 320, 132, option="aa_emit_notes"),
+    Node("review", "Needs review (rare)",
+         "the REQUEST itself can’t be turned into a concrete change — an empty / unparsable service, or a typed endpoint (domain / role / zone …) that names no object — so nothing is decided; fix the request and retry. Distinct from a POLICY rule we can’t fully resolve, which is noted & passed (never a stop).",
+         "review", 780, 40, 330, 120),
     Node("perm", "Already permitted?", "first reachable Accept covering all 3 columns, before any covering drop",
          "decision", 40, 400, 300, 68),
     Node("noop", "No-op", "already allowed — just attach the rule to the ticket", "noop", 430, 402, 250),
@@ -125,6 +128,7 @@ NODES: list[Node] = [
 
 EDGES: list[Edge] = [
     Edge("req", "resolve"),
+    Edge("resolve", "review", "request can’t be resolved"),
     Edge("resolve", "noteO", "opaque rule"), Edge("noteO", "perm", "continue"),
     Edge("resolve", "perm", "resolved"),
     Edge("perm", "noop", "yes"), Edge("perm", "deny", "no"),

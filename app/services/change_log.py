@@ -46,10 +46,11 @@ def snapshot_request(req) -> dict:
 def record(db: Session, *, server, result: dict, request: dict, layer: str,
            package: Optional[str] = None, ticket_id: str = "", actor: str = "") -> Optional[AppliedChange]:
     """Persist a PUBLISHED change so it can be rolled back. No-op (returns None) unless the change actually
-    committed and the engine handed back an inverse op-list — i.e. only real applies/removes are recorded,
-    never dry-runs, no-ops, or reviews. ``request`` is the plain request tuple (for display); ``result`` is
-    the engine's return dict (carries ``outcome``, ``inverse``, and the resolved object names)."""
-    if not (result.get("ok") and result.get("published") and result.get("inverse")):
+    COMMITTED something (published AND applied) — never dry-runs, no-ops, or reviews. A committed change with
+    NO inverse (rare: the SMS returned no uid for an added rule) is STILL recorded for audit, just flagged
+    non-revertable (empty inverse_json) rather than vanishing silently. ``request`` is the plain request tuple
+    (display); ``result`` is the engine's return dict (``outcome``, ``inverse``, resolved object names)."""
+    if not (result.get("ok") and result.get("published") and result.get("applied")):
         return None
     outcome = result.get("outcome", "")
     action = result.get("action", "apply")           # remove_execute stamps action="remove"; apply omits it

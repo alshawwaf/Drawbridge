@@ -111,7 +111,7 @@ def _seed_change(Session, reverted=False):
             s.commit()
         row = change_log.record(s, server=types.SimpleNamespace(id=1, name="HQ"), layer="Network",
                                 request={"source": "10.1.2.250", "destination": "Any", "application": "Facebook"},
-                                result={"ok": True, "published": True, "outcome": "create",
+                                result={"ok": True, "published": True, "applied": True, "outcome": "create",
                                         "inverse": [{"op": "delete-access-rule", "uid": "u9", "layer": "Network"}]})
         if reverted:
             change_log.mark_reverted(s, row, actor="user:x")
@@ -178,7 +178,7 @@ def test_revert_change_deleted_server_does_not_misroute(monkeypatch, cdb):
         s.commit()
         row = change_log.record(s, server=types.SimpleNamespace(id=5, name="OldSMS"), layer="Network",
                                 request={"source": "x", "destination": "Any"},
-                                result={"ok": True, "published": True, "outcome": "create",
+                                result={"ok": True, "published": True, "applied": True, "outcome": "create",
                                         "inverse": [{"op": "delete-access-rule", "uid": "u1", "layer": "Network"}]})
         cid = row.id
     out = mcp_tools.revert_change(cid, publish=True)
