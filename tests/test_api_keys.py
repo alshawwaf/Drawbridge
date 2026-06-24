@@ -97,6 +97,21 @@ def test_expiry_naive_datetime_is_handled(kdb):
     assert kdb.verify(k, "mcp") is False               # as_utc() coercion -> no TypeError, correctly expired
 
 
+def test_set_expiry_changes_authentication_immediately(kdb):
+    import datetime as dt
+    _, secret = kdb.generate("k", "mcp")                       # no expiry -> authenticates
+    assert kdb.verify(secret, "mcp") is True
+    kid = next(k.id for k in kdb.list_keys("mcp"))
+    past = dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=1)
+    assert kdb.set_expiry(kid, past) is True
+    assert kdb.verify(secret, "mcp") is False                  # now expired -> rejected (cache busted)
+    future = dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=10)
+    assert kdb.set_expiry(kid, future) is True
+    assert kdb.verify(secret, "mcp") is True                   # extended -> authenticates again
+    assert kdb.set_expiry(kid, None) is True and kdb.verify(secret, "mcp") is True   # 'never'
+    assert kdb.set_expiry(10_000_000, future) is False         # no such key
+
+
 def test_webhook_auth_header_is_redacted_in_activity_log():
     # a webhook key/token rides in X-DCSim-Token; it must never be logged in the clear
     from app.services import activity

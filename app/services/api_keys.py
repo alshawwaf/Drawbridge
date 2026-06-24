@@ -103,6 +103,23 @@ def revoke(key_id: int) -> bool:
     return True
 
 
+def set_expiry(key_id: int, expires_at) -> bool:
+    """Change a key's expiry (a tz-aware datetime, or None for 'never'). Returns True if a row was updated;
+    busts the verify cache so the new expiry takes effect immediately — a now-past date stops the key
+    authenticating, and extending or clearing it lets a previously-expired key authenticate again."""
+    db = SessionLocal()
+    try:
+        row = db.get(ApiKey, key_id)
+        if row is None:
+            return False
+        row.expires_at = expires_at
+        db.commit()
+    finally:
+        db.close()
+    _bust()
+    return True
+
+
 def _active(scope: str) -> list[tuple[int, str, object]]:
     """[(id, key_hash, expires_at)] for a scope, cached ~5s. The single chokepoint for verify()/
     any_active(), so it normalizes the scope (an unknown scope can't silently cache an empty list under a
