@@ -158,6 +158,36 @@ async def api_key_create(request: Request, db: Session = Depends(get_db)):
     return RedirectResponse("/settings#grp-api-keys", status_code=303)
 
 
+@router.post("/settings/api-keys/{key_id}/expiry")
+async def api_key_set_expiry(key_id: int, request: Request, db: Session = Depends(get_db)):
+    """Change an existing key's expiry. Explicit (no create-form 90-day default): a picked date wins, else
+    a chosen preset ('never' → no expiry); anything else is a no-op so an empty submit never changes it."""
+    user = get_user_or_none(request, db)
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+    form = await request.form()
+    raw_date = (form.get("expires_date") or "").strip()
+    preset = (form.get("expires") or "").strip()
+    if raw_date:
+        try:
+            expires_at = dt.datetime.strptime(raw_date, "%Y-%m-%d").replace(
+                hour=23, minute=59, second=59, tzinfo=dt.timezone.utc)
+        except ValueError:
+            _flash(request, "That date wasn’t valid — expiry left unchanged.")
+            return RedirectResponse("/settings#grp-api-keys", status_code=303)
+    elif preset == "never":
+        expires_at = None
+    elif preset.isdigit():
+        expires_at = dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=max(1, int(preset)))
+    else:
+        _flash(request, "Pick a date or a preset — expiry left unchanged.")
+        return RedirectResponse("/settings#grp-api-keys", status_code=303)
+    if api_keys.set_expiry(key_id, expires_at):
+        exp_txt = expires_at.strftime("%Y-%m-%d") if expires_at else "never"
+        _flash(request, f"API key expiry updated to {exp_txt}.")
+    return RedirectResponse("/settings#grp-api-keys", status_code=303)
+
+
 @router.post("/settings/api-keys/{key_id}/revoke")
 def api_key_revoke(key_id: int, request: Request, db: Session = Depends(get_db)):
     user = get_user_or_none(request, db)
