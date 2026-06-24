@@ -1170,7 +1170,13 @@ def _decide(req: AccessRequest, rules: list[ParsedRule], options: "DecideOptions
         # the divert). A provably-disjoint dynamic rule can't affect the request -> skipped entirely.
         if r.dynamic_layer:
             if interferes:
-                uncertain_deny = True
+                # A clean widen target already found ABOVE this divert grants the app by first-match BEFORE the
+                # divert is consulted — widening it is first-match-equivalent to a carve-out above the divert
+                # (it grants no scope the target's existing position didn't already imply), so prefer it over
+                # flooring the new rule below the divert (AW-13). Honors prefer_widen + the opaque-deny guard.
+                if options.prefer_widen and widen_target is not None and not uncertain_deny:
+                    return _widen_above_block(widen_target, widen_field, r)
+                uncertain_deny = True   # else the divert is a placement floor -> the new rule goes BELOW it
             continue
 
         # L7 (application) CARVE-OUT — the precise way to ACHIEVE an application allow-request that an
@@ -1548,18 +1554,18 @@ def _still_granted_below(req: AccessRequest, req_src, req_dst, req_svc,
         all_ip = req.src_kind == "ip" and req.dst_kind == "ip"
         complex_eff = bool(src_unknown or dst_unknown or r.svc_unknown or (all_ip and r.complex))
         svc_indeterminate = _svc_indeterminate(req_svc, r.svc)
-        # DISABLE-vs-DENY safety: only a PROVABLE re-grant below should block the clean disable. Judge
-        # disjointness on the RESOLVED extents (src_unknown / dst_unknown / r.svc_unknown) — NOT folding in
-        # the approx (gateway main-IP) or App-Control (app-vs-L4 ports) CAVEATS. Otherwise an unrelated rule
-        # — e.g. a CP-Updates accept "GW/SMS -> http/https" — looks like it might re-grant a Facebook app
-        # request (its gateway source is approx, its http/https could carry an app) and forces a needless
-        # Drop-above over simply disabling the one rule that grants it. A genuinely-unknown cell (negated /
-        # unresolvable, an opaque app container) is NOT resolved-disjoint, so it still falls through to the
-        # conservative "assume it survives" below.
+        # DISABLE-vs-DENY safety: only a PROVABLE re-grant below should block the clean disable. Judge the
+        # IP legs on their RESOLVED extents (src_unknown / dst_unknown) — NOT folding in the approx (gateway
+        # main-IP) CAVEAT — so an unrelated rule whose only "interference" is an approx source (e.g. a
+        # CP-Updates accept "GW/SMS -> http/https", source-disjoint from the host) is correctly stepped over
+        # and the one rule that grants is simply disabled. The SERVICE leg KEEPS svc_indeterminate: a same-
+        # src+dst rule on http/https (tcp 80/443) DOES re-grant a web APP request via App Control, so it must
+        # NOT be read as disjoint (that was a silent under-removal). A genuinely-unknown cell (negated /
+        # opaque) is never resolved-disjoint, so it still falls through to the conservative "survives" below.
         if (_provably_disjoint(rel_src, src_unknown)
                 or _provably_disjoint(rel_dst, dst_unknown)
-                or _provably_disjoint(rel_svc, r.svc_unknown)):
-            continue                                      # disjoint on the resolved extent -> not a re-granter
+                or _provably_disjoint(rel_svc, r.svc_unknown or svc_indeterminate)):
+            continue                                      # provably out of this request's path -> not a re-granter
         # An interfering Dynamic Layer (sk182252, "Apply Layer") is managed out-of-band: its sub-rulebase is
         # invisible to us (inline_rules is None) and MAY grant the flow once the exact ACCEPT above it is
         # disabled. So it can't be proven harmless -> the flow could survive -> force the safe Drop-above.
@@ -1610,8 +1616,15 @@ def decide_removal(req: AccessRequest, rules: list[ParsedRule], options: "Decide
         all_ip = req.src_kind == "ip" and req.dst_kind == "ip"
         complex_eff = bool(src_unknown or dst_unknown or r.svc_unknown or (all_ip and r.complex))
         svc_indeterminate = _svc_indeterminate(req_svc, r.svc)
-        interferes = not (_provably_disjoint(rel_src, src_unknown or src_approx)
-                          or _provably_disjoint(rel_dst, dst_unknown or dst_approx)
+        # In a REMOVAL the IP legs are judged on RESOLVED extents (no `or src_approx`/`or dst_approx`): an
+        # unrelated rule whose only link to the request is an approx (gateway main-IP) source/dest — e.g. a
+        # "CP Updates" accept GW/SMS -> http/https sitting ABOVE the real grant — is resolved-disjoint and must
+        # be STEPPED OVER so the walk reaches the rule that actually grants, not bail to REVIEW (was the
+        # reported failure; parity with _still_granted_below). The SERVICE leg keeps svc_indeterminate (an
+        # http/https rule on the SAME src+dst genuinely could carry an app). A truly-unresolvable cell still
+        # carries src_unknown/dst_unknown -> never resolved-disjoint -> still routes to REVIEW below.
+        interferes = not (_provably_disjoint(rel_src, src_unknown)
+                          or _provably_disjoint(rel_dst, dst_unknown)
                           or _provably_disjoint(rel_svc, r.svc_unknown or svc_indeterminate))
         # GOLDEN RULE: a DYNAMIC layer (sk182252) is managed out-of-band (Gaia pushes its content straight to
         # the GW) — invisible to us, so it is SKIPPED from matching. Look PAST it for the real, management-
