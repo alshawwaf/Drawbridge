@@ -2030,6 +2030,18 @@ def test_decide_removal_disable_not_chosen_when_conditional_drop_below_under_ign
     assert d.outcome is aa.RemovalOutcome.DENY and d.position == {"above": "ex"}
 
 
+def test_decide_removal_disable_blocked_by_opaque_rule_below_falls_back_to_deny():
+    # L10: pins the safety hinge — an exact ACCEPT with an UNRESOLVABLE rule (opaque service) in the path
+    # BELOW it. _still_granted_below can't prove the flow is denied past it, so the reversible DISABLE is
+    # NOT chosen -> the always-safe Drop-above (DENY).
+    exact = _rule("ex", 1, "Accept", _host("10.0.0.5"), _host("1.1.1.1"), _tcp(443))
+    opaque = _rule("op", 2, "Accept", _host("10.0.0.5"), _host("1.1.1.1"), ServiceSet(complex=True))
+    opaque.svc_unknown = True
+    req = AccessRequest(["10.0.0.5/32"], ["1.1.1.1/32"], "tcp", "443")
+    d = aa.decide_removal(req, [exact, opaque, CLEANUP])
+    assert d.outcome is aa.RemovalOutcome.DENY and d.position == {"above": "ex"}
+
+
 # ===== Rollback / undo: each applied change records its exact INVERSE op-list =====================
 def test_execute_create_records_inverse_delete(monkeypatch):
     calls = []

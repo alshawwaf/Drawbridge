@@ -6,12 +6,13 @@ import xml.etree.ElementTree as ET
 from app.services import decision_tree as dt
 from app.services.access_automation import Outcome
 
-# Every engine FLOW Outcome must map to a tree node KIND. The flow is reuse-or-create — it never stops for
-# a policy "review", so there is no review node. Outcome.REVIEW survives only as a defensive, non-flow
-# signal (an incomplete request, or an ambiguous application/service name handled around the walk), so it
-# is intentionally NOT drawn in the decision tree.
-_OUTCOME_KIND = {Outcome.NO_OP: "noop", Outcome.WIDEN: "widen", Outcome.CREATE: "create"}
-_NON_FLOW_OUTCOMES = {Outcome.REVIEW}
+# Every engine Outcome must map to a tree node KIND. The flow is reuse-or-create — it never stops for a
+# POLICY review (a rule it can't reason past is noted & passed). Outcome.REVIEW is the rare case where the
+# REQUEST ITSELF can't be resolved (empty/unparsable service, a typed endpoint naming no object); it IS
+# depicted as the "review" node so the diagram covers every outcome the engine can return.
+_OUTCOME_KIND = {Outcome.NO_OP: "noop", Outcome.WIDEN: "widen", Outcome.CREATE: "create",
+                 Outcome.REVIEW: "review"}
+_NON_FLOW_OUTCOMES: set = set()
 
 
 def test_option_bound_nodes_map_to_real_settings():
@@ -83,10 +84,8 @@ def test_every_engine_outcome_maps_to_a_tree_node_kind():
     kinds = {n.kind for n in dt.NODES}
     for outcome, kind in _OUTCOME_KIND.items():
         assert kind in kinds, f"no tree node represents Outcome.{outcome.name}"
-    # reverse: no orphan flow-outcome node kind left behind after an outcome is removed
-    assert (kinds & {"noop", "widen", "create"}) == set(_OUTCOME_KIND.values())
-    # the flow is reuse-or-create: there is NO policy "review" node
-    assert "review" not in kinds
+    # reverse: no orphan outcome node kind left behind after an outcome is removed
+    assert (kinds & {"noop", "widen", "create", "review"}) == set(_OUTCOME_KIND.values())
 
 
 def test_all_nodes_reachable_from_a_single_start():

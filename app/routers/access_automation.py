@@ -281,7 +281,7 @@ def aa_apply(sid: int, body: AccessReqBody, request: Request, db: Session = Depe
 
 
 class RevertBody(BaseModel):
-    publish: bool = True
+    publish: bool = False     # symmetric with apply: a bodyless/defaulted call DRY-RUNS (the UI sends true)
     disable: bool = False     # undo an added-rule change by DISABLING the rule instead of deleting it
 
 
