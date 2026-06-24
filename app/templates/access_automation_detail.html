@@ -144,8 +144,25 @@ Content-Type: application/json
 
 <div class="card">
   <h2 style="margin-top:0;">How it decides — behind the scenes</h2>
-  <p class="muted" style="margin-top:4px;">Every request runs the same first-match decision tree the market leaders use. The goal is always an actionable result — it identifies whether an existing rule can be reused, and otherwise creates one; it never stops to hand a <em>policy</em> question to a human (the rare exception is a request it can’t even resolve — an empty service, or a typed object that doesn’t exist — which it flags for you to fix and retry). It reuses a rule that already permits the traffic; widens a rule only when it matches the request exactly in the other two columns (so it never grants access nobody asked for); and otherwise creates a least-privilege rule — placing it <b>above a blocking deny</b> when one is in the path, so the requested access actually takes effect. A rule it <em>can’t fully resolve</em> (an updatable feed, an unresolvable cell, a conditional or inline-layer rule) no longer stops the request — it’s <b>noted as a “possible match — review later” and the walk continues</b> (the new rule is placed below it, so it can’t leap over a possible block). It compares each source/destination <b>by kind</b> — an IP/CIDR in address space, or a typed object (domain, access-role, dynamic, updatable, security-zone) in its own <b>identity</b> space — so a domain is matched against a rule’s domain object, never confused with an IP. Expand any node below for the detail, or download the whole tree as Mermaid / draw.io / Graphviz.</p>
+  <p class="muted" style="margin:4px 0 0;">Every request runs the same <b>first-match, top-down</b> decision tree the market leaders use — always aiming at an actionable result, never a hand-off to a human. The rules it follows, top to bottom:</p>
+  <ul class="aa-rules">
+    <li style="--c:var(--ok);"><b>Reuse first.</b> If a rule already permits the traffic, it’s a no-op — just attach it to the ticket.</li>
+    <li style="--c:var(--accent);"><b>Widen only on an exact match.</b> Extend an existing rule only when it already matches the request in the other two columns — so it never grants access nobody asked for.</li>
+    <li style="--c:var(--warn);"><b>Otherwise create least-privilege.</b> A fresh rule, placed <b>above a blocking deny</b> in the path so the requested access actually takes effect.</li>
+    <li style="--c:var(--text-2);"><b>Match by kind.</b> Each source / destination is compared in its own space — an IP / CIDR by address, or a typed object (domain, access-role, dynamic, updatable, security-zone) by identity — so a domain is matched against a domain object, never confused with an IP.</li>
+    <li style="--c:var(--info);"><b>Note, don’t stop.</b> A rule it <em>can’t fully resolve</em> (an updatable feed, an unresolvable cell, a conditional or inline-layer rule) is flagged “possible match — review later” and the walk continues; the new rule goes <b>below</b> it, so it can’t leap over a possible block.</li>
+    <li style="--c:var(--muted);"><b>Dynamic layers are out of scope.</b> A rule applying a dynamic layer (sk182252) is skipped entirely — its contents are managed out-of-band (Gaia pushes them straight to the gateway), so they’re not handled on the management side.</li>
+    <li style="--c:var(--danger);"><b>Only a broken request stops it.</b> The rare exception — if the request itself can’t be resolved (an empty service, or a typed object that doesn’t exist), it’s flagged for you to fix and retry.</li>
+  </ul>
+  <p class="muted" style="margin:12px 0 0;">Expand any node below for the full decision tree, or download it as Mermaid / draw.io / Graphviz.</p>
   <style>
+    .aa-rules{list-style:none; margin:12px 0 0; padding:0; display:grid; gap:8px;}
+    .aa-rules li{padding:9px 13px; background:var(--surface-2); border:1px solid var(--line);
+      border-left:3px solid var(--c); border-radius:var(--r); color:var(--muted);
+      font-size:13.5px; line-height:1.55;}
+    .aa-rules li b{color:var(--text);}              /* inline emphasis inside the description */
+    .aa-rules li b:first-child{color:var(--c);}     /* the lead-in title, in its outcome colour */
+    .aa-rules li em{font-style:italic; color:var(--text-2);}
     .dtbar{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin:4px 0 8px;}
     .dtzoom{display:inline-flex;align-items:center;gap:4px;}
     .dtzoom .copybtn{padding:5px 11px;}
