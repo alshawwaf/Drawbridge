@@ -94,6 +94,20 @@ def test_remove_access_carries_autopilot_signal(monkeypatch):
     assert out.get("autopilot") is True
 
 
+def test_autopilot_signal_is_scope_aware(monkeypatch):
+    # M2 + H1 interaction (re-checked after the precedence fix): the signal resolves the per-scope profile.
+    store = {}
+    monkeypatch.setattr(app_settings, "get", lambda k: store.get(k))
+    srv = types.SimpleNamespace(id=1, name="HQ")
+    # global conservative, but a *:DMZ override pins DMZ to autopilot -> True on DMZ, False elsewhere
+    store.update(aa_profile="conservative", aa_scope_overrides="*:DMZ = autopilot")
+    assert mcp_tools._autopilot(srv, "DMZ") is True
+    assert mcp_tools._autopilot(srv, "Network") is False
+    # global autopilot, but a server override guards HQ as conservative -> the signal is withheld there
+    store.update(aa_profile="autopilot", aa_scope_overrides="HQ = conservative")
+    assert mcp_tools._autopilot(srv, "AnyLayer") is False
+
+
 # --- list_changes / revert_change (rollback) ------------------------------------------------------
 @pytest.fixture()
 def cdb(monkeypatch):
