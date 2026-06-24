@@ -244,7 +244,9 @@ def _post_callback(ticket: TicketRequest, result: dict) -> dict:
     headers = {"Content-Type": "application/json"}
     if ticket.callback_token:
         headers["X-DCSim-Token"] = ticket.callback_token
-    payload = {"ticket_id": ticket.ticket_id, "applied": ticket.apply,
+    payload = {"ticket_id": ticket.ticket_id,
+               "applied": bool(result.get("applied")),   # what actually committed, not the request's intent
+               "published": bool(result.get("published")),
                "outcome": result.get("outcome"), "summary": summarize(result, ticket.ticket_id),
                "result": result}
     try:

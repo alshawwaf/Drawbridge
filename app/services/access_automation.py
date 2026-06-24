@@ -1545,6 +1545,9 @@ def _still_granted_below(req: AccessRequest, req_src, req_dst, req_svc,
         if r.dynamic_layer:
             return True
         if (r.inline_rules is not None or (r.conditional and not options.ignore_conditions)
+                or (r.conditional and r.is_drop)   # a conditional DROP only blocks UNDER its condition; in a
+                #                                    REMOVAL it must NEVER assert a full deny (which would mask a
+                #                                    re-granting ACCEPT below), even under ignore_conditions.
                 or complex_eff or svc_indeterminate or not r.is_resolved_action):
             return True                                   # can't prove the flow is denied below -> assume it survives
         if r.is_drop:
@@ -1600,6 +1603,9 @@ def decide_removal(req: AccessRequest, rules: list[ParsedRule], options: "Decide
         # an unresolved / inline / conditional / opaque rule sits in the path before any clean grant -> a
         # destructive change can't be reasoned past it safely.
         if (r.inline_rules is not None or (r.conditional and not options.ignore_conditions)
+                or (r.conditional and r.is_drop)   # a conditional DROP only blocks UNDER its condition; in a
+                #                                    REMOVAL it must NEVER assert a full deny (which would mask a
+                #                                    re-granting ACCEPT below), even under ignore_conditions.
                 or complex_eff or svc_indeterminate or not r.is_resolved_action):
             return RemovalDecision(RemovalOutcome.REVIEW,
                                    f"rule {r.number} ({r.name}) lies in the path but can't be fully resolved "

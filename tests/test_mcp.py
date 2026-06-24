@@ -83,6 +83,17 @@ def test_remove_access_publish_gate_and_delegates(monkeypatch):
     assert out["outcome"] == "deny" and seen["publish"] is False
 
 
+def test_remove_access_carries_autopilot_signal(monkeypatch):
+    # M6: the headline one-turn revoke-and-publish needs the autopilot flag on the REMOVE result too (the
+    # agent routes straight to remove_access). It must be scope-aware (here: global autopilot, no override).
+    _fake_server(monkeypatch)
+    monkeypatch.setattr(app_settings, "get", lambda k: "autopilot" if k == "aa_profile" else None)
+    monkeypatch.setattr(aa, "remove_execute",
+                        lambda *a, **k: {"ok": True, "outcome": "deny", "applied": True, "published": False})
+    out = mcp_tools.remove_access(1, "10.1.2.250", "Any", "Network", application="Facebook")
+    assert out.get("autopilot") is True
+
+
 # --- list_changes / revert_change (rollback) ------------------------------------------------------
 @pytest.fixture()
 def cdb(monkeypatch):

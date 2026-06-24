@@ -90,13 +90,29 @@ def get(db: Session, change_id: int) -> Optional[AppliedChange]:
     return db.get(AppliedChange, change_id)
 
 
+def _safe_commit(db: Session) -> bool:
+    """Commit best-effort — a bookkeeping write must NEVER turn an already-committed SMS revert into a
+    reported failure. Rolls back + logs on error; returns whether it stuck."""
+    try:
+        db.commit()
+        return True
+    except Exception:  # noqa: BLE001
+        import logging
+        logging.getLogger("dcsim.change_log").exception("change-log status write failed")
+        try:
+            db.rollback()
+        except Exception:  # noqa: BLE001
+            pass
+        return False
+
+
 def mark_reverted(db: Session, change: AppliedChange, actor: str = "") -> None:
     change.reverted_at = dt.datetime.now(dt.timezone.utc)
     change.reverted_by = actor or ""
     change.revert_error = ""
-    db.commit()
+    _safe_commit(db)
 
 
 def mark_revert_failed(db: Session, change: AppliedChange, error: str) -> None:
     change.revert_error = (error or "")[:2000]
-    db.commit()
+    _safe_commit(db)

@@ -1007,6 +1007,94 @@ def test_webhook_server_allowlist_parsing(monkeypatch):
         aar._allowed_server_ids()
 
 
+# --- webhook end-to-end (parse -> execute -> record -> notify -> response) ----------------------
+def _webhook_db():
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+    from app import models  # noqa: F401 — registers tables
+    from app.db import Base
+    from app.models import ManagementServer
+    eng = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(eng)
+    s = sessionmaker(bind=eng)()
+    s.add(ManagementServer(id=1, name="HQ", host="hq", username="admin", owner_id=1))
+    s.commit()
+    return s
+
+
+class _WReq:
+    def __init__(self, body, token="t0k"):
+        self.headers = {"x-dcsim-token": token}
+        self._body = body
+
+    async def json(self):
+        return self._body
+
+
+def _webhook_auth(monkeypatch):
+    monkeypatch.setattr(aar.app_settings, "get_secret_or_env", lambda k, env: "t0k")
+    monkeypatch.setattr(aar.app_settings, "get_or_env", lambda k, env: env)
+    monkeypatch.setattr(aar, "get_settings",
+                        lambda: types.SimpleNamespace(webhook_token="t0k", webhook_server_ids=""))
+    monkeypatch.setattr(aar.mgmt_creds, "get_secret", lambda db, ms: "secret")
+    monkeypatch.setattr(aar, "ensure_pinned", lambda db, ms: None)
+    monkeypatch.setattr(aar.ticketing, "notify", lambda ticket, result: {"skipped": "test"})
+
+
+def test_webhook_applied_reflects_reality_not_intent(monkeypatch):
+    # M4: apply=true but the engine returns no_op -> the webhook's top-level "applied"/"published" must report
+    # what actually committed (nothing), NOT the request's intent — an ITSM consumer must not read "granted".
+    _webhook_auth(monkeypatch)
+    monkeypatch.setattr(aa, "execute",
+                        lambda *a, **k: {"ok": True, "applied": False, "published": False, "outcome": "no_op"})
+    db = _webhook_db()
+    body = {"ticket_id": "INC1", "server_id": 1, "layer": "L", "source": "10.0.0.5",
+            "destination": "1.1.1.1", "port": "443", "apply": True}
+    out = json.loads(_run(aar.aa_webhook(_WReq(body), db=db)).body)
+    assert out["applied"] is False and out["published"] is False and out["outcome"] == "no_op"
+    db.close()
+
+
+def test_webhook_happy_path_publishes_and_records(monkeypatch):
+    # M7: the unattended publish surface end-to-end — parse -> execute(publish=True) -> record(actor='webhook')
+    # -> notify -> truthful response. (Previously only the auth/allowlist gates were covered.)
+    _webhook_auth(monkeypatch)
+    notified, seen = {}, {}
+    monkeypatch.setattr(aar.ticketing, "notify",
+                        lambda ticket, result: notified.update(outcome=result.get("outcome")) or {"skipped": "t"})
+    monkeypatch.setattr(aa, "execute", lambda *a, **k: seen.update(publish=k.get("publish")) or {
+        "ok": True, "applied": True, "published": True, "outcome": "create", "source_object": "h",
+        "inverse": [{"op": "delete-access-rule", "uid": "u1", "layer": "L"}]})
+    db = _webhook_db()
+    body = {"ticket_id": "INC2", "server_id": 1, "layer": "L", "source": "10.0.0.5",
+            "destination": "1.1.1.1", "port": "443", "apply": True}
+    out = json.loads(_run(aar.aa_webhook(_WReq(body), db=db)).body)
+    assert seen["publish"] is True                                  # apply=true publishes
+    assert out["applied"] is True and out["published"] is True and out["outcome"] == "create"
+    assert notified["outcome"] == "create"                          # the result was pushed back
+    from app.services import change_log
+    rows = change_log.recent_for_server(db, 1)
+    assert rows and rows[0].created_by == "webhook" and rows[0].ticket_id == "INC2"   # recorded for rollback
+    db.close()
+
+
+def test_webhook_preview_does_not_publish_or_record(monkeypatch):
+    # apply=false -> preview only: never calls execute, records nothing.
+    _webhook_auth(monkeypatch)
+    called = {"execute": False}
+    monkeypatch.setattr(aa, "execute", lambda *a, **k: called.update(execute=True) or {})
+    monkeypatch.setattr(aa, "preview", lambda *a, **k: {"ok": True, "outcome": "create"})
+    db = _webhook_db()
+    body = {"ticket_id": "INC3", "server_id": 1, "layer": "L", "source": "10.0.0.5",
+            "destination": "1.1.1.1", "port": "443", "apply": False}
+    out = json.loads(_run(aar.aa_webhook(_WReq(body), db=db)).body)
+    assert out["applied"] is False and called["execute"] is False
+    from app.services import change_log
+    assert change_log.recent_for_server(db, 1) == []
+    db.close()
+
+
 # --- template rendering -----------------------------------------------------------------------
 def _render(name, **ctx):
     ctx.setdefault("request", None)
@@ -1893,6 +1981,31 @@ def test_decide_removal_disables_past_a_disjoint_dynamic_layer_below():
     req = AccessRequest(["10.0.0.5/32"], ["1.1.1.1/32"], "tcp", "443")
     d = aa.decide_removal(req, [exact, dyn, CLEANUP])
     assert d.outcome is aa.RemovalOutcome.DISABLE and d.target_rule.uid == "ex"
+
+
+def test_decide_removal_conditional_drop_never_asserts_full_deny_under_ignore_conditions():
+    # M3: with ignore_conditions ON (aggressive/autopilot), a conditional DROP must NOT terminate the removal
+    # walk as a full deny — it only blocks UNDER its condition, so a broad ACCEPT below still grants the flow
+    # when the condition is unmet. The honest, safe answer is REVIEW (don't claim "already denied / removed").
+    cond_drop = _rule("cd", 1, "Drop", _net("10.0.0.0/24"), _host("1.1.1.1"), ServiceSet(any=True),
+                      conditions=("VPN community",))
+    broad = _rule("ba", 2, "Accept", _net("10.0.0.0/24"), _host("1.1.1.1"), ServiceSet(any=True))
+    req = AccessRequest(["10.0.0.5/32"], ["1.1.1.1/32"], "tcp", "443")
+    opt = aa.DecideOptions(ignore_conditions=True)
+    assert aa.decide_removal(req, [cond_drop, broad, CLEANUP], opt).outcome is aa.RemovalOutcome.REVIEW
+
+
+def test_decide_removal_disable_not_chosen_when_conditional_drop_below_under_ignore_conditions():
+    # the _still_granted_below mirror: an exact ACCEPT with a conditional DROP (then a broad ACCEPT) below it,
+    # ignore_conditions ON -> the conditional drop can't prove the flow is denied -> DENY-above, not DISABLE.
+    exact = _rule("ex", 1, "Accept", _host("10.0.0.5"), _host("1.1.1.1"), _tcp(443))
+    cond_drop = _rule("cd", 2, "Drop", _net("10.0.0.0/24"), _host("1.1.1.1"), ServiceSet(any=True),
+                      conditions=("VPN community",))
+    broad = _rule("ba", 3, "Accept", _net("10.0.0.0/24"), _host("1.1.1.1"), ServiceSet(any=True))
+    req = AccessRequest(["10.0.0.5/32"], ["1.1.1.1/32"], "tcp", "443")
+    opt = aa.DecideOptions(ignore_conditions=True)
+    d = aa.decide_removal(req, [exact, cond_drop, broad, CLEANUP], opt)
+    assert d.outcome is aa.RemovalOutcome.DENY and d.position == {"above": "ex"}
 
 
 # ===== Rollback / undo: each applied change records its exact INVERSE op-list =====================

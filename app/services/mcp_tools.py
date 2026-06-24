@@ -106,13 +106,18 @@ def _build(source, destination, service, port, protocol, application,
                                    destination_kind=destination_kind or "ip")
 
 
-def _autopilot() -> bool:
-    """True when the Autopilot behavior profile is active — surfaced in tool results so a prompt-driven agent
-    knows it is pre-authorized to apply AND publish in one turn (the publish itself is still gated by the
-    admin's mcp_allow_publish). Best-effort: any read failure → False (the agent then confirms as usual)."""
+def _autopilot(server=None, layer=None) -> bool:
+    """True when the Autopilot profile is EFFECTIVE for this (server, layer) — surfaced in tool results so a
+    prompt-driven agent knows it is pre-authorized to apply AND publish in one turn (the publish itself is
+    still gated by the admin's mcp_allow_publish). Scope-aware: a per-scope override pinning this server/layer
+    to a non-autopilot profile correctly returns False (don't auto-publish on a scope the admin guarded), and
+    a scoped-autopilot override correctly returns True — mirroring the engine's _decide_options. Best-effort:
+    any read failure → False (the agent then confirms as usual)."""
     try:
         from . import app_settings
-        return str(app_settings.get("aa_profile") or "") == "autopilot"
+        from .access_automation import _scoped_profile
+        scoped = _scoped_profile(app_settings, server, layer) if server is not None else None
+        return (scoped or str(app_settings.get("aa_profile") or "")) == "autopilot"
     except Exception:  # noqa: BLE001
         return False
 
@@ -147,7 +152,7 @@ def decide_access(server_id: str, source: str, destination: str, layer: str, ser
     try:
         res = aa.preview(ms, secret, req, layer, package=package)
         if isinstance(res, dict):
-            res["autopilot"] = _autopilot()        # signal the agent it may apply+publish in one turn
+            res["autopilot"] = _autopilot(ms, layer)   # signal the agent it may apply+publish in one turn
         return res
     except Exception as exc:  # noqa: BLE001 — the agent must always get a structured result, never an
         logger.exception("decide_access failed (server_id=%s, layer=%r)", server_id, layer)  # opaque
@@ -208,6 +213,8 @@ def apply_access(server_id: str, source: str, destination: str, layer: str, serv
     except Exception as exc:  # noqa: BLE001 — never surface an uncaught raise as a generic "Internal error";
         logger.exception("apply_access failed (server_id=%s, layer=%r)", server_id, layer)
         return {"ok": False, "applied": False, "published": False, "error": f"{type(exc).__name__}: {exc}"}
+    if isinstance(result, dict):
+        result.setdefault("autopilot", _autopilot(ms, layer))
     _record_applied(ms, result, req, layer, package, ticket_id)
     return result
 
@@ -252,6 +259,8 @@ def remove_access(server_id: str, source: str, destination: str, layer: str, ser
     except Exception as exc:  # noqa: BLE001
         logger.exception("remove_access failed (server_id=%s, layer=%r)", server_id, layer)
         return {"ok": False, "applied": False, "published": False, "error": f"{type(exc).__name__}: {exc}"}
+    if isinstance(result, dict):
+        result.setdefault("autopilot", _autopilot(ms, layer))   # carry the signal on the REMOVE turn too
     _record_applied(ms, result, req, layer, package, ticket_id)
     return result
 
