@@ -22,7 +22,7 @@ from ..db import get_db
 from ..models import ManagementServer, User
 from ..security import get_user_or_none
 from ..services import access_automation as aa
-from ..services import api_keys, app_settings, applications, decision_tree, mgmt_api, mgmt_creds, services, table_prefs, ticketing, typed_objects
+from ..services import api_keys, app_settings, applications, change_log, decision_tree, mgmt_api, mgmt_creds, services, table_prefs, ticketing, typed_objects
 from ..services.gaia_client import ensure_pinned
 from .ui import _pop_flash, templates
 
@@ -143,6 +143,23 @@ def aa_decision_option(body: AAOptionBody, request: Request, db: Session = Depen
     return {"ok": True, **_aa_option_state()}
 
 
+def _req_snapshot(body: AccessReqBody) -> dict:
+    """The request tuple as plain data — snapshotted on a recorded change for display + audit."""
+    return {"source": body.source, "destination": body.destination, "protocol": body.protocol,
+            "port": body.port, "service": body.service, "application": body.application,
+            "source_kind": body.source_kind, "destination_kind": body.destination_kind}
+
+
+def _record_change_safe(db, **kw) -> None:
+    """Record a published change for rollback — BEST-EFFORT. The SMS write has already committed by the
+    time this runs, so an audit-log DB hiccup must never turn a successful publish into a 500 for the user."""
+    try:
+        change_log.record(db, **kw)
+    except Exception:  # noqa: BLE001
+        import logging
+        logging.getLogger("dcsim.access_automation").exception("recording change for rollback failed")
+
+
 def _run(db: Session, sid: int, user: User, body: AccessReqBody, *, do_apply: bool):
     ms = _owned(db, sid, user)
     secret, err = _secret_or_error(db, ms)
@@ -159,6 +176,10 @@ def _run(db: Session, sid: int, user: User, body: AccessReqBody, *, do_apply: bo
     if do_apply:
         result = aa.execute(ms, secret, req, body.layer, package=body.package,
                             ticket_id=body.ticket_id, publish=body.publish)
+        # record a PUBLISHED change so it can be rolled back (no-op for dry-runs / no-ops / reviews).
+        _record_change_safe(db, server=ms, result=result, request=_req_snapshot(body),
+                            layer=body.layer, package=body.package, ticket_id=body.ticket_id,
+                            actor=f"user:{user.username}")
     else:
         result = aa.preview(ms, secret, req, body.layer, package=body.package)
     code = 200 if result.get("ok") else 400
@@ -259,6 +280,57 @@ def aa_apply(sid: int, body: AccessReqBody, request: Request, db: Session = Depe
     return _run(db, sid, user, body, do_apply=True)
 
 
+class RevertBody(BaseModel):
+    publish: bool = True
+
+
+def _change_row(r) -> dict:
+    return {"id": r.id, "at": r.created_at.isoformat() if r.created_at else "", "by": r.created_by,
+            "layer": r.layer, "action": r.action, "outcome": r.outcome, "summary": r.summary,
+            "ticket_id": r.ticket_id or "", "objects": list(r.objects_json or []),
+            "reverted": bool(r.reverted_at), "reverted_at": r.reverted_at.isoformat() if r.reverted_at else "",
+            "reverted_by": r.reverted_by or "", "revert_error": r.revert_error or "",
+            "revertable": bool(r.inverse_json) and not r.reverted_at}
+
+
+@router.get("/access-automation/{sid}/changes")
+def aa_changes(sid: int, request: Request, db: Session = Depends(get_db)):
+    """Recent PUBLISHED changes on this server (newest first) — the data behind the rollback panel."""
+    user = get_user_or_none(request, db)
+    if user is None:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    ms = _owned(db, sid, user)
+    rows = change_log.recent_for_server(db, ms.id, limit=25)
+    return JSONResponse({"changes": [_change_row(r) for r in rows]})
+
+
+@router.post("/access-automation/{sid}/changes/{cid}/revert")
+def aa_revert(sid: int, cid: int, body: RevertBody, request: Request, db: Session = Depends(get_db)):
+    """Roll back ONE recorded change by replaying its inverse op(s) in a single publish — surgical, not a
+    full-DB revision rollback. publish=true commits the undo (default for an explicit click); publish=false
+    validates then discards. Mirrors apply's lock/error handling."""
+    user = get_user_or_none(request, db)
+    if user is None:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    ms = _owned(db, sid, user)
+    secret, err = _secret_or_error(db, ms)
+    if err:
+        return err
+    change = change_log.get(db, cid)
+    if change is None or change.server_id != ms.id:
+        return JSONResponse({"error": "Change not found for this server."}, status_code=404)
+    if change.reverted_at:
+        return JSONResponse({"error": "This change was already rolled back."}, status_code=400)
+    if not change.inverse_json:
+        return JSONResponse({"error": "This change has no recorded inverse to roll back."}, status_code=400)
+    result = aa.revert_execute(ms, secret, list(change.inverse_json or []), publish=body.publish)
+    if result.get("ok") and result.get("reverted"):
+        change_log.mark_reverted(db, change, actor=f"user:{user.username}")
+    elif not result.get("ok"):
+        change_log.mark_revert_failed(db, change, result.get("error", ""))
+    return JSONResponse({**result, "change_id": change.id}, status_code=200 if result.get("ok") else 400)
+
+
 # --- Generic ticketing webhook (no portal session; authenticated by a shared token) ----------
 def _allowed_server_ids() -> set:
     """Optional allowlist (Settings → Ticketing webhook → 'Restrict the webhook to server ids', falling
@@ -338,6 +410,9 @@ async def aa_webhook(request: Request, db: Session = Depends(get_db)):
     if ticket.apply:
         result = aa.execute(ms, secret, ticket.request, ticket.layer, package=ticket.package,
                             ticket_id=ticket.ticket_id, publish=True)
+        _record_change_safe(db, server=ms, result=result, request=change_log.snapshot_request(ticket.request),
+                            layer=ticket.layer, package=ticket.package, ticket_id=ticket.ticket_id,
+                            actor="webhook")
     else:
         result = aa.preview(ms, secret, ticket.request, ticket.layer, package=ticket.package)
 

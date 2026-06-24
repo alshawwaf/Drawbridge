@@ -2051,6 +2051,9 @@ def _apply(session, decision: Decision, req: AccessRequest, layer: str,
                      {"uid": decision.target_rule.uid, "layer": target_layer,
                       field: {"add": obj_name}})  # VERIFY
         out["ops"].append(f"set-access-rule {decision.target_rule.uid} {field}.add {obj_name}")
+        # the exact inverse: drop the object back out of the same cell (rollback/undo).
+        out["inverse"] = [{"op": "set-access-rule", "uid": decision.target_rule.uid,
+                           "layer": target_layer, "field": field, "remove": obj_name}]
         return out
 
     # CREATE
@@ -2080,10 +2083,16 @@ def _apply(session, decision: Decision, req: AccessRequest, layer: str,
     tags = naming.rule_tags()
     if tags:
         payload["tags"] = tags
-    session.call("add-access-rule", {k: v for k, v in payload.items() if v is not None})  # VERIFY
+    created = session.call("add-access-rule", {k: v for k, v in payload.items() if v is not None})  # VERIFY
+    created_uid = (created or {}).get("uid")
     out.update(source_object=src_name, destination_object=dst_name, service_object=svc_name,
-               position=_position_human(decision.position, _rules_for_layer(decision, rules)))
+               position=_position_human(decision.position, _rules_for_layer(decision, rules)),
+               created_uid=created_uid)
     out["ops"].append("add-access-rule")
+    # the exact inverse: delete the rule we just added (rollback/undo). Reused/created objects are left
+    # in place — they may now be referenced elsewhere, and deleting them is a separate, riskier action.
+    if created_uid:
+        out["inverse"] = [{"op": "delete-access-rule", "uid": created_uid, "layer": target_layer}]
     return out
 
 
@@ -2467,6 +2476,9 @@ def _apply_removal(session, decision: RemovalDecision, req: AccessRequest, layer
     if decision.outcome == RemovalOutcome.DISABLE:
         session.call("set-access-rule", {"uid": r.uid, "layer": layer, "enabled": False})  # VERIFY
         out["ops"].append(f"set-access-rule {r.uid} enabled=false")
+        out["disabled_uid"] = r.uid
+        # the exact inverse: re-enable the rule we disabled (rollback/undo).
+        out["inverse"] = [{"op": "set-access-rule", "uid": r.uid, "layer": layer, "enabled": True}]
         return out
     if decision.outcome == RemovalOutcome.DENY:
         src_name = _resolve_endpoint_object(session, req, "source")
@@ -2483,9 +2495,14 @@ def _apply_removal(session, decision: RemovalDecision, req: AccessRequest, layer
         tags = naming.rule_tags()
         if tags:
             payload["tags"] = tags
-        session.call("add-access-rule", {k: v for k, v in payload.items() if v is not None})  # VERIFY
-        out.update(source_object=src_name, destination_object=dst_name, service_object=svc_name)
+        created = session.call("add-access-rule", {k: v for k, v in payload.items() if v is not None})  # VERIFY
+        created_uid = (created or {}).get("uid")
+        out.update(source_object=src_name, destination_object=dst_name, service_object=svc_name,
+                   created_uid=created_uid)
         out["ops"].append("add-access-rule (Drop)")
+        # the exact inverse: delete the Drop we just added (rollback/undo) -> the broad rule grants again.
+        if created_uid:
+            out["inverse"] = [{"op": "delete-access-rule", "uid": created_uid, "layer": layer}]
         return out
     return out
 
@@ -2566,6 +2583,82 @@ def remove_execute(server, secret, req: AccessRequest, layer: str, *, package: O
     except Exception as exc:  # noqa: BLE001
         logger.exception("access remove failed (layer=%r, publish=%s)", layer, publish)
         return {"ok": False, "error": f"removal failed: {type(exc).__name__}: {exc}"}
+
+
+# --------------------------------------------------------------------------- #
+# ROLLBACK / undo  (replay an AppliedChange's recorded inverse op-list)
+# --------------------------------------------------------------------------- #
+_REVERT_FIELDS = {"source", "destination", "service"}
+
+
+def _apply_inverse_op(session, op: dict) -> str:
+    """Translate ONE recorded inverse op (a flat, validated dict) into its web_api call. STRICTLY
+    whitelisted — only the three rule edits the engine itself ever emits are accepted (delete a rule,
+    re-enable a rule, remove an object from a cell); any other shape is rejected, never executed. The
+    op-list comes from our own DB, but validating the shape here keeps a tampered/garbled row from turning
+    into an arbitrary management call."""
+    kind, uid, layer = op.get("op"), op.get("uid"), op.get("layer")
+    if not uid or not layer:
+        raise MgmtError(f"malformed rollback op (missing uid/layer): {op!r}")
+    if kind == "delete-access-rule":
+        session.call("delete-access-rule", {"uid": uid, "layer": layer})  # VERIFY
+        return f"delete-access-rule {uid}"
+    if kind == "set-access-rule":
+        if "enabled" in op:
+            session.call("set-access-rule", {"uid": uid, "layer": layer, "enabled": bool(op["enabled"])})  # VERIFY
+            return f"set-access-rule {uid} enabled={bool(op['enabled'])}"
+        field, obj = op.get("field"), op.get("remove")
+        if field in _REVERT_FIELDS and obj:
+            session.call("set-access-rule", {"uid": uid, "layer": layer, field: {"remove": obj}})  # VERIFY
+            return f"set-access-rule {uid} {field}.remove {obj}"
+    raise MgmtError(f"unsupported rollback op: {op!r}")
+
+
+def revert_execute(server, secret, inverse_ops: list[dict], *, publish: bool = False) -> dict:
+    """Replay precomputed INVERSE op(s) (from a recorded AppliedChange) in ONE write session to roll back a
+    published change — surgically (delete the rule we added / re-enable the rule we disabled / remove the
+    object we widened in), never a heavy full-DB revision rollback. publish commits; otherwise validate then
+    discard (zero commit). Discards on any error (mirrors execute()/remove_execute())."""
+    if not inverse_ops:
+        return {"ok": False, "error": "this change has no recorded inverse — it can't be rolled back here"}
+    try:
+        with MgmtSession(server, secret, session_timeout=write_session_timeout(),
+                         session_description="DC-Sim access automation (revert)") as s:
+            ops_done: list[str] = []
+            try:
+                for op in inverse_ops:
+                    ops_done.append(_apply_inverse_op(s, op))
+                if publish:
+                    s.publish()
+                    invalidate_cache(server)
+                else:
+                    s.discard()
+            except Exception as exc:  # noqa: BLE001 — release pending changes + locks on any failure
+                try:
+                    s.discard()
+                except MgmtError:
+                    sessions = []
+                    try:
+                        sessions = locking_sessions(server, secret)
+                    except Exception:  # noqa: BLE001
+                        pass
+                    return {"ok": False, "lock_conflict": True, "sessions": sessions, "trace": s.trace,
+                            "error": f"the rollback could not be discarded after a failure: {exc}"}
+                if isinstance(exc, MgmtError):
+                    raise
+                return {"ok": False, "error": f"rollback failed: {exc}", "trace": s.trace}
+            return {"ok": True, "reverted": publish, "validated": not publish, "ops": ops_done,
+                    "trace": s.trace}
+    except MgmtError as exc:
+        msg = str(exc)
+        out = {"ok": False, "error": msg}
+        if _is_lock_error(msg):
+            out["lock_conflict"] = True
+            out["sessions"] = locking_sessions(server, secret)
+        return out
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("access revert failed (publish=%s)", publish)
+        return {"ok": False, "error": f"rollback failed: {type(exc).__name__}: {exc}"}
 
 
 # --------------------------------------------------------------------------- #

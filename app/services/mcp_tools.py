@@ -150,6 +150,22 @@ def decide_access(server_id: str, source: str, destination: str, layer: str, ser
         return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}                          # MCP error
 
 
+def _record_applied(ms, result: dict, req, layer: str, package, ticket_id: str) -> None:
+    """Persist a PUBLISHED change (apply or remove) so it can be rolled back from the portal. No-op for
+    dry-runs / no-ops / reviews (change_log.record guards that). Best-effort — a logging failure must never
+    break the result the agent receives."""
+    try:
+        from . import change_log
+        db = SessionLocal()
+        try:
+            change_log.record(db, server=ms, result=result, request=change_log.snapshot_request(req),
+                              layer=layer, package=package, ticket_id=ticket_id, actor="mcp")
+        finally:
+            db.close()
+    except Exception:  # noqa: BLE001
+        logger.exception("recording MCP change for rollback failed")
+
+
 def apply_access(server_id: str, source: str, destination: str, layer: str, service: str | None = None,
                  port: str | None = None, protocol: str = "tcp", application: str | None = None,
                  package: str | None = None, publish: bool = False, ticket_id: str = "",
@@ -184,10 +200,12 @@ def apply_access(server_id: str, source: str, destination: str, layer: str, serv
     except ValueError as exc:
         return {"ok": False, "error": str(exc)}
     try:
-        return aa.execute(ms, secret, req, layer, package=package, ticket_id=ticket_id, publish=publish)
+        result = aa.execute(ms, secret, req, layer, package=package, ticket_id=ticket_id, publish=publish)
     except Exception as exc:  # noqa: BLE001 — never surface an uncaught raise as a generic "Internal error";
         logger.exception("apply_access failed (server_id=%s, layer=%r)", server_id, layer)
         return {"ok": False, "applied": False, "published": False, "error": f"{type(exc).__name__}: {exc}"}
+    _record_applied(ms, result, req, layer, package, ticket_id)
+    return result
 
 
 def remove_access(server_id: str, source: str, destination: str, layer: str, service: str | None = None,
@@ -226,10 +244,80 @@ def remove_access(server_id: str, source: str, destination: str, layer: str, ser
     except ValueError as exc:
         return {"ok": False, "error": str(exc)}
     try:
-        return aa.remove_execute(ms, secret, req, layer, package=package, ticket_id=ticket_id, publish=publish)
+        result = aa.remove_execute(ms, secret, req, layer, package=package, ticket_id=ticket_id, publish=publish)
     except Exception as exc:  # noqa: BLE001
         logger.exception("remove_access failed (server_id=%s, layer=%r)", server_id, layer)
         return {"ok": False, "applied": False, "published": False, "error": f"{type(exc).__name__}: {exc}"}
+    _record_applied(ms, result, req, layer, package, ticket_id)
+    return result
+
+
+def _change_brief(r) -> dict:
+    return {"id": r.id, "at": r.created_at.isoformat() if r.created_at else None, "by": r.created_by,
+            "server": r.server_name, "layer": r.layer, "action": r.action, "outcome": r.outcome,
+            "summary": r.summary, "ticket_id": r.ticket_id or None, "reverted": bool(r.reverted_at),
+            "reverted_at": r.reverted_at.isoformat() if r.reverted_at else None}
+
+
+def list_changes(limit: int = 20) -> dict:
+    """List recent access-automation changes PUBLISHED to live policy (newest first) — each with its id, what
+    it did, who/when, and whether it has already been rolled back. Pass an id to revert_change to undo one.
+    Read-only. Dry-runs are never recorded, so everything here actually committed."""
+    from . import change_log
+    db = SessionLocal()
+    try:
+        rows = change_log.recent(db, limit=max(1, min(int(limit or 20), 100)))
+        return {"ok": True, "changes": [_change_brief(r) for r in rows]}
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("list_changes failed")
+        return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+    finally:
+        db.close()
+
+
+def revert_change(change_id: int, publish: bool = False) -> dict:
+    """ROLL BACK a previously published change by its id (from list_changes): replays the recorded inverse —
+    delete the rule that was added / re-enable the rule that was disabled / remove the object that was widened
+    in — surgically, without touching the rest of the policy. With publish=false it DRY-RUNS (validate then
+    discard); publish=true COMMITS, allowed ONLY when an admin has enabled 'mcp_allow_publish'. Refuses if the
+    change was already rolled back. Objects the change created are left in place (they may be referenced now)."""
+    if publish:
+        from . import app_settings
+        try:
+            allowed = bool(app_settings.get("mcp_allow_publish"))
+        except Exception:  # noqa: BLE001
+            allowed = False
+        if not allowed:
+            return {"ok": False, "reverted": False,
+                    "error": "publishing is disabled for the MCP agent — an admin must enable 'Let the MCP "
+                             "agent publish to live policy' in Settings. Re-run with publish=false to dry-run."}
+    from . import change_log
+    from . import access_automation as aa
+    db = SessionLocal()
+    try:
+        change = change_log.get(db, int(change_id))
+        if change is None:
+            return {"ok": False, "error": f"no recorded change with id {change_id}"}
+        if change.reverted_at:
+            return {"ok": False, "error": f"change {change_id} was already rolled back "
+                                          f"at {change.reverted_at.isoformat()}"}
+        if change.server_id is None:
+            return {"ok": False, "error": "the management server for this change no longer exists"}
+        try:
+            ms, secret = _server_secret(db, str(change.server_id))
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
+        result = aa.revert_execute(ms, secret, list(change.inverse_json or []), publish=publish)
+        if result.get("ok") and result.get("reverted"):
+            change_log.mark_reverted(db, change, actor="mcp")
+        elif not result.get("ok"):
+            change_log.mark_revert_failed(db, change, result.get("error", ""))
+        return {**result, "change_id": change.id, "summary": change.summary}
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("revert_change failed (change_id=%s)", change_id)
+        return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+    finally:
+        db.close()
 
 
 def correlate_service(server_id: str, name: str) -> dict:

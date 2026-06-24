@@ -107,6 +107,17 @@
   <div id="aa-result" style="margin-top:16px;"></div>
 </div>
 
+<div class="card" id="aa-history" data-id="{{ ms.id }}">
+  <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:12px;">
+    <div>
+      <h2 style="margin:0;">Recent changes — rollback</h2>
+      <p class="muted" style="margin:4px 0 0; max-width:70ch;">Every change <b>published</b> to this server (from this form, the agent, or the webhook) is recorded with its exact inverse. Roll one back to undo just that change by first-match: Drawbridge deletes the rule it added, re-enables the rule it disabled, or removes the object it widened in — never a full-database revision rollback. Dry-runs aren’t listed (nothing was committed); objects a change created are left in place (they may be referenced now).</p>
+    </div>
+    <button type="button" class="copybtn" id="aah-refresh" style="flex:0 0 auto;">Refresh</button>
+  </div>
+  <div id="aah-body" style="margin-top:12px;"><p class="muted">Loading recent changes…</p></div>
+</div>
+
 <div class="card">
   <details>
     <summary>Ticketing webhook (any ITSM — end-to-end automation)</summary>
@@ -790,6 +801,96 @@ Content-Type: application/json
 
     render(true);
     var rt; window.addEventListener('resize', function () { clearTimeout(rt); rt = setTimeout(function () { fit(); }, 140); });
+  })();
+</script>
+
+<script>
+  // Recent changes / rollback panel — its own IIFE (independent of the request form above).
+  (function () {
+    var root = document.getElementById('aa-history');
+    if (!root) return;
+    var id = root.getAttribute('data-id');
+    var bodyEl = document.getElementById('aah-body');
+    function esc(s) { var d = document.createElement('div'); d.textContent = (s == null ? '' : s); return d.innerHTML; }
+    function when(iso) {
+      if (!iso) return '—';
+      var d = new Date(iso); if (isNaN(d)) return esc(iso);
+      return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    }
+    var OUTCOME = { create: 'created a rule', widen: 'widened a rule', disable: 'disabled a rule',
+                    deny: 'inserted a Drop' };
+
+    function rowHtml(c) {
+      var status;
+      if (c.reverted) {
+        status = '<span class="muted">↩ rolled back ' + when(c.reverted_at) +
+                 (c.reverted_by ? ' · ' + esc(c.reverted_by) : '') + '</span>';
+      } else if (c.revertable) {
+        status = '<button type="button" class="btn secondary" data-revert="' + c.id + '">Roll back</button>';
+        if (c.revert_error) status += '<div class="muted" style="font-size:12px; color:var(--danger); margin-top:4px;">last attempt: ' + esc(c.revert_error) + '</div>';
+      } else {
+        status = '<span class="muted">—</span>';
+      }
+      var tag = '<span class="muted" style="font-size:12px;">' + esc(c.action) + ' · ' + esc(OUTCOME[c.outcome] || c.outcome) + '</span>';
+      var meta = esc(c.by || '') + (c.ticket_id ? ' · ' + esc(c.ticket_id) : '');
+      return '<tr data-row="' + c.id + '">' +
+        '<td class="muted" style="white-space:nowrap;">' + when(c.at) + '</td>' +
+        '<td><b>' + esc(c.summary) + '</b><br>' + tag + '</td>' +
+        '<td class="muted" style="font-size:12px;">' + meta + '</td>' +
+        '<td style="text-align:right;">' + status + '</td></tr>';
+    }
+
+    function render(changes) {
+      if (!changes || !changes.length) {
+        bodyEl.innerHTML = '<p class="muted">No published changes yet. Apply &amp; publish a request (or have the agent do it) and it will appear here, ready to roll back.</p>';
+        return;
+      }
+      bodyEl.innerHTML = '<table class="acttable"><thead><tr><th>When</th><th>Change</th><th>By</th><th></th></tr></thead><tbody>' +
+        changes.map(rowHtml).join('') + '</tbody></table>';
+    }
+
+    function load() {
+      bodyEl.innerHTML = '<p class="muted">Loading recent changes…</p>';
+      fetch('/access-automation/' + id + '/changes', { credentials: 'same-origin' })
+        .then(function (r) { return r.json(); })
+        .then(function (j) { render(j.changes || []); })
+        .catch(function () { bodyEl.innerHTML = '<div class="err">Could not load recent changes.</div>'; });
+    }
+
+    // Inline two-step confirm (no browser dialog): "Roll back" -> "Confirm rollback? [Yes] [Cancel]".
+    bodyEl.addEventListener('click', function (e) {
+      var t = e.target;
+      var rb = t.closest ? t.closest('[data-revert]') : null;
+      if (rb) {
+        var cell = rb.parentNode;
+        cell.innerHTML = '<span class="muted" style="margin-right:6px;">Undo this change?</span>' +
+          '<button type="button" class="btn" style="background:var(--danger);border-color:var(--danger);color:#fff;" data-revyes="' + rb.getAttribute('data-revert') + '">Confirm</button> ' +
+          '<button type="button" class="copybtn" data-revno="1">Cancel</button>';
+        return;
+      }
+      if (t.closest && t.closest('[data-revno]')) { load(); return; }
+      var yes = t.closest ? t.closest('[data-revyes]') : null;
+      if (yes) {
+        var cid = yes.getAttribute('data-revyes');
+        yes.disabled = true; yes.textContent = 'Rolling back…';
+        fetch('/access-automation/' + id + '/changes/' + cid + '/revert', {
+          method: 'POST', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ publish: true })
+        }).then(function (r) { return r.json(); }).then(function (j) {
+          if (j.ok && j.reverted) { load(); }
+          else {
+            var cell = yes.parentNode;
+            cell.innerHTML = '<span class="muted" style="color:var(--danger);">' + esc(j.error || 'Rollback failed.') + '</span> ' +
+              '<button type="button" class="copybtn" data-revno="1">Close</button>';
+          }
+        }).catch(function () {
+          yes.parentNode.innerHTML = '<span class="muted" style="color:var(--danger);">Request failed.</span> <button type="button" class="copybtn" data-revno="1">Close</button>';
+        });
+      }
+    });
+
+    document.getElementById('aah-refresh').addEventListener('click', load);
+    load();
   })();
 </script>
 
