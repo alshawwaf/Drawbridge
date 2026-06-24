@@ -108,8 +108,9 @@ def _norm_domain(value) -> str:
     sub = raw.startswith(".")
     base = raw.lstrip(".")
     if not _DOMAIN_RE.match(base):
-        raise ValueError(f"'{value}' is not a valid domain (e.g. example.com, or .example.com for "
-                         f"the domain and its sub-domains).")
+        raise ValueError(f"'{value}' is not a valid domain (e.g. example.com, or .example.com for the "
+                         f"domain and its sub-domains). If '{value}' is an APPLICATION (e.g. Facebook, "
+                         f"Office365), pass it as the application — not as a domain destination.")
     return ("." if sub else "") + base
 
 
