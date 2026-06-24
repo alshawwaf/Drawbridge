@@ -2005,6 +2005,26 @@ def test_decide_removal_disables_past_a_disjoint_dynamic_layer_below():
     assert d.outcome is aa.RemovalOutcome.DISABLE and d.target_rule.uid == "ex"
 
 
+def test_decide_removal_skips_a_dynamic_layer_to_reach_the_real_grant():
+    # GOLDEN RULE: a dynamic-layer rule in the path is SKIPPED from matching (out-of-band, Gaia-managed). The
+    # walk looks PAST it to the real management-visible grant and acts on that — never bails to REVIEW.
+    dyn = _rule("dl", 1, "Accept", _net("10.0.0.0/24"), _host("1.1.1.1"), ServiceSet(any=True))
+    dyn.dynamic_layer = True
+    grant = _rule("g", 2, "Accept", _host("10.0.0.5"), _host("1.1.1.1"), _tcp(443))
+    req = AccessRequest(["10.0.0.5/32"], ["1.1.1.1/32"], "tcp", "443")
+    d = aa.decide_removal(req, [dyn, grant, CLEANUP])
+    assert d.outcome is aa.RemovalOutcome.DISABLE and d.target_rule.uid == "g"
+
+
+def test_decide_removal_dynamic_layer_only_is_not_a_review():
+    # a dynamic layer covering the request, with NO management grant below -> skipped -> NO_OP (nothing in
+    # the MANAGEMENT policy grants it; the dynamic layer is the user's out-of-band Gaia concern), never REVIEW.
+    dyn = _rule("dl", 1, "Accept", _net("10.0.0.0/24"), _host("1.1.1.1"), ServiceSet(any=True))
+    dyn.dynamic_layer = True
+    req = AccessRequest(["10.0.0.5/32"], ["1.1.1.1/32"], "tcp", "443")
+    assert aa.decide_removal(req, [dyn, CLEANUP]).outcome is aa.RemovalOutcome.NO_OP
+
+
 def test_decide_removal_conditional_drop_never_asserts_full_deny_under_ignore_conditions():
     # M3: with ignore_conditions ON (aggressive/autopilot), a conditional DROP must NOT terminate the removal
     # walk as a full deny — it only blocks UNDER its condition, so a broad ACCEPT below still grants the flow
