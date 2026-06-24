@@ -13,7 +13,8 @@ from app import mcp_server
 from app import models  # noqa: F401 — registers tables on Base.metadata
 from app.db import Base
 from app.services import access_automation as aa
-from app.services import app_settings, change_log, mcp_tools
+from app.services import app_settings, change_log, gaia_client, mcp_tools, mgmt_creds
+from app.models import ManagementServer
 
 
 def _fake_server(monkeypatch):
@@ -94,6 +95,9 @@ def cdb(monkeypatch):
 
 def _seed_change(Session, reverted=False):
     with Session() as s:
+        if s.get(ManagementServer, 1) is None:        # revert_change resolves the server strictly by id
+            s.add(ManagementServer(id=1, name="HQ", host="hq.example", username="admin", owner_id=1))
+            s.commit()
         row = change_log.record(s, server=types.SimpleNamespace(id=1, name="HQ"), layer="Network",
                                 request={"source": "10.1.2.250", "destination": "Any", "application": "Facebook"},
                                 result={"ok": True, "published": True, "outcome": "create",
@@ -118,8 +122,8 @@ def test_revert_change_publish_gated(monkeypatch):
 
 def test_revert_change_marks_reverted_then_refuses_again(monkeypatch, cdb):
     monkeypatch.setattr(app_settings, "get", lambda k: True if k == "mcp_allow_publish" else None)
-    monkeypatch.setattr(mcp_tools, "_server_secret",
-                        lambda db, sid: (types.SimpleNamespace(id=int(sid), host="h"), "secret"))
+    monkeypatch.setattr(mgmt_creds, "get_secret", lambda db, ms: "secret")
+    monkeypatch.setattr(gaia_client, "ensure_pinned", lambda db, ms: None)
     seen = {}
     monkeypatch.setattr(aa, "revert_execute", lambda srv, sec, ops, publish=False, disable_added_rules=False:
                         seen.update(ops=ops, publish=publish, disable=disable_added_rules) or {"ok": True, "reverted": publish})
@@ -133,8 +137,8 @@ def test_revert_change_marks_reverted_then_refuses_again(monkeypatch, cdb):
 
 def test_revert_change_disable_mode_passthrough(monkeypatch, cdb):
     monkeypatch.setattr(app_settings, "get", lambda k: True if k == "mcp_allow_publish" else None)
-    monkeypatch.setattr(mcp_tools, "_server_secret",
-                        lambda db, sid: (types.SimpleNamespace(id=int(sid), host="h"), "secret"))
+    monkeypatch.setattr(mgmt_creds, "get_secret", lambda db, ms: "secret")
+    monkeypatch.setattr(gaia_client, "ensure_pinned", lambda db, ms: None)
     seen = {}
     monkeypatch.setattr(aa, "revert_execute", lambda srv, sec, ops, publish=False, disable_added_rules=False:
                         seen.update(disable=disable_added_rules) or
@@ -146,6 +150,29 @@ def test_revert_change_disable_mode_passthrough(monkeypatch, cdb):
 def test_revert_change_unknown_id(cdb):
     out = mcp_tools.revert_change(999, publish=False)
     assert out["ok"] is False and "no recorded change" in out["error"]
+
+
+def test_revert_change_deleted_server_does_not_misroute(monkeypatch, cdb):
+    # H4: the original server was deleted (stale server_id=5), and a DIFFERENT surviving server's host contains
+    # that digit ("10.0.0.5"). revert_change must resolve STRICTLY by id, return "no longer exists", and NEVER
+    # fuzzy-match onto the wrong live SMS or call revert_execute.
+    monkeypatch.setattr(app_settings, "get", lambda k: True if k == "mcp_allow_publish" else None)
+    monkeypatch.setattr(mgmt_creds, "get_secret", lambda db, ms: "secret")
+    monkeypatch.setattr(gaia_client, "ensure_pinned", lambda db, ms: None)
+    called = {"revert": False}
+    monkeypatch.setattr(aa, "revert_execute",
+                        lambda *a, **k: called.update(revert=True) or {"ok": True, "reverted": True})
+    with cdb() as s:
+        s.add(ManagementServer(id=1, name="DR", host="10.0.0.5", username="admin", owner_id=1))  # host has '5'
+        s.commit()
+        row = change_log.record(s, server=types.SimpleNamespace(id=5, name="OldSMS"), layer="Network",
+                                request={"source": "x", "destination": "Any"},
+                                result={"ok": True, "published": True, "outcome": "create",
+                                        "inverse": [{"op": "delete-access-rule", "uid": "u1", "layer": "Network"}]})
+        cid = row.id
+    out = mcp_tools.revert_change(cid, publish=True)
+    assert out["ok"] is False and "no longer exists" in out["error"]
+    assert called["revert"] is False
 
 
 def test_apply_dry_run_always_allowed(monkeypatch):

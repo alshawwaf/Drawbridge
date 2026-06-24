@@ -337,6 +337,29 @@ def test_decide_no_op_when_port_already_in_mixed_service_cell():
     assert d.outcome is Outcome.NO_OP   # rule already permits tcp/443 (plus Facebook) for that exact flow
 
 
+def test_mixed_kind_request_vs_single_leg_rule_is_not_a_false_no_op():
+    # H3: a service-GROUP REQUEST bundling tcp/443 + Facebook, against a rule granting ONLY the Facebook leg
+    # (same src/dst). svc_relation must MEET both legs -> OVERLAP (port leg ungranted), so decide() does NOT
+    # report a false NO_OP "already permitted" while the tcp/443 leg is actually dropped by cleanup.
+    req = AccessRequest(["10.0.0.5/32"], ["1.1.1.1/32"]); req.svc_set = _mixed_svc(443, "Facebook")
+    fb_only = _rule("fb", 1, "Accept", _host("10.0.0.5"), _host("1.1.1.1"), _app({"Facebook"}))
+    assert aa.svc_relation(req.svc(), fb_only.svc) is Relation.OVERLAP
+    assert aa.decide(req, [fb_only, CLEANUP]).outcome is not Outcome.NO_OP
+    # symmetric: a rule granting only the tcp/443 leg is likewise not a clean cover (the app leg is ungranted)
+    port_only = _rule("pt", 1, "Accept", _host("10.0.0.5"), _host("1.1.1.1"), _tcp(443))
+    assert aa.svc_relation(req.svc(), port_only.svc) is Relation.OVERLAP
+
+
+def test_mixed_kind_request_covered_when_rule_holds_both_legs():
+    # the genuine match: a rule granting BOTH tcp/443 AND Facebook covers the mixed group request (no false miss)
+    req_svc = ServiceSet(by_proto={"tcp": aa._ports_to_iv("443")}, apps={"Facebook"})
+    assert aa.svc_relation(req_svc, _mixed_svc(443, "Facebook")) in (Relation.SUBSET, Relation.EQUAL)
+    # and a named+port group (icmp + tcp/443) vs a rule granting only icmp -> OVERLAP, never EQUAL
+    grp = ServiceSet(by_proto={"tcp": aa._ports_to_iv("443")}, named={("icmp", "echo-request")})
+    icmp_only = ServiceSet(named={("icmp", "echo-request")})
+    assert aa.svc_relation(grp, icmp_only) is Relation.OVERLAP
+
+
 def test_decide_partial_drop_in_path_creates_above_it():
     # a /32 deny inside the /24 request: it's fully RESOLVED, so we create the allow ABOVE it to make the
     # full /24 work (first-match hits the allow before the partial deny).
@@ -1669,6 +1692,21 @@ def test_scoped_profile_overrides_global_by_specificity(monkeypatch):
     # server matched by ID also works
     store["aa_scope_overrides"] = "7 = conservative\n"
     assert not aa._decide_options(srv, "X").prefer_widen
+
+
+def test_scoped_profile_layer_beats_server_on_collision(monkeypatch):
+    # H1: when BOTH a bare-server line and a more-specific *:layer line match the SAME (server, layer), the
+    # layer-scoped line must win — documented order is exact ▸ *:layer ▸ server. (Previously server-
+    # specificity was weighted above layer-specificity, so the bare-server line wrongly won the tie.)
+    import types
+    from app.services import app_settings
+    store = {"aa_scope_overrides": "Production = conservative\n*:DMZ = aggressive\n"}
+    monkeypatch.setattr(app_settings, "get", lambda k: store.get(k))
+    prod = types.SimpleNamespace(id=9, name="Production")
+    assert aa._scoped_profile(app_settings, prod, "DMZ") == "aggressive"      # *:DMZ beats bare Production
+    assert aa._scoped_profile(app_settings, prod, "Other") == "conservative"  # only the server line matches
+    store["aa_scope_overrides"] = "Production:DMZ = balanced\n*:DMZ = aggressive\n"
+    assert aa._scoped_profile(app_settings, prod, "DMZ") == "balanced"        # exact server:layer still wins
 
 
 def test_decision_option_endpoint_toggles_and_switches_to_custom(monkeypatch):

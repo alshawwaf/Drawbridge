@@ -183,6 +183,11 @@ class MgmtSession:
         task_id = res.get("task-id")
         if task_id:
             res["task"] = self.wait_for_task(task_id, what="publish")
+        # A successful publish advanced this server's policy revision -> drop its read cache NOW so the next
+        # preview/decide sees the new rulebase immediately, not the (up-to-revalidate-window) stale copy.
+        # Doing it here covers EVERY write path uniformly — execute/remove/revert AND the generic policy
+        # editor (apply_changes), which previously published without invalidating (stale-preview window).
+        invalidate_cache(self.server)
         return res
 
     def wait_for_task(self, task_id: str, *, what: str = "task",

@@ -22,13 +22,17 @@ def _resolve_server(db, server_ref):
     rarely matches the user's words). On no match, raise a ValueError that LISTS the available servers, so the
     error itself tells the agent/user what to pick."""
     ms = sid = None
+    numeric = False
     if isinstance(server_ref, int) and not isinstance(server_ref, bool):
-        sid = server_ref
+        sid, numeric = server_ref, True
     elif isinstance(server_ref, str) and server_ref.strip().isdigit():
-        sid = int(server_ref.strip())
+        sid, numeric = int(server_ref.strip()), True
     if sid is not None:
         ms = db.get(ManagementServer, sid)
-    if ms is None and isinstance(server_ref, str) and server_ref.strip():
+    # A purely-numeric ref is an ID lookup ONLY. Never fall through to fuzzy name/host substring matching for
+    # it — a stale id like "5" must not silently resolve to a different server whose host contains "5"
+    # (e.g. 10.0.0.5). That misroute is how a rollback of a deleted server's change hit the WRONG live SMS.
+    if ms is None and not numeric and isinstance(server_ref, str) and server_ref.strip():
         ref = server_ref.strip().lower()
         rows = db.query(ManagementServer).all()
         ms = next((m for m in rows
@@ -303,12 +307,20 @@ def revert_change(change_id: int, publish: bool = False, disable_instead_of_dele
         if change.reverted_at:
             return {"ok": False, "error": f"change {change_id} was already rolled back "
                                           f"at {change.reverted_at.isoformat()}"}
-        if change.server_id is None:
+        # Resolve the original server STRICTLY by id (never the fuzzy name/host matcher) so a deleted server's
+        # stale id can't misroute this DESTRUCTIVE rollback onto a different live SMS.
+        ms = db.get(ManagementServer, change.server_id) if change.server_id is not None else None
+        if ms is None:
             return {"ok": False, "error": "the management server for this change no longer exists"}
+        from . import mgmt_creds
+        secret = mgmt_creds.get_secret(db, ms)
+        if not (ms.username and secret):
+            return {"ok": False, "error": f"server “{ms.name}” (id {ms.id}) has no stored credential"}
         try:
-            ms, secret = _server_secret(db, str(change.server_id))
-        except ValueError as exc:
-            return {"ok": False, "error": str(exc)}
+            from .gaia_client import ensure_pinned
+            ensure_pinned(db, ms)
+        except Exception:  # noqa: BLE001 — pinning is best-effort; the call still verifies the saved cert
+            pass
         result = aa.revert_execute(ms, secret, list(change.inverse_json or []), publish=publish,
                                    disable_added_rules=disable_instead_of_delete)
         if result.get("ok") and result.get("reverted"):

@@ -582,6 +582,7 @@ def test_publish_waits_for_task_and_returns_on_success(monkeypatch):
     """publish is async — it must poll show-task and only return once the task actually succeeded."""
     monkeypatch.setattr(mgmt_api.time, "sleep", lambda *_: None)
     s = mgmt_api.MgmtSession.__new__(mgmt_api.MgmtSession)
+    s.server = None                       # publish() invalidates this server's cache on success; None = clear-all
     seq = iter([
         {"task-id": "t1"},                                              # publish
         {"tasks": [{"task-id": "t1", "status": "in progress"}]},        # show-task #1
