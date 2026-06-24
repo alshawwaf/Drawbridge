@@ -1177,31 +1177,39 @@ def _decide(req: AccessRequest, rules: list[ParsedRule], options: "DecideOptions
         # application carved out, never an over-grant. (Tunable: app_carveout off -> fall through to the
         # conservative note + place-below path instead.) Only a real application request qualifies; a port
         # request above a port-drop would grant the whole port -> not a carve-out, so it is excluded.
-        if (req_svc.apps and r.is_drop and interferes
-                and covering_drop is None and not (_is_catchall(r) and i == last_enabled)):
-            if options.app_carveout:
-                # Prefer WIDENING a clean accept candidate already found ABOVE this drop over a new carve-out
-                # rule — the widened rule sits above the drop, so first-match grants the app and the drop is
-                # moot (same effect, one fewer rule). Safe: target above, no opaque possible-deny passed.
-                # GATED BY app_carveout: when carve-out is OFF the operator wants NO grant above the drop, so
-                # we must NOT widen (that would put the grant above it = override) — fall through to place-below.
+        # Only a FULLY-RESOLVED, UNCONDITIONAL drop qualifies for the carve-out. A conditional (VPN/time/
+        # data-gated) drop, a negated/unresolvable cell (complex_eff), or an approx (gateway-main-IP) drop is
+        # a POSSIBLE block whose true reach/applicability we can't prove — leaping the app-Accept above it
+        # would silently override an unmodeled deny. Those cases FALL THROUGH to the conservative
+        # note-and-place-below handlers below (the uncertain_deny floor), exactly like the port path — so the
+        # operator always sees a review note and the grant lands below the possible block.
+        carveable = (req_svc.apps and r.is_drop and interferes and covering_drop is None
+                     and not (_is_catchall(r) and i == last_enabled)
+                     and not (r.conditional and not options.ignore_conditions)
+                     and not complex_eff and not src_approx and not dst_approx)
+        if carveable:
+            # Carving an allow ABOVE a resolved deny IS overriding that deny, so it honors override_blocking_deny
+            # too (consistent with the port path) — both app_carveout AND override_blocking_deny must allow it.
+            if options.app_carveout and options.override_blocking_deny:
+                # Prefer WIDENING a clean accept already ABOVE this drop over a new carve-out rule (same effect,
+                # one fewer rule; the widened rule sits above the drop so first-match grants the app).
                 if options.prefer_widen and widen_target is not None and not uncertain_deny:
                     return _widen_above_block(widen_target, widen_field, r)
                 return Decision(
                     Outcome.CREATE,
-                    f"rule {r.number} ({r.name}) may block the requested application; creating the allow "
-                    f"ABOVE it so Check Point carves out the application (all other traffic still matches "
-                    f"that rule)",
+                    f"rule {r.number} ({r.name}) blocks the requested application; creating the allow ABOVE "
+                    f"it so Check Point carves out just that application — the rule still drops all of its "
+                    f"other traffic",
                     target_rule=r, position={"above": r.uid},
                 )
-            # Carve-out OFF: place BELOW + flag, and STOP. We must NOT continue here — per CP this drop
-            # matches the app on the blocked port, so letting a lower Accept be read as a NO_OP would be a
-            # false "already permitted". The new rule below won't take effect for traffic this rule blocks.
+            # app_carveout OFF, or the operator disallows overriding denies: place BELOW + flag, and STOP.
+            # Returning (not continuing) avoids a lower Accept being read as a false NO_OP — per CP this drop
+            # matches the app on the blocked port, so first-match, the drop wins until the deny is changed.
             return Decision(
                 Outcome.CREATE,
-                f"rule {r.number} ({r.name}) may block the requested application; per policy not carved out "
-                f"— the new rule is placed below it and will not take effect for traffic that rule blocks "
-                f"(review)",
+                f"rule {r.number} ({r.name}) blocks the requested application; per policy the deny is NOT "
+                f"overridden — the new rule is placed below it and will not take effect for traffic that rule "
+                f"blocks (review)",
                 target_rule=r, position={"below": r.uid},
             )
 
