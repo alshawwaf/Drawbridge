@@ -75,20 +75,11 @@ focused on the access-automation engine.</p>
 
 <div class="card">
   <h3 style="margin:0 0 6px;">Suggested agent system prompt</h3>
-  <p class="mcp-note" style="margin:0 0 8px;">Paste this into your agent's <b>system message</b>. It teaches the order —
+  <p class="mcp-note" style="margin:0 0 10px;">Paste this into your agent's <b>system message</b>. It teaches the order —
     <b>pick the management server &amp; layer → decide (read-only) → apply on your OK</b> — so a smaller model doesn't guess
-    a server/layer or loop. Pick your node type:</p>
-  <div class="mcp-tabs" id="mcp-sys-variant" style="margin:0 0 8px;">
-    <button type="button" data-v="builtin" class="active">Built-in MCP node</button>
-    <button type="button" data-v="community">Community node (List + Execute)</button>
-  </div>
-  <p class="mcp-note" id="mcp-sys-desc" style="margin:0 0 10px;"></p>
-  <label style="display:inline-flex;align-items:center;gap:8px;font-size:13px;font-weight:600;margin:0 0 10px;cursor:pointer;">
-    <input type="checkbox" id="mcp-sys-autopilot"> ⚡ Autopilot — one sentence applies <b>&amp; publishes</b> (lab demo)
-  </label>
-  <p class="mcp-note" id="mcp-sys-autohint" style="margin:-4px 0 10px;display:none;">Appends a standing authorization so the
-    agent completes the whole flow — resolve → decide → apply → <b>publish to live policy</b> — in one turn, no confirmation.
-    Pair with the <b>Autopilot</b> behavior profile and <b>Settings → MCP / agent → enable publish</b>. Lab/demo use.</p>
+    a server/layer or loop. Written for n8n's <b>built-in MCP Client Tool</b> (and Claude Desktop / Cursor / VS Code),
+    where each Drawbridge tool is exposed to the agent directly (it calls <code>list_management_servers</code>,
+    <code>decide_access</code>, … by name).</p>
   <div class="mcp-sys-actions">
     <button type="button" class="copybtn" id="mcp-sys-toggle" aria-expanded="false">Show prompt</button>
     <button type="button" class="copybtn" id="mcp-sys-copy">Copy</button>
@@ -155,11 +146,10 @@ focused on the access-automation engine.</p>
       }
       return { fields: [
           { label: 'HTTP Stream URL', value: url },
-          { label: 'Additional Headers — community node (NAME=VALUE, one per line)', value: 'Authorization=' + auth } ],
-        hint: 'Transport: <b>HTTP Streamable</b>, and use the <b>trailing-slash</b> URL above. Two different n8n nodes exist: ' +
-              '<b>(a) the built-in MCP Client Tool</b> — set <b>Authentication = Bearer Auth</b> and paste just the key as the token (n8n adds <code>Authorization: Bearer …</code> for you); ' +
-              '<b>(b) the community node</b> (nerding-io, the credential literally named “MCP Client (HTTP Streamable) API”) — copy the <b>Additional Headers</b> value above into that field. ' +
-              'It parses <code>NAME=VALUE</code> per line, so it must be <code>Authorization=Bearer&nbsp;…</code> with an <b>equals sign</b> — a colon (<code>Authorization:&nbsp;Bearer&nbsp;…</code>) is <b>silently dropped</b> and you get a 401 with no header at all.' };
+          { label: 'Bearer token (Authentication = Bearer Auth)', value: t } ],
+        hint: 'Use n8n\'s <b>built-in MCP Client Tool</b> node: <b>Server Transport = HTTP Streamable</b>, the <b>trailing-slash</b> URL above, ' +
+              '<b>Authentication = Bearer Auth</b>, and paste the <b>token</b> above as the credential\'s token (n8n sends ' +
+              '<code>Authorization: Bearer &lt;key&gt;</code> for you). Set <b>Tools to Include = All</b> so the agent gets every Drawbridge tool.' };
     }
     function render() {
       var c = cfg();
@@ -190,8 +180,7 @@ focused on the access-automation engine.</p>
       var v = tokEl.value.trim(); if (!v) { flash(this, 'No key'); return; } copyText(this, v);
     });
 
-    var SYS = {
-      builtin: `You are Drawbridge, a Check Point access-automation agent. You turn a plain-language access request into the correct policy change via MCP tools. decide_access does the policy reasoning (no_op | widen | create + first-match placement); you orchestrate and confirm. You have conversation memory — use it.
+    var SYS_BUILTIN = `You are Drawbridge, a Check Point access-automation agent. You turn a plain-language access request into the correct policy change via MCP tools. decide_access does the policy reasoning (no_op | widen | create + first-match placement); you orchestrate and confirm. You have conversation memory — use it.
 
 HARD RULES (obey over anything below):
 1. Rely on memory. Never re-run a call that already succeeded — reuse its result. Do not re-list servers/layers or re-correlate the same name. Repeating calls causes max-iteration loops.
@@ -204,61 +193,9 @@ PLACE THE TARGET RIGHT (this is where requests go wrong): an APPLICATION (Facebo
 
 ORDER (skip a step only if its value is already known): 1 resolve server (rule 3). 2 list_access_layers(server_id) once; pick the meant layer, if unclear ask. 3 correlate_service for a protocol/port word, correlate_application for an app; on candidates, present and ask, never pick silently. 4 decide_access with the resolved server, layer, source, destination, and service/port/application placed per the rule above; report outcome, reason, target rule. 5 if the request did NOT already authorize it, summarize and get a yes (skip when it did). 6 apply_access — publish=true only if the user said publish, else publish=false to dry-run; report.
 
-EXAMPLES: (a) "Allow 10.1.1.5 to the DNS servers on the SMS" -> resolve server, list_access_layers -> "Standard Security", correlate_service "dns" -> domain-udp, decide_access -> widen. (b) "allow 10.1.2.250 to Facebook" -> correlate_application "facebook" -> Facebook, then decide_access with source=10.1.2.250, destination="Any", application="Facebook" (NOT destination="Facebook", NOT a domain). Confirm, then apply_access publish=false.`,
-
-      community: `You are Drawbridge, a Check Point access-automation agent. decide_access does the policy reasoning (no_op | widen | create + first-match placement); you orchestrate and confirm. Use your conversation memory.
-
-HOW TO CALL TOOLS (n8n community "Execute Tool" wrapper): each call sets TWO fields —
-- Tool Name = the EXACT Drawbridge tool name from the list below. It is NOT the word "EXECUTE-TOOL" (that is the n8n operation, not a tool) — that fails.
-- Tool Parameters = that tool's arguments as a FLAT JSON object, e.g. {"server_id": 1}. Do NOT wrap it as {"toolName":...,"arguments":...}; the JSON you give IS the arguments. Send a JSON object, not a quoted string.
-
-TOOLS (name -> arguments):
-- list_management_servers -> {}   (returns id, name, host per server)
-- list_access_layers -> {"server_id": <id-or-name>}
-- correlate_service -> {"server_id": <id-or-name>, "name": "dns"}
-- correlate_application -> {"server_id": <id-or-name>, "name": "Office365"}
-- decide_access -> {"server_id": <id-or-name>, "source": "<ip/cidr>", "destination": "<ip/cidr>", "layer": "<exact>", "port": "53", "protocol": "udp"}   (use "service":"<name>" or "application":"<name>" instead of port when named)
-- apply_access -> same args as decide_access, plus "publish": false
-- summarize_layer / analyze_policy -> {"server_id": <id-or-name>, "layer": "<exact>"}
-
-HARD RULES:
-1. Rely on memory; never re-run a call that succeeded; do not re-list servers/layers or re-correlate a name. Repeating calls cause max-iteration loops.
-2. Never guess a server_id, layer, service, or application — resolve each first. No default "Network". server_id accepts a numeric id OR a name/host.
-3. If the user NAMES the server, use it directly as server_id. ONLY if the server is unstated/ambiguous and several exist: call list_management_servers ONCE, present id + name + host, ask which one, then STOP and wait.
-4. Report what each tool returns (ok, outcome, reason, errors) verbatim; never fabricate results or an incident/ticket id. On ok:false, STOP and report it.
-5. decide_access is READ-ONLY. If the request ALREADY authorizes the change (says apply/create/publish, e.g. "allow X and publish"), that IS the approval — go decide -> apply in the same turn. Otherwise decide first, summarize, and wait for a yes. apply_access defaults to publish=false (dry-run); set publish=true ONLY when the user explicitly said publish/commit (admin-gated; if refused, dry-run and report).
-
-PLACE THE TARGET RIGHT (common mistake): an APPLICATION (Facebook, Office365) goes in "application" with "destination":"Any" — NEVER in destination, NEVER as a domain. A port/service in "service"/"port". A SITE/domain (facebook.com, .example.com) in "destination" with "destination_kind":"domain". A host/subnet in "destination". "to Facebook" = the app; "to facebook.com" = a domain.
-
-ORDER: 1 resolve server (rule 3). 2 list_access_layers. 3 correlate service/app if named, then place it per the rule above. 4 decide_access; report outcome + reason. 5 confirm first UNLESS the request already authorized it. 6 apply_access (publish=true only if the user said publish).
-
-EXAMPLES (Tool Name = decide_access): port -> Tool Parameters {"server_id":1,"source":"10.1.1.5","destination":"1.2.3.4","layer":"Standard Security","port":"53","protocol":"udp"} · application -> {"server_id":1,"source":"10.1.2.250","destination":"Any","layer":"Network","application":"Facebook"} (NOT destination:"Facebook")`
-    };
-    var SYS_DESC = {
-      builtin: "For n8n's <b>built-in MCP Client Tool</b> (and Claude Desktop / Cursor / VS Code) — each Drawbridge tool is exposed to the agent directly, so it calls <code>list_management_servers</code>, <code>decide_access</code>, … by name.",
-      community: "For the <b>community node</b> (nerding-io) <b>Execute Tool</b> wrapper: the model sets <b>Tool Name</b> to a real Drawbridge tool and <b>Tool Parameters</b> to that tool's arguments (NOT a literal “EXECUTE-TOOL”, and no <code>{toolName, arguments}</code> wrapper). ⚠️ This wrapper is easy to get wrong — if your n8n is ≥ 1.104, prefer the <b>Built-in MCP node</b> tab instead: it exposes each tool directly with typed arguments and avoids this whole class of error."
-    };
-    var AUTOPILOT = `
-
-AUTOPILOT MODE (lab demo — standing authorization): complete the WHOLE flow in ONE turn without asking for confirmation — resolve, decide, apply, and PUBLISH the change to live policy. You still MUST resolve the server / layer / service first (never guess), report exactly what each tool returned, and on ok:false STOP and report it. Call apply_access with publish=true. (Requires the admin to have enabled MCP publish; if publish is refused, say so. Pair with the "Autopilot" behavior profile.)`;
-    var sysVariant = 'builtin';
-    var autopilotEl = document.getElementById('mcp-sys-autopilot');
-    function currentPrompt() { return SYS[sysVariant] + (autopilotEl.checked ? AUTOPILOT : ''); }
-    function renderSys() {
-      document.getElementById('mcp-sysprompt').textContent = currentPrompt();
-      document.getElementById('mcp-sys-desc').innerHTML = SYS_DESC[sysVariant];
-      document.getElementById('mcp-sys-autohint').style.display = autopilotEl.checked ? '' : 'none';
-    }
-    var sysVarTabs = document.getElementById('mcp-sys-variant');
-    sysVarTabs.addEventListener('click', function (e) {
-      var b = e.target.closest('button[data-v]'); if (!b) return;
-      sysVariant = b.getAttribute('data-v');
-      sysVarTabs.querySelectorAll('button').forEach(function (x) { x.classList.toggle('active', x === b); });
-      renderSys();
-    });
-    autopilotEl.addEventListener('change', renderSys);
-    renderSys();
-    document.getElementById('mcp-sys-copy').addEventListener('click', function () { copyText(this, currentPrompt()); });
+EXAMPLES: (a) "Allow 10.1.1.5 to the DNS servers on the SMS" -> resolve server, list_access_layers -> "Standard Security", correlate_service "dns" -> domain-udp, decide_access -> widen. (b) "allow 10.1.2.250 to Facebook" -> correlate_application "facebook" -> Facebook, then decide_access with source=10.1.2.250, destination="Any", application="Facebook" (NOT destination="Facebook", NOT a domain). Confirm, then apply_access publish=false.`;
+    document.getElementById('mcp-sysprompt').textContent = SYS_BUILTIN;
+    document.getElementById('mcp-sys-copy').addEventListener('click', function () { copyText(this, SYS_BUILTIN); });
     var sysBox = document.getElementById('mcp-sys-box'), sysToggle = document.getElementById('mcp-sys-toggle');
     sysToggle.addEventListener('click', function () {
       var opening = sysBox.hasAttribute('hidden');
