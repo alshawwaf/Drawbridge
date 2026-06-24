@@ -4,9 +4,16 @@ installed via Artifactory."""
 import asyncio
 import types
 
+import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
+
 from app import mcp_server
+from app import models  # noqa: F401 — registers tables on Base.metadata
+from app.db import Base
 from app.services import access_automation as aa
-from app.services import app_settings, mcp_tools
+from app.services import app_settings, change_log, mcp_tools
 
 
 def _fake_server(monkeypatch):
@@ -73,6 +80,60 @@ def test_remove_access_publish_gate_and_delegates(monkeypatch):
                         seen.update(publish=publish) or {"ok": True, "outcome": "deny", "applied": True})
     out = mcp_tools.remove_access(1, "10.1.2.250", "Any", "Network", application="Facebook")
     assert out["outcome"] == "deny" and seen["publish"] is False
+
+
+# --- list_changes / revert_change (rollback) ------------------------------------------------------
+@pytest.fixture()
+def cdb(monkeypatch):
+    eng = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(eng)
+    Session = sessionmaker(bind=eng)
+    monkeypatch.setattr(mcp_tools, "SessionLocal", Session)
+    return Session
+
+
+def _seed_change(Session, reverted=False):
+    with Session() as s:
+        row = change_log.record(s, server=types.SimpleNamespace(id=1, name="HQ"), layer="Network",
+                                request={"source": "10.1.2.250", "destination": "Any", "application": "Facebook"},
+                                result={"ok": True, "published": True, "outcome": "create",
+                                        "inverse": [{"op": "delete-access-rule", "uid": "u9", "layer": "Network"}]})
+        if reverted:
+            change_log.mark_reverted(s, row, actor="user:x")
+        return row.id
+
+
+def test_list_changes_returns_recorded(cdb):
+    cid = _seed_change(cdb)
+    out = mcp_tools.list_changes()
+    assert out["ok"] and any(c["id"] == cid and c["outcome"] == "create" and not c["reverted"]
+                             for c in out["changes"])
+
+
+def test_revert_change_publish_gated(monkeypatch):
+    monkeypatch.setattr(app_settings, "get", lambda k: False if k == "mcp_allow_publish" else None)
+    out = mcp_tools.revert_change(1, publish=True)
+    assert out["ok"] is False and "disabled" in out["error"]    # gate returns before touching the DB
+
+
+def test_revert_change_marks_reverted_then_refuses_again(monkeypatch, cdb):
+    monkeypatch.setattr(app_settings, "get", lambda k: True if k == "mcp_allow_publish" else None)
+    monkeypatch.setattr(mcp_tools, "_server_secret",
+                        lambda db, sid: (types.SimpleNamespace(id=int(sid), host="h"), "secret"))
+    seen = {}
+    monkeypatch.setattr(aa, "revert_execute", lambda srv, sec, ops, publish=False:
+                        seen.update(ops=ops, publish=publish) or {"ok": True, "reverted": publish})
+    cid = _seed_change(cdb)
+    out = mcp_tools.revert_change(cid, publish=True)
+    assert out["ok"] and out["reverted"] is True and out["change_id"] == cid
+    assert seen["ops"] == [{"op": "delete-access-rule", "uid": "u9", "layer": "Network"}]
+    again = mcp_tools.revert_change(cid, publish=True)           # idempotent guard
+    assert again["ok"] is False and "already" in again["error"]
+
+
+def test_revert_change_unknown_id(cdb):
+    out = mcp_tools.revert_change(999, publish=False)
+    assert out["ok"] is False and "no recorded change" in out["error"]
 
 
 def test_apply_dry_run_always_allowed(monkeypatch):

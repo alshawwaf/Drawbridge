@@ -707,6 +707,8 @@ def _fake_session_factory(calls, hosts=None, services=None, fail_on=None):
                 port = str((payload or {}).get("filter"))
                 name = services.get((proto, port))
                 return {"objects": [{"name": name, "port": port}]} if name else {"objects": []}
+            if command == "add-access-rule":          # the SMS returns the created rule incl. its uid
+                return {"uid": f"new-rule-{sum(1 for c, _ in calls if c == 'add-access-rule')}"}
             return {}
 
         def publish(self):
@@ -1786,6 +1788,93 @@ def test_decide_removal_exact_disables_despite_unrelated_accept_below():
     d = aa.decide_removal(AccessRequest(["10.1.2.250/32"], ["1.1.1.1/32"], application="Facebook"),
                           [rx, other, CLEANUP])
     assert d.outcome is aa.RemovalOutcome.DISABLE and d.target_rule.uid == "rx"
+
+
+# ===== Rollback / undo: each applied change records its exact INVERSE op-list =====================
+def test_execute_create_records_inverse_delete(monkeypatch):
+    calls = []
+    monkeypatch.setattr(aa, "MgmtSession", _fake_session_factory(calls))
+    monkeypatch.setattr(aa, "load_layer", lambda s, layer, package=None: [WEB, CLEANUP])
+    res = aa.execute(object(), "secret",
+                     AccessRequest(["192.168.9.9/32"], ["172.16.9.9/32"], "tcp", "22"),
+                     "Network", publish=True)
+    assert res["outcome"] == "create" and res["created_uid"]
+    assert res["inverse"] == [{"op": "delete-access-rule", "uid": res["created_uid"], "layer": "Network"}]
+
+
+def test_execute_widen_records_inverse_remove(monkeypatch):
+    calls = []
+    monkeypatch.setattr(aa, "MgmtSession", _fake_session_factory(calls))
+    monkeypatch.setattr(aa, "load_layer", lambda s, layer, package=None: [WEB, CLEANUP])
+    res = aa.execute(object(), "secret",
+                     AccessRequest(["192.168.9.9/32"], ["172.16.5.10/32"], "tcp", "443"),
+                     "Network", publish=True)
+    assert res["outcome"] == "widen"
+    assert res["inverse"] == [{"op": "set-access-rule", "uid": "r8", "layer": "Network",
+                               "field": "source", "remove": "h-192-168-9-9"}]
+
+
+def test_remove_disable_records_inverse_reenable(monkeypatch):
+    calls = []
+    monkeypatch.setattr(aa, "MgmtSession", _fake_session_factory(calls))
+    rule = _rule("rx", 3, "Accept", _host("10.1.2.250"), _host("1.1.1.1"), _app({"Facebook"}))
+    monkeypatch.setattr(aa, "load_layer", lambda s, layer, package=None: [rule, CLEANUP])
+    res = aa.remove_execute(object(), "secret",
+                            AccessRequest(["10.1.2.250/32"], ["1.1.1.1/32"], application="Facebook"),
+                            "L", publish=True)
+    assert res["outcome"] == "disable"
+    assert res["inverse"] == [{"op": "set-access-rule", "uid": "rx", "layer": "L", "enabled": True}]
+
+
+def test_remove_deny_records_inverse_delete(monkeypatch):
+    calls = []
+    monkeypatch.setattr(aa, "MgmtSession", _fake_session_factory(calls))
+    broad = _rule("r2", 2, "Accept", _net("10.1.2.0/24"), ANY, _app({"Facebook"}))
+    monkeypatch.setattr(aa, "load_layer", lambda s, layer, package=None: [broad, CLEANUP])
+    res = aa.remove_execute(object(), "secret",
+                            AccessRequest(["10.1.2.250/32"], ["Any"], application="Facebook"),
+                            "L", publish=True)
+    assert res["outcome"] == "deny" and res["created_uid"]
+    assert res["inverse"] == [{"op": "delete-access-rule", "uid": res["created_uid"], "layer": "L"}]
+
+
+def test_revert_execute_replays_each_op_kind_and_publishes(monkeypatch):
+    calls = []
+    monkeypatch.setattr(aa, "MgmtSession", _fake_session_factory(calls))
+    ops = [{"op": "delete-access-rule", "uid": "u1", "layer": "L"},
+           {"op": "set-access-rule", "uid": "u2", "layer": "L", "enabled": True},
+           {"op": "set-access-rule", "uid": "u3", "layer": "L", "field": "source", "remove": "h-x"}]
+    res = aa.revert_execute(object(), "secret", ops, publish=True)
+    assert res["ok"] and res["reverted"] is True
+    assert ("delete-access-rule", {"uid": "u1", "layer": "L"}) in calls
+    assert ("set-access-rule", {"uid": "u2", "layer": "L", "enabled": True}) in calls
+    assert ("set-access-rule", {"uid": "u3", "layer": "L", "source": {"remove": "h-x"}}) in calls
+    assert ("publish", {}) in calls and ("discard", {}) not in calls
+
+
+def test_revert_execute_dry_run_discards(monkeypatch):
+    calls = []
+    monkeypatch.setattr(aa, "MgmtSession", _fake_session_factory(calls))
+    res = aa.revert_execute(object(), "secret",
+                            [{"op": "delete-access-rule", "uid": "u1", "layer": "L"}], publish=False)
+    assert res["ok"] and res["reverted"] is False and res["validated"] is True
+    cmds = [c for c, _ in calls]
+    assert "delete-access-rule" in cmds and "discard" in cmds and "publish" not in cmds
+
+
+def test_revert_execute_rejects_unknown_op_and_discards(monkeypatch):
+    calls = []
+    monkeypatch.setattr(aa, "MgmtSession", _fake_session_factory(calls))
+    res = aa.revert_execute(object(), "secret",
+                            [{"op": "add-host", "uid": "u1", "layer": "L"}], publish=True)
+    assert res["ok"] is False and "unsupported" in res["error"]
+    cmds = [c for c, _ in calls]
+    assert "add-host" not in cmds and "publish" not in cmds and "discard" in cmds
+
+
+def test_revert_execute_no_inverse_is_an_error():
+    res = aa.revert_execute(object(), "secret", [], publish=True)
+    assert res["ok"] is False and "inverse" in res["error"]
 
 
 # ===== services-group / named-service request must MATCH dereferenced rule cells (DNS-layer miss) =====

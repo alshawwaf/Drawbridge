@@ -271,6 +271,35 @@ class ApiKey(Base):
     expires_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class AppliedChange(Base):
+    """An access-automation change that was PUBLISHED to a live policy — recorded so it can be rolled back.
+    Drawbridge knows EXACTLY what it did, so each row stores the precomputed INVERSE op(s) (the AlgoSec /
+    Tufin 'change set' model): reverting replays that inverse in one publish, surgically undoing just this
+    change without touching the rest of the policy or doing a heavy full-DB revision rollback. Dry-runs are
+    never recorded (nothing was committed). Objects the change created (hosts/networks/services) are NOT
+    deleted on revert — they may now be referenced elsewhere — only the rule change is undone."""
+
+    __tablename__ = "applied_changes"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    created_by: Mapped[str] = mapped_column(String(120), default="")   # "user:alice" | "mcp:<key>" | "webhook"
+    server_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    server_name: Mapped[str] = mapped_column(String(255), default="")  # snapshot (the server may be deleted)
+    layer: Mapped[str] = mapped_column(String(255), default="")
+    package: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    action: Mapped[str] = mapped_column(String(12), default="apply")   # "apply" | "remove"
+    outcome: Mapped[str] = mapped_column(String(12), default="")       # create | widen | disable | deny
+    summary: Mapped[str] = mapped_column(Text, default="")             # human one-liner for the history list
+    ticket_id: Mapped[str] = mapped_column(String(120), default="")
+    request_json: Mapped[dict] = mapped_column(JSON, default=dict)     # the request tuple (display + audit)
+    inverse_json: Mapped[list] = mapped_column(JSON, default=list)     # precomputed inverse op(s) — see revert
+    objects_json: Mapped[list] = mapped_column(JSON, default=list)     # object names touched (display only)
+    reverted_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    reverted_by: Mapped[str] = mapped_column(String(120), default="")
+    revert_error: Mapped[str] = mapped_column(Text, default="")        # last failed-revert reason, if any
+
+
 class Notification(Base):
     """A persisted, per-user notification for the header bell. Every flash message is also recorded
     here so the admin can review and delete past notifications (transient toast + durable history)."""
