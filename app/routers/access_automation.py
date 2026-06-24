@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 
 from ..config import get_settings
 from ..db import get_db
-from ..models import ManagementServer, User
+from ..models import AppliedChange, ManagementServer, User, utcnow
 from ..security import get_user_or_none
 from ..services import access_automation as aa
 from ..services import api_keys, app_settings, applications, change_log, decision_tree, mgmt_api, mgmt_creds, services, table_prefs, ticketing, typed_objects
@@ -324,13 +324,34 @@ def aa_revert(sid: int, cid: int, body: RevertBody, request: Request, db: Sessio
         return JSONResponse({"error": "This change was already rolled back."}, status_code=400)
     if not change.inverse_json:
         return JSONResponse({"error": "This change has no recorded inverse to roll back."}, status_code=400)
-    result = aa.revert_execute(ms, secret, list(change.inverse_json or []), publish=body.publish,
-                               disable_added_rules=body.disable)
-    if result.get("ok") and result.get("reverted"):
-        change_log.mark_reverted(db, change, actor=f"user:{user.username}")
-    elif not result.get("ok"):
-        change_log.mark_revert_failed(db, change, result.get("error", ""))
-    return JSONResponse({**result, "change_id": change.id}, status_code=200 if result.get("ok") else 400)
+    inverse = list(change.inverse_json or [])
+    actor = f"user:{user.username}"
+    if body.publish:
+        # ATOMIC claim BEFORE touching the SMS: a conditional UPDATE on reverted_at IS NULL ensures only ONE
+        # of two concurrent reverts proceeds (no double publish, no spurious error stamped on a reverted row).
+        # Stamping first also means a successful SMS revert can never be reported as a failure (M5): the row
+        # is already marked; on SMS failure we release the claim below.
+        claimed = (db.query(AppliedChange)
+                   .filter(AppliedChange.id == cid, AppliedChange.reverted_at.is_(None))
+                   .update({"reverted_at": utcnow(), "reverted_by": actor, "revert_error": ""},
+                           synchronize_session=False))
+        db.commit()
+        if not claimed:
+            return JSONResponse({"error": "This change was already rolled back."}, status_code=400)
+    result = aa.revert_execute(ms, secret, inverse, publish=body.publish, disable_added_rules=body.disable)
+    if body.publish and not (result.get("ok") and result.get("reverted")):
+        # the SMS revert did not commit -> RELEASE the claim so the change stays revertable + record why.
+        # Best-effort: a bookkeeping hiccup must never mask the SMS result we return below.
+        try:
+            db.query(AppliedChange).filter(AppliedChange.id == cid).update(
+                {"reverted_at": None, "reverted_by": "", "revert_error": (result.get("error") or "")[:2000]},
+                synchronize_session=False)
+            db.commit()
+        except Exception:  # noqa: BLE001
+            db.rollback()
+            import logging
+            logging.getLogger("dcsim.access_automation").exception("releasing revert claim failed")
+    return JSONResponse({**result, "change_id": cid}, status_code=200 if result.get("ok") else 400)
 
 
 # --- Generic ticketing webhook (no portal session; authenticated by a shared token) ----------
@@ -420,6 +441,12 @@ async def aa_webhook(request: Request, db: Session = Depends(get_db)):
 
     # Push the result back to the originating system (generic callback_url, or the ServiceNow adapter).
     callback = ticketing.notify(ticket, result)
-    return JSONResponse({"ticket_id": ticket.ticket_id, "applied": ticket.apply,
+    # Report what actually HAPPENED, not the request's intent: a no_op / review / unresolved-object run
+    # commits nothing even when ticket.apply was true, so a consumer keying on the top-level flag must not
+    # read "access granted". `published` mirrors the real commit; `outcome` lets the caller branch precisely.
+    return JSONResponse({"ticket_id": ticket.ticket_id,
+                         "applied": bool(result.get("applied")),
+                         "published": bool(result.get("published")),
+                         "outcome": result.get("outcome"),
                          "result": result, "callback": callback},
                         status_code=200 if result.get("ok") else 400)
