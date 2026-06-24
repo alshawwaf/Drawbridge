@@ -190,6 +190,48 @@ def apply_access(server_id: str, source: str, destination: str, layer: str, serv
         return {"ok": False, "applied": False, "published": False, "error": f"{type(exc).__name__}: {exc}"}
 
 
+def remove_access(server_id: str, source: str, destination: str, layer: str, service: str | None = None,
+                  port: str | None = None, protocol: str = "tcp", application: str | None = None,
+                  package: str | None = None, publish: bool = False, ticket_id: str = "",
+                  source_kind: str = "ip", destination_kind: str = "ip") -> dict:
+    """REVOKE an access (the inverse of apply_access): find the rule that grants src->dst:svc and remove it
+    with the least-disruptive safe move — DISABLE a rule that grants exactly this, or insert a least-privilege
+    DROP above a broader rule so first-match denies just this flow. no_op = not permitted; review = granted via
+    an opaque/inline/conditional/multi-rule path (won't guess a destructive change). With publish=false it
+    DRY-RUNS (validate then discard); publish=true COMMITS, allowed ONLY when 'mcp_allow_publish' is enabled.
+
+    ``server_id`` is the numeric id OR the server name/host from list_management_servers."""
+    if publish:
+        from . import app_settings
+        try:
+            allowed = bool(app_settings.get("mcp_allow_publish"))
+        except Exception:  # noqa: BLE001
+            allowed = False
+        if not allowed:
+            return {"ok": False, "outcome": "review", "applied": False, "published": False,
+                    "error": "publishing is disabled for the MCP agent — an admin must enable "
+                             "'Let the MCP agent publish to live policy' in Settings. Re-run with "
+                             "publish=false to dry-run (validate then discard)."}
+    db = SessionLocal()
+    try:
+        ms, secret = _server_secret(db, server_id)
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc)}
+    finally:
+        db.close()
+    from . import access_automation as aa
+    try:
+        req = _build(source, destination, service, port, protocol, application,
+                     source_kind, destination_kind)
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc)}
+    try:
+        return aa.remove_execute(ms, secret, req, layer, package=package, ticket_id=ticket_id, publish=publish)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("remove_access failed (server_id=%s, layer=%r)", server_id, layer)
+        return {"ok": False, "applied": False, "published": False, "error": f"{type(exc).__name__}: {exc}"}
+
+
 def correlate_service(server_id: str, name: str) -> dict:
     """Map a service/protocol name (icmp, GRE, sctp, …) to the real Check Point service object, or return
     candidate matches ('did you mean'). Lets an agent fix a name before deciding."""
