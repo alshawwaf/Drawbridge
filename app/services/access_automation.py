@@ -1548,10 +1548,18 @@ def _still_granted_below(req: AccessRequest, req_src, req_dst, req_svc,
         all_ip = req.src_kind == "ip" and req.dst_kind == "ip"
         complex_eff = bool(src_unknown or dst_unknown or r.svc_unknown or (all_ip and r.complex))
         svc_indeterminate = _svc_indeterminate(req_svc, r.svc)
-        if (_provably_disjoint(rel_src, src_unknown or src_approx)
-                or _provably_disjoint(rel_dst, dst_unknown or dst_approx)
-                or _provably_disjoint(rel_svc, r.svc_unknown or svc_indeterminate)):
-            continue                                      # out of this request's path (incl. a disjoint dyn layer)
+        # DISABLE-vs-DENY safety: only a PROVABLE re-grant below should block the clean disable. Judge
+        # disjointness on the RESOLVED extents (src_unknown / dst_unknown / r.svc_unknown) — NOT folding in
+        # the approx (gateway main-IP) or App-Control (app-vs-L4 ports) CAVEATS. Otherwise an unrelated rule
+        # — e.g. a CP-Updates accept "GW/SMS -> http/https" — looks like it might re-grant a Facebook app
+        # request (its gateway source is approx, its http/https could carry an app) and forces a needless
+        # Drop-above over simply disabling the one rule that grants it. A genuinely-unknown cell (negated /
+        # unresolvable, an opaque app container) is NOT resolved-disjoint, so it still falls through to the
+        # conservative "assume it survives" below.
+        if (_provably_disjoint(rel_src, src_unknown)
+                or _provably_disjoint(rel_dst, dst_unknown)
+                or _provably_disjoint(rel_svc, r.svc_unknown)):
+            continue                                      # disjoint on the resolved extent -> not a re-granter
         # An interfering Dynamic Layer (sk182252, "Apply Layer") is managed out-of-band: its sub-rulebase is
         # invisible to us (inline_rules is None) and MAY grant the flow once the exact ACCEPT above it is
         # disabled. So it can't be proven harmless -> the flow could survive -> force the safe Drop-above.

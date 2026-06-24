@@ -2062,6 +2062,20 @@ def test_decide_removal_disable_blocked_by_opaque_rule_below_falls_back_to_deny(
     assert d.outcome is aa.RemovalOutcome.DENY and d.position == {"above": "ex"}
 
 
+def test_decide_removal_disables_despite_an_unrelated_gateway_http_accept_below():
+    # The reported false-positive: removing 10.1.2.250 -> Facebook with the SINGLE granting Accept, plus an
+    # unrelated "CP Updates" accept below — a gateway source resolved to its main IP (approx) on http/https.
+    # That is NOT a PROVABLE re-grant of the app (resolved-disjoint on service; only an approx + App-Control
+    # caveat makes it "interfere"), so it must NOT force a Drop-above — the engine cleanly DISABLEs the one
+    # rule that grants it.
+    exact = _rule("ex", 4, "Accept", _host("10.1.2.250"), ANY, _app({"Facebook"}))
+    cpupd = _rule("cu", 6, "Accept", _host("10.1.2.1"), ANY, _tcp("80,443"))   # gateway-ish -> http/https
+    cpupd.src_approx = True
+    req = AccessRequest(["10.1.2.250/32"], ["Any"], application="Facebook")
+    d = aa.decide_removal(req, [exact, cpupd, CLEANUP])
+    assert d.outcome is aa.RemovalOutcome.DISABLE and d.target_rule.uid == "ex"
+
+
 # ===== Rollback / undo: each applied change records its exact INVERSE op-list =====================
 def test_execute_create_records_inverse_delete(monkeypatch):
     calls = []
