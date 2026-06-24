@@ -172,14 +172,14 @@ def test_decide_app_widens_accept_above_drop_instead_of_carving_out():
     # request should WIDEN that accept's source (it already sits above the drop -> first-match grants it)
     # rather than create a NEW carve-out rule. Tidier, same effect.
     acc = _rule("acc", 2, "Accept", _host("10.1.2.222"), ANY, _app({"Facebook"}))
-    drop = _rule("sdrop", 3, "Drop", ANY, ANY, _tcp(67))      # specific service -> not the catch-all
+    drop = _rule("sdrop", 3, "Drop", ANY, ANY, _tcp(443))      # a web port (could carry the app) -> in the path
     d = aa.decide(AccessRequest(["10.1.2.250/32"], ["Any"], application="Facebook"), [acc, drop, CLEANUP])
     assert d.outcome is Outcome.WIDEN and d.widen_field == "source" and d.target_rule.uid == "acc"
 
 
 def test_decide_app_carves_out_above_drop_when_no_widen_candidate():
     # No accept candidate above the drop -> the conservative carve-out (create ABOVE the drop) still applies.
-    drop = _rule("sdrop", 3, "Drop", ANY, ANY, _tcp(67))
+    drop = _rule("sdrop", 3, "Drop", ANY, ANY, _tcp(443))
     d = aa.decide(AccessRequest(["10.1.2.250/32"], ["Any"], application="Facebook"), [drop, CLEANUP])
     assert d.outcome is Outcome.CREATE and d.position == {"above": "sdrop"}
 
@@ -187,7 +187,7 @@ def test_decide_app_carves_out_above_drop_when_no_widen_candidate():
 def test_decide_app_carveout_when_prefer_widen_off():
     # prefer_widen OFF: widen is never chosen even with a candidate -> carve out above the drop (knob honored).
     acc = _rule("acc", 2, "Accept", _host("10.1.2.222"), ANY, _app({"Facebook"}))
-    drop = _rule("sdrop", 3, "Drop", ANY, ANY, _tcp(67))
+    drop = _rule("sdrop", 3, "Drop", ANY, ANY, _tcp(443))
     opts = aa.DecideOptions(prefer_widen=False)
     d = aa.decide(AccessRequest(["10.1.2.250/32"], ["Any"], application="Facebook"), [acc, drop, CLEANUP], opts)
     assert d.outcome is Outcome.CREATE and d.position == {"above": "sdrop"}
@@ -197,7 +197,7 @@ def test_decide_app_carveout_off_places_below_not_widen_even_with_candidate():
     # carve-out OFF = "do not put an app-grant above the drop". Even with a widen candidate above the drop,
     # we must NOT widen (that would override the drop) -> create BELOW the drop, honoring the operator choice.
     acc = _rule("acc", 2, "Accept", _host("10.1.2.222"), ANY, _app({"Facebook"}))
-    drop = _rule("sdrop", 3, "Drop", ANY, ANY, _tcp(67))
+    drop = _rule("sdrop", 3, "Drop", ANY, ANY, _tcp(443))
     opts = aa.DecideOptions(app_carveout=False)              # prefer_widen stays default True
     d = aa.decide(AccessRequest(["10.1.2.250/32"], ["Any"], application="Facebook"), [acc, drop, CLEANUP], opts)
     assert d.outcome is Outcome.CREATE and d.position == {"below": "sdrop"}
@@ -1758,6 +1758,50 @@ def test_execute_removal_disable_then_publish(monkeypatch):
     assert res["outcome"] == "disable" and res["applied"] is True and res["published"] is True
     setr = next(p for c, p in calls if c == "set-access-rule")
     assert setr.get("enabled") is False and not any(c == "add-access-rule" for c, _ in calls)
+
+
+def test_app_vs_netbios_drop_is_provably_disjoint():
+    # the screenshot case: a "Sillent Drop" on NetBIOS / DHCP services can NEVER carry a web app, so it is
+    # provably disjoint from a Facebook request — not "indeterminate". A real web-port drop still is.
+    fb = _app({"Facebook"})
+    nbt = ServiceSet(by_proto={"tcp": [(139, 139)], "udp": [(67, 68), (137, 138)]})   # nbsession + bootp + nbname/datagram
+    assert aa._svc_indeterminate(fb, nbt) is False
+    assert aa.svc_relation(fb, nbt) is Relation.DISJOINT
+    web_drop = ServiceSet(by_proto={"tcp": [(443, 443)]})
+    assert aa._svc_indeterminate(fb, web_drop) is True                 # 443 could carry the app -> still uncertain
+    assert aa._svc_indeterminate(fb, ServiceSet(by_proto={"tcp": [(1, 65535)]})) is True   # broad range covers 443
+
+
+def test_decide_removal_steps_over_netbios_silent_drop_to_no_op():
+    # remove 10.1.2.250 -> Facebook with a NetBIOS "Sillent Drop" Any/Any in the path and NO rule granting
+    # Facebook to that host -> the drop is irrelevant (can't carry a web app), so it's a clean NO_OP, not a
+    # false REVIEW blamed on the silent drop. (Exactly the reported behaviour.)
+    nbt = ServiceSet(by_proto={"tcp": [(139, 139)], "udp": [(67, 68), (137, 138)]})
+    silent_drop = _rule("sd", 3, "Drop", ANY, ANY, nbt)
+    win_fb = _rule("r2", 2, "Accept", _host("10.1.2.10"), ANY, _app({"Facebook"}))   # grants another host, not us
+    req = AccessRequest(["10.1.2.250/32"], ["Any"], application="Facebook")
+    d = aa.decide_removal(req, [win_fb, silent_drop, CLEANUP])
+    assert d.outcome is aa.RemovalOutcome.NO_OP
+
+
+def test_decide_removal_finds_grant_below_a_netbios_drop():
+    # if the granting Facebook accept sits BELOW the NetBIOS drop, the walk must step over the (disjoint)
+    # drop and act on the real grant — not stop at the drop with REVIEW.
+    nbt = ServiceSet(by_proto={"tcp": [(139, 139)], "udp": [(137, 138)]})
+    silent_drop = _rule("sd", 3, "Drop", ANY, ANY, nbt)
+    fb_grant = _rule("r9", 9, "Accept", _host("10.1.2.250"), ANY, _app({"Facebook"}))
+    req = AccessRequest(["10.1.2.250/32"], ["Any"], application="Facebook")
+    d = aa.decide_removal(req, [silent_drop, fb_grant, CLEANUP])
+    assert d.outcome is aa.RemovalOutcome.DISABLE and d.target_rule.uid == "r9"
+
+
+def test_decide_removal_reviews_when_app_meets_a_web_port_drop():
+    # a DROP on a web port (443) genuinely could carry the app -> we can't prove it disjoint -> REVIEW stands
+    # (don't guess a destructive change past a possible block). The narrowing must not lose this safety.
+    web_drop = _rule("wd", 3, "Drop", ANY, ANY, ServiceSet(by_proto={"tcp": [(443, 443)]}))
+    req = AccessRequest(["10.1.2.250/32"], ["1.1.1.1/32"], application="Facebook")
+    d = aa.decide_removal(req, [web_drop, CLEANUP])
+    assert d.outcome is aa.RemovalOutcome.REVIEW
 
 
 def test_decide_removal_approx_exact_falls_back_to_deny():

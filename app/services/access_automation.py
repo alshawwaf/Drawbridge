@@ -888,6 +888,21 @@ def _svc_uncertain(req_svc: ServiceSet, rule_svc: ServiceSet) -> bool:
     return False
 
 
+_WEB_APP_PORTS = (80, 443)   # where Check Point App Control identifies a web application: HTTP / HTTPS (/QUIC)
+
+
+def _rule_may_bear_web_app(rule_svc: ServiceSet) -> bool:
+    """Could a rule whose service cell resolves to concrete L4 ports carry an App-Control web application
+    (Facebook, YouTube, Office365, …)? Those apps are identified over HTTP/HTTPS, so a rule scoped to ports
+    that don't include 80/443 — NetBIOS, DHCP/bootp, SSH, SMTP, … — can NEVER match one (provably disjoint).
+    Only a rule whose ports cover 80 or 443 (incl. a broad range that does) keeps the app-vs-L4 uncertainty
+    the carve-out / removal logic must respect. Checks every protocol leg (tcp 80/443, udp 443 for QUIC)."""
+    for ivs in (rule_svc.by_proto or {}).values():
+        if any(lo <= p <= hi for lo, hi in ivs for p in _WEB_APP_PORTS):
+            return True
+    return False
+
+
 def _svc_indeterminate(req_svc: ServiceSet, rule_svc: ServiceSet) -> bool:
     """Can we PROVE the service dimension does NOT match? Not when a PORT request meets a rule whose
     service carries an application (concrete or category) that its port leg doesn't already cover --
@@ -899,13 +914,14 @@ def _svc_indeterminate(req_svc: ServiceSet, rule_svc: ServiceSet) -> bool:
     if (req_svc.by_proto and (rule_svc.apps or rule_svc.opaque)
             and not _portset_covers(rule_svc.by_proto, req_svc.by_proto)):
         return True
-    # SYMMETRIC case: an APPLICATION request meeting a rule that carries L4 ports (tcp/udp/sctp) — App
-    # Control identifies the app over those ports, so we can NEVER prove the rule doesn't match the app.
-    # (Without this, an app request treated a tcp/443 DROP as disjoint and stepped over it -> a false
-    # NO_OP claiming the app is allowed when the gateway is actually dropping it.) Keeps the rule in the
-    # path so a DROP is handled (carved out above) rather than invisibly skipped.
+    # SYMMETRIC case: an APPLICATION request meeting a rule that carries L4 ports — App Control identifies a
+    # (web) app over HTTP/HTTPS, so a rule whose ports COULD carry that traffic (cover 80/443, or a broad
+    # range that does) might match the app -> indeterminate (a tcp/443 DROP must stay in the path, else a
+    # false NO_OP claims the app is allowed when the gateway is dropping it). But a rule scoped to ports that
+    # can NEVER carry a web app — NetBIOS, DHCP/bootp, SSH, a "Silent Drop" — is provably disjoint from the
+    # app: don't let it falsely block a carve-out (apply) or a removal (REVIEW). This is the screenshot case.
     if req_svc.apps and rule_svc.by_proto and not rule_svc.any:
-        return True
+        return _rule_may_bear_web_app(rule_svc)
     return False
 
 
