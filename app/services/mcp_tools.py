@@ -102,6 +102,17 @@ def _build(source, destination, service, port, protocol, application,
                                    destination_kind=destination_kind or "ip")
 
 
+def _autopilot() -> bool:
+    """True when the Autopilot behavior profile is active — surfaced in tool results so a prompt-driven agent
+    knows it is pre-authorized to apply AND publish in one turn (the publish itself is still gated by the
+    admin's mcp_allow_publish). Best-effort: any read failure → False (the agent then confirms as usual)."""
+    try:
+        from . import app_settings
+        return str(app_settings.get("aa_profile") or "") == "autopilot"
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def decide_access(server_id: str, source: str, destination: str, layer: str, service: str | None = None,
                   port: str | None = None, protocol: str = "tcp", application: str | None = None,
                   package: str | None = None,
@@ -130,7 +141,10 @@ def decide_access(server_id: str, source: str, destination: str, layer: str, ser
     except ValueError as exc:
         return {"ok": False, "error": str(exc)}
     try:
-        return aa.preview(ms, secret, req, layer, package=package)
+        res = aa.preview(ms, secret, req, layer, package=package)
+        if isinstance(res, dict):
+            res["autopilot"] = _autopilot()        # signal the agent it may apply+publish in one turn
+        return res
     except Exception as exc:  # noqa: BLE001 — the agent must always get a structured result, never an
         logger.exception("decide_access failed (server_id=%s, layer=%r)", server_id, layer)  # opaque
         return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}                          # MCP error
