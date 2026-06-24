@@ -242,28 +242,48 @@
     secs.forEach(function (s) { io.observe(s); });
   })();
 
-  // Access-automation behavior profile: when a named profile (not "Custom") is active, the individual
-  // knob toggles are managed BY the profile, so grey them as a visual cue. They stay ENABLED (so their
-  // saved values still submit and aren't clobbered) — switching the profile back to Custom re-applies them.
+  // Access-automation behavior profile: selecting a named profile (not "Custom") MIRRORS its knob values
+  // onto the toggles (read-only preview, greyed) so the user SEES what the profile does; "Custom" restores
+  // the user's own saved values and makes them editable. The toggles stay enabled (not `disabled`) so they
+  // still submit — when a profile is active they submit the profile's values (which is what's used anyway).
   (function () {
     var sel = document.querySelector('select[name="aa_profile"]'); if (!sel) return;
     var KNOBS = ['aa_app_carveout', 'aa_override_blocking_deny', 'aa_prefer_widen', 'aa_emit_notes',
                  'aa_ignore_conditions'];
-    var rows = KNOBS.map(function (k) {
-      var el = document.querySelector('[name="' + k + '"]');
-      return el ? el.closest('.setrow') : null;
-    }).filter(Boolean);
+    // mirror of access_automation._PROFILES — keep in lock-step with the server bundles
+    var PROFILES = {
+      conservative: { aa_app_carveout: false, aa_override_blocking_deny: false, aa_prefer_widen: false, aa_emit_notes: true,  aa_ignore_conditions: false },
+      balanced:     { aa_app_carveout: true,  aa_override_blocking_deny: true,  aa_prefer_widen: true,  aa_emit_notes: true,  aa_ignore_conditions: false },
+      aggressive:   { aa_app_carveout: true,  aa_override_blocking_deny: true,  aa_prefer_widen: true,  aa_emit_notes: false, aa_ignore_conditions: true },
+      autopilot:    { aa_app_carveout: true,  aa_override_blocking_deny: true,  aa_prefer_widen: true,  aa_emit_notes: true,  aa_ignore_conditions: true }
+    };
+    var boxes = {}, rows = [];
+    KNOBS.forEach(function (k) {
+      var el = document.querySelector('input[name="' + k + '"]');
+      if (el) { boxes[k] = el; var r = el.closest('.setrow'); if (r) rows.push(r); }
+    });
+    // capture the user's own (saved) values BEFORE any profile mirror overwrites the checkboxes
+    var customVals = {};
+    KNOBS.forEach(function (k) { if (boxes[k]) customVals[k] = boxes[k].checked; });
+    KNOBS.forEach(function (k) {                       // edits in Custom mode update the remembered values
+      if (boxes[k]) boxes[k].addEventListener('change', function () { if (sel.value === 'custom') customVals[k] = boxes[k].checked; });
+    });
     var hint = document.createElement('div');
     hint.className = 'muted small';
     hint.style.cssText = 'margin-top:6px;color:var(--accent);';
     var selRow = sel.closest('.setrow'); if (selRow) selRow.appendChild(hint);
     function sync() {
-      var custom = sel.value === 'custom';
+      var prof = sel.value, custom = prof === 'custom', vals = PROFILES[prof];
       hint.textContent = custom ? '' :
-        'The toggles below are set by the “' + sel.options[sel.selectedIndex].text.split(' —')[0] +
-        '” profile. Switch to Custom to edit them individually.';
+        'Showing the “' + sel.options[sel.selectedIndex].text.split(' —')[0] +
+        '” profile (read-only). Switch to Custom to edit these individually.';
+      KNOBS.forEach(function (k) {
+        if (!boxes[k]) return;
+        if (custom) boxes[k].checked = customVals[k];        // restore the user's own values (editable)
+        else if (vals) boxes[k].checked = !!vals[k];          // mirror the profile so its effect is VISIBLE
+      });
       rows.forEach(function (r) {
-        r.style.opacity = custom ? '' : '0.5';
+        r.style.opacity = custom ? '' : '0.6';
         r.style.pointerEvents = custom ? '' : 'none';
       });
     }
