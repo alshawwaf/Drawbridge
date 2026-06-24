@@ -826,7 +826,9 @@ Content-Type: application/json
         status = '<span class="muted">↩ rolled back ' + when(c.reverted_at) +
                  (c.reverted_by ? ' · ' + esc(c.reverted_by) : '') + '</span>';
       } else if (c.revertable) {
-        status = '<button type="button" class="btn secondary" data-revert="' + c.id + '">Roll back</button>';
+        var adds = (c.outcome === 'create' || c.outcome === 'deny');   // added a rule -> offer disable OR delete
+        status = '<button type="button" class="btn secondary" data-revert="' + c.id + '"' +
+                 (adds ? ' data-adds="1"' : '') + '>Roll back</button>';
         if (c.revert_error) status += '<div class="muted" style="font-size:12px; color:var(--danger); margin-top:4px;">last attempt: ' + esc(c.revert_error) + '</div>';
       } else {
         status = '<span class="muted">—</span>';
@@ -863,19 +865,31 @@ Content-Type: application/json
       var rb = t.closest ? t.closest('[data-revert]') : null;
       if (rb) {
         var cell = rb.parentNode;
-        cell.innerHTML = '<span class="muted" style="margin-right:6px;">Undo this change?</span>' +
-          '<button type="button" class="btn" style="background:var(--danger);border-color:var(--danger);color:#fff;" data-revyes="' + rb.getAttribute('data-revert') + '">Confirm</button> ' +
-          '<button type="button" class="copybtn" data-revno="1">Cancel</button>';
+        var rid = rb.getAttribute('data-revert');
+        if (rb.hasAttribute('data-adds')) {
+          // this change ADDED a rule -> Check Point lets us disable it (reversible) OR delete it outright
+          cell.innerHTML = '<div class="muted" style="margin-bottom:4px;">Undo by:</div>' +
+            '<button type="button" class="btn" data-revyes="' + rid + '" data-mode="disable" title="Keep the rule but turn it off (reversible)">Disable rule</button> ' +
+            '<button type="button" class="btn" style="background:var(--danger);border-color:var(--danger);color:#fff;" data-revyes="' + rid + '" data-mode="delete" title="Remove the rule entirely">Delete rule</button> ' +
+            '<button type="button" class="copybtn" data-revno="1">Cancel</button>';
+        } else {
+          cell.innerHTML = '<span class="muted" style="margin-right:6px;">Undo this change?</span>' +
+            '<button type="button" class="btn" style="background:var(--danger);border-color:var(--danger);color:#fff;" data-revyes="' + rid + '">Confirm</button> ' +
+            '<button type="button" class="copybtn" data-revno="1">Cancel</button>';
+        }
         return;
       }
       if (t.closest && t.closest('[data-revno]')) { load(); return; }
       var yes = t.closest ? t.closest('[data-revyes]') : null;
       if (yes) {
         var cid = yes.getAttribute('data-revyes');
-        yes.disabled = true; yes.textContent = 'Rolling back…';
+        var disable = yes.getAttribute('data-mode') === 'disable';
+        var siblings = yes.parentNode.querySelectorAll('[data-revyes],[data-revno]');
+        siblings.forEach(function (b) { b.disabled = true; });
+        yes.textContent = disable ? 'Disabling…' : 'Rolling back…';
         fetch('/access-automation/' + id + '/changes/' + cid + '/revert', {
           method: 'POST', credentials: 'same-origin',
-          headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ publish: true })
+          headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ publish: true, disable: disable })
         }).then(function (r) { return r.json(); }).then(function (j) {
           if (j.ok && j.reverted) { load(); }
           else {
