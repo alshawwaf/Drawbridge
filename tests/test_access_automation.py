@@ -203,6 +203,25 @@ def test_decide_app_carveout_off_places_below_not_widen_even_with_candidate():
     assert d.outcome is Outcome.CREATE and d.position == {"below": "sdrop"}
 
 
+def test_decide_app_does_not_carve_above_a_conditional_drop():
+    # M1: a CONDITIONAL (VPN-gated) drop is a possible block we can't model — an app request must NOT be
+    # carved ABOVE it (a silent override of an unmodeled deny). It is NOTED and placed BELOW, symmetric with
+    # the port path; previously the app path leapt above it with no note.
+    cond = _rule("cd", 3, "Drop", ANY, ANY, _tcp(443), conditions=("VPN community",))
+    d = aa.decide(AccessRequest(["10.1.2.250/32"], ["Any"], application="Facebook"), [cond, CLEANUP])
+    assert d.outcome is Outcome.CREATE and d.position != {"above": "cd"}
+    assert any("rule 3" in n for n in d.notes)               # the conditional possible-block is flagged
+
+
+def test_decide_app_carveout_honors_override_blocking_deny_off():
+    # M1: carving an app ABOVE a resolved deny IS overriding that deny -> it honors override_blocking_deny.
+    # With that knob OFF (app_carveout still ON), a resolved tcp/443 drop is NOT overridden -> placed below.
+    drop = _rule("sd", 3, "Drop", ANY, ANY, _tcp(443))
+    opts = aa.DecideOptions(app_carveout=True, override_blocking_deny=False)
+    d = aa.decide(AccessRequest(["10.1.2.250/32"], ["Any"], application="Facebook"), [drop, CLEANUP], opts)
+    assert d.outcome is Outcome.CREATE and d.position == {"below": "sd"}
+
+
 def test_decide_widens_accept_above_covering_deny():
     # Same principle for a port request: an accept (same dst+service, differing source) above a covering
     # deny is widened instead of creating a new allow above the deny.
@@ -1250,9 +1269,12 @@ def test_approx_drop_never_under_approximates():
              _irule(2, ["any"], ["any"], ["any"], "drp", od)]
     req = AccessRequest(src_cidrs=["10.7.7.7/32"], dst_cidrs=["Any"], application="Facebook")
     d = aa.decide(req, rules)
-    # an APPLICATION request never steps over a drop whose extent we can't prove — the app is carved out
-    # ABOVE it (a precise single-app allow that achieves the request; all other traffic still hits the drop).
-    assert d.outcome is Outcome.CREATE and d.position == {"above": "r1"}
+    # an APPLICATION request never STEPS OVER (overrides) a drop whose extent we can't prove — a multi-homable
+    # gateway resolved to its main IP is an UNDER-approximation, so we can't be sure how far it reaches. It is
+    # NOTED as a possible block and the new rule is placed BELOW it (symmetric with the port path), NOT carved
+    # above — leaping above an unprovable deny would silently override it (audit M1).
+    assert d.outcome is Outcome.CREATE and d.position != {"above": "r1"}
+    assert any("rule 1" in n for n in d.notes)        # the possible block is flagged for review
 
 
 def test_malformed_port_reviews_not_crashes():
