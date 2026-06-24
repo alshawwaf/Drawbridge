@@ -1714,6 +1714,80 @@ def test_choice_setting_coercion_fails_safe_to_default():
     assert A._coerce(s, None) == "balanced"
 
 
+# ===== REMOVE-access engine (decide_removal — the inverse of decide) ==========================
+def test_decide_removal_no_op_when_not_permitted():
+    d = aa.decide_removal(AccessRequest(["10.5.5.5/32"], ["9.9.9.9/32"], "tcp", "443"), [WEB, CLEANUP])
+    assert d.outcome is aa.RemovalOutcome.NO_OP                       # nothing grants it -> nothing to remove
+
+
+def test_decide_removal_already_denied_is_no_op():
+    drop = _rule("rd", 1, "Drop", _host("10.1.2.250"), _host("1.1.1.1"), _app({"Facebook"}))
+    d = aa.decide_removal(AccessRequest(["10.1.2.250/32"], ["1.1.1.1/32"], application="Facebook"), [drop, CLEANUP])
+    assert d.outcome is aa.RemovalOutcome.NO_OP and d.target_rule.uid == "rd"
+
+
+def test_decide_removal_disable_exact_rule():
+    r = _rule("rx", 3, "Accept", _host("10.1.2.250"), _host("1.1.1.1"), _app({"Facebook"}))
+    d = aa.decide_removal(AccessRequest(["10.1.2.250/32"], ["1.1.1.1/32"], application="Facebook"), [r, CLEANUP])
+    assert d.outcome is aa.RemovalOutcome.DISABLE and d.target_rule.uid == "rx"   # rule is exactly this access
+
+
+def test_decide_removal_deny_above_a_broader_rule():
+    # the lab case: a broad Accept grants 10.1.2.0/24 -> Facebook; removing one host = least-privilege Drop above it
+    r = _rule("r2", 2, "Accept", _net("10.1.2.0/24"), ANY, _app({"Facebook"}))
+    d = aa.decide_removal(AccessRequest(["10.1.2.250/32"], ["Any"], application="Facebook"), [r, CLEANUP])
+    assert d.outcome is aa.RemovalOutcome.DENY and d.position == {"above": "r2"}
+
+
+def test_decide_removal_reviews_an_opaque_granting_rule():
+    op = _rule("ro", 2, "Accept", ANY, ANY, ServiceSet(complex=True)); op.svc_unknown = True
+    d = aa.decide_removal(AccessRequest(["10.1.2.250/32"], ["1.1.1.1/32"], application="Facebook"), [op, CLEANUP])
+    assert d.outcome is aa.RemovalOutcome.REVIEW                      # can't reason past it -> don't guess
+
+
+def test_execute_removal_disable_then_publish(monkeypatch):
+    calls = []
+    monkeypatch.setattr(aa, "MgmtSession", _fake_session_factory(calls))
+    rule = _rule("rx", 3, "Accept", _host("10.1.2.250"), _host("1.1.1.1"), _app({"Facebook"}))
+    monkeypatch.setattr(aa, "load_layer", lambda s, layer, package=None: [rule, CLEANUP])
+    res = aa.remove_execute(object(), "secret",
+                            AccessRequest(["10.1.2.250/32"], ["1.1.1.1/32"], application="Facebook"),
+                            "L", publish=True)
+    assert res["outcome"] == "disable" and res["applied"] is True and res["published"] is True
+    setr = next(p for c, p in calls if c == "set-access-rule")
+    assert setr.get("enabled") is False and not any(c == "add-access-rule" for c, _ in calls)
+
+
+def test_decide_removal_approx_exact_falls_back_to_deny():
+    # the rule's source resolves to a gateway's MAIN ip (reads EQUAL to the /32) but its true reach may be
+    # wider (multi-homed under-approximation) -> disabling the whole rule would over-remove the unseen
+    # addresses; the safe move is a precise Drop-above for exactly this flow.
+    r = _rule("rx", 3, "Accept", _host("10.1.2.250"), _host("1.1.1.1"), _app({"Facebook"}))
+    r.src_approx = True
+    d = aa.decide_removal(AccessRequest(["10.1.2.250/32"], ["1.1.1.1/32"], application="Facebook"), [r, CLEANUP])
+    assert d.outcome is aa.RemovalOutcome.DENY and d.position == {"above": "rx"}
+
+
+def test_decide_removal_exact_but_regranted_below_falls_back_to_deny():
+    # rx grants EXACTLY this, but a broader Accept BELOW also grants it -> disabling rx alone would let
+    # first-match fall through and the access would SURVIVE (under-removal). Drop-above rx removes it regardless.
+    rx = _rule("rx", 3, "Accept", _host("10.1.2.250"), _host("1.1.1.1"), _app({"Facebook"}))
+    broad = _rule("rb", 4, "Accept", _net("10.1.2.0/24"), _host("1.1.1.1"), _app({"Facebook"}))
+    d = aa.decide_removal(AccessRequest(["10.1.2.250/32"], ["1.1.1.1/32"], application="Facebook"),
+                          [rx, broad, CLEANUP])
+    assert d.outcome is aa.RemovalOutcome.DENY and d.position == {"above": "rx"}
+
+
+def test_decide_removal_exact_disables_despite_unrelated_accept_below():
+    # a DIFFERENT accept below rx (disjoint destination) does NOT re-grant THIS flow -> rx is the sole
+    # granter -> DISABLE stays safe (the under-removal guard must not over-trigger on disjoint rules).
+    rx = _rule("rx", 3, "Accept", _host("10.1.2.250"), _host("1.1.1.1"), _app({"Facebook"}))
+    other = _rule("ro", 4, "Accept", _host("10.1.2.250"), _host("2.2.2.2"), _app({"Facebook"}))
+    d = aa.decide_removal(AccessRequest(["10.1.2.250/32"], ["1.1.1.1/32"], application="Facebook"),
+                          [rx, other, CLEANUP])
+    assert d.outcome is aa.RemovalOutcome.DISABLE and d.target_rule.uid == "rx"
+
+
 # ===== services-group / named-service request must MATCH dereferenced rule cells (DNS-layer miss) =====
 def test_services_group_request_descends_into_matching_inline_layer():
     # a 'dns' services-group request, expanded by correlation to its member ports, matches a rule that

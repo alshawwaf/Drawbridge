@@ -1455,6 +1455,148 @@ def _placement(covering_drop, lower_anchor) -> dict:
 
 
 # --------------------------------------------------------------------------- #
+# REMOVE-access engine  (the inverse of decide(): revoke a granted access)
+# --------------------------------------------------------------------------- #
+class RemovalOutcome(str, Enum):
+    NO_OP = "no_op"      # the access isn't permitted today -> nothing to remove
+    DISABLE = "disable"  # one rule grants EXACTLY this access -> disable that rule (reversible)
+    DENY = "deny"        # a BROADER rule grants it -> insert a least-privilege Drop ABOVE that rule
+    REVIEW = "review"    # granted via an opaque / inline / conditional / partial / multi-rule path -> don't guess
+
+
+@dataclass
+class RemovalDecision:
+    outcome: RemovalOutcome
+    reason: str
+    target_rule: Optional[ParsedRule] = None
+    position: Optional[dict] = None
+    notes: list = field(default_factory=list)
+
+
+def _still_granted_below(req: AccessRequest, req_src, req_dst, req_svc,
+                         rules_below: list[ParsedRule], options: "DecideOptions") -> bool:
+    """If the first exact-match ACCEPT were disabled, would first-match STILL permit the request? Walks the
+    rules BELOW it with the SAME relation logic as decide_removal: an interfering reachable ACCEPT — or any
+    rule whose effect we cannot fully resolve (inline / conditional / opaque / non-Accept-Drop) — means the
+    flow could survive -> True (so disabling alone is unsafe; the caller uses a Drop-above instead). A
+    fully-covering resolved DROP denies it -> False. Reaching the end with neither -> the implicit cleanup
+    denies it -> False. Partial drops and provably-disjoint rules are stepped over."""
+    for r in rules_below:
+        if not r.enabled or r.dynamic_layer:
+            continue
+        rel_src, src_unknown, src_approx = _dim_relation(req.src_kind, req.src_value, req_src, r, "source")
+        rel_dst, dst_unknown, dst_approx = _dim_relation(req.dst_kind, req.dst_value, req_dst, r, "destination")
+        rel_svc = svc_relation(req_svc, r.svc)
+        all_ip = req.src_kind == "ip" and req.dst_kind == "ip"
+        complex_eff = bool(src_unknown or dst_unknown or r.svc_unknown or (all_ip and r.complex))
+        svc_indeterminate = _svc_indeterminate(req_svc, r.svc)
+        if (_provably_disjoint(rel_src, src_unknown or src_approx)
+                or _provably_disjoint(rel_dst, dst_unknown or dst_approx)
+                or _provably_disjoint(rel_svc, r.svc_unknown or svc_indeterminate)):
+            continue                                      # out of this request's path
+        if (r.inline_rules is not None or (r.conditional and not options.ignore_conditions)
+                or complex_eff or svc_indeterminate or not r.is_resolved_action):
+            return True                                   # can't prove the flow is denied below -> assume it survives
+        if r.is_drop:
+            if _is_subset(rel_src, rel_dst, rel_svc):
+                return False                              # a covering DROP denies the whole request
+            continue                                      # partial drop: the rest may flow on
+        return True                                       # a reachable ACCEPT still grants (part of) the request
+    return False                                          # nothing below grants it -> implicit cleanup denies it
+
+
+def decide_removal(req: AccessRequest, rules: list[ParsedRule], options: "DecideOptions" = None) -> RemovalDecision:
+    """The INVERSE of decide(): find what GRANTS src->dst:svc and remove it with the least-disruptive SAFE
+    move, honouring Check Point first-match. Walk top-down to the FIRST fully-covering, fully-resolved ACCEPT
+    (before any covering Drop): grants EXACTLY the request -> DISABLE that rule; grants something BROADER ->
+    insert a least-privilege Drop ABOVE it (first-match then denies just this flow; the broad rule still
+    serves everyone else, never an over-removal). Already denied / nothing grants it -> NO_OP. An opaque /
+    inline / conditional rule in the path, a partial drop, or access granted across multiple rules -> REVIEW
+    (removal is destructive — never guess). NARROW (removing a discrete source member) is intentionally NOT
+    attempted here: it can't be proven safe from intervals alone (group vs cell member, embedded-in-network),
+    so the safe universal primitive is the precise Drop-above."""
+    options = options or DecideOptions()
+    req_src, req_dst, req_svc = req.src_iv(), req.dst_iv(), req.svc()
+    if not req_svc.any and not req_svc.apps and not req_svc.named and not (
+            req_svc.by_proto and any(iv for iv in req_svc.by_proto.values())):
+        return RemovalDecision(RemovalOutcome.REVIEW, "the request specifies no concrete service, port, or application")
+    for label, kind, value, iv in (("source", req.src_kind, req.src_value, req_src),
+                                    ("destination", req.dst_kind, req.dst_value, req_dst)):
+        if kind != "ip" and not (value or "").strip():
+            return RemovalDecision(RemovalOutcome.REVIEW, f"the {label} is typed {kind} but names no object")
+        if kind == "ip" and not iv:
+            return RemovalDecision(RemovalOutcome.REVIEW, f"the {label} resolves to no concrete IP extent")
+
+    for idx, r in enumerate(rules):
+        if not r.enabled:
+            continue
+        rel_src, src_unknown, src_approx = _dim_relation(req.src_kind, req.src_value, req_src, r, "source")
+        rel_dst, dst_unknown, dst_approx = _dim_relation(req.dst_kind, req.dst_value, req_dst, r, "destination")
+        rel_svc = svc_relation(req_svc, r.svc)
+        all_ip = req.src_kind == "ip" and req.dst_kind == "ip"
+        complex_eff = bool(src_unknown or dst_unknown or r.svc_unknown or (all_ip and r.complex))
+        svc_indeterminate = _svc_indeterminate(req_svc, r.svc)
+        interferes = not (_provably_disjoint(rel_src, src_unknown or src_approx)
+                          or _provably_disjoint(rel_dst, dst_unknown or dst_approx)
+                          or _provably_disjoint(rel_svc, r.svc_unknown or svc_indeterminate))
+        if r.dynamic_layer:
+            if interferes:
+                return RemovalDecision(RemovalOutcome.REVIEW,
+                                       f"rule {r.number} ({r.name}) applies a Dynamic Layer (sk182252) managed "
+                                       f"out-of-band — remove this access there, not here")
+            continue
+        if not interferes:
+            continue
+        # an unresolved / inline / conditional / opaque rule sits in the path before any clean grant -> a
+        # destructive change can't be reasoned past it safely.
+        if (r.inline_rules is not None or (r.conditional and not options.ignore_conditions)
+                or complex_eff or svc_indeterminate or not r.is_resolved_action):
+            return RemovalDecision(RemovalOutcome.REVIEW,
+                                   f"rule {r.number} ({r.name}) lies in the path but can't be fully resolved "
+                                   f"(inline layer / conditional / opaque cell / non-Accept-Drop action) — "
+                                   f"review the removal manually")
+        fully_covers = _is_subset(rel_src, rel_dst, rel_svc)
+        if r.is_drop:
+            if fully_covers:
+                return RemovalDecision(RemovalOutcome.NO_OP,
+                                       f"already denied by rule {r.number} ({r.name}) — the access is not "
+                                       f"permitted; nothing to remove", target_rule=r)
+            return RemovalDecision(RemovalOutcome.REVIEW,
+                                   f"rule {r.number} ({r.name}) partially denies the request; the removal "
+                                   f"interacts with it — review manually", target_rule=r)
+        # a reachable ACCEPT
+        if fully_covers:
+            # DISABLE only when the rule grants EXACTLY this and NOTHING ELSE relies on it. Two proofs are
+            # required, both safety-critical: (1) no approx cell — an infra object resolved to its main IP
+            # reads EQUAL but its true reach may be WIDER, so disabling the rule would revoke access for
+            # those unseen addresses too (over-removal); (2) no rule BELOW re-grants the flow — otherwise
+            # first-match would fall through to it and the access would survive (under-removal: we'd report
+            # it removed when it isn't). Either proof failing -> the always-safe Drop-above primitive.
+            exact = (rel_src == Relation.EQUAL and rel_dst == Relation.EQUAL and rel_svc == Relation.EQUAL
+                     and not src_approx and not dst_approx)
+            if exact and not _still_granted_below(req, req_src, req_dst, req_svc, rules[idx + 1:], options):
+                return RemovalDecision(RemovalOutcome.DISABLE,
+                                       f"rule {r.number} ({r.name}) grants EXACTLY this access and no rule "
+                                       f"below re-grants it — disable it (reversible; nothing else relies on "
+                                       f"this rule)", target_rule=r)
+            why = ("grants this access but is broader" if not exact else
+                   "grants exactly this access, but a rule below also grants it (disabling alone would not "
+                   "remove it)")
+            return RemovalDecision(RemovalOutcome.DENY,
+                                   f"rule {r.number} ({r.name}) {why}; inserting a least-privilege Drop ABOVE "
+                                   f"it removes exactly this request by first-match while the rule still "
+                                   f"serves its other traffic", target_rule=r,
+                                   position={"above": r.uid})
+        # accept overlaps but is narrower than the request -> granted piecemeal across rules
+        return RemovalDecision(RemovalOutcome.REVIEW,
+                               f"rule {r.number} ({r.name}) grants only part of the requested scope; the access "
+                               f"spans multiple rules — review the removal manually")
+
+    return RemovalDecision(RemovalOutcome.NO_OP,
+                           "no rule grants this access — it is already not permitted; nothing to remove")
+
+
+# --------------------------------------------------------------------------- #
 # I/O layer  (uses the existing MgmtSession client)
 # --------------------------------------------------------------------------- #
 _INLINE_MAX_DEPTH = 4     # inline layers can nest; cap the recursion (a cycle guard backs this up)
@@ -2302,6 +2444,128 @@ def execute(server, secret, req: AccessRequest, layer: str, *, package: Optional
         # structured error, not an uncaught exception the MCP/webhook layer renders as "Internal error".
         logger.exception("access execute failed (layer=%r, publish=%s)", layer, publish)
         return {"ok": False, "error": f"apply failed: {type(exc).__name__}: {exc}"}
+
+
+# --------------------------------------------------------------------------- #
+# REMOVE-access I/O  (preview / execute the revoke, mirroring preview()/execute())
+# --------------------------------------------------------------------------- #
+def _build_removal_preview(decision: RemovalDecision, req: AccessRequest, rules: list[ParsedRule]) -> dict:
+    out = {"action": "remove", "outcome": decision.outcome.value, "reason": decision.reason,
+           "target_rule": _brief(decision.target_rule)}
+    if decision.position:
+        out["position"] = _position_human(decision.position, rules)
+    if decision.notes:
+        out["notes"] = list(decision.notes)
+    return out
+
+
+def _apply_removal(session, decision: RemovalDecision, req: AccessRequest, layer: str, ticket_id: str) -> dict:
+    """Materialise a removal: DISABLE = turn the granting rule off; DENY = add a least-privilege Drop ABOVE
+    it for exactly src->dst:svc. NO_OP / REVIEW write nothing (handled by the caller)."""
+    out: dict = {"ops": []}
+    r = decision.target_rule
+    if decision.outcome == RemovalOutcome.DISABLE:
+        session.call("set-access-rule", {"uid": r.uid, "layer": layer, "enabled": False})  # VERIFY
+        out["ops"].append(f"set-access-rule {r.uid} enabled=false")
+        return out
+    if decision.outcome == RemovalOutcome.DENY:
+        src_name = _resolve_endpoint_object(session, req, "source")
+        dst_name = _resolve_endpoint_object(session, req, "destination")
+        svc_name = _resolve_svc_object(session, req)
+        from . import naming
+        ctx = {"ticket": (ticket_id or "").strip(), "app": req.application or "",
+               "service": req.service or req.application or "", "source": src_name, "dest": dst_name,
+               "layer": layer, "action": "Drop"}
+        payload = {"layer": layer, "position": _position_payload(decision.position or {}),
+                   "name": naming.rule_name(ticket_id, ctx), "source": src_name, "destination": dst_name,
+                   "service": svc_name, "action": "Drop", "track": naming.rule_track(),
+                   "comments": naming.rule_comment(ctx)}
+        tags = naming.rule_tags()
+        if tags:
+            payload["tags"] = tags
+        session.call("add-access-rule", {k: v for k, v in payload.items() if v is not None})  # VERIFY
+        out.update(source_object=src_name, destination_object=dst_name, service_object=svc_name)
+        out["ops"].append("add-access-rule (Drop)")
+        return out
+    return out
+
+
+def remove_preview(server, secret, req: AccessRequest, layer: str, *, package: Optional[str] = None) -> dict:
+    """Read-only: what Drawbridge would do to REVOKE src->dst:svc (no_op / disable / deny / review)."""
+    try:
+        with read_session(server, secret) as s:
+            block = _dynamic_layer_block(s, layer)
+            if block is not None:
+                return {**block, "trace": s.trace}
+            res, unresolved, kind = _correlate(s, req)
+            if unresolved is not None:
+                return _obj_review(res, unresolved, kind, {"cached": False, "trace": s.trace})
+            rules, cached = load_layer_cached(s, server, layer, package)
+            decision = decide_removal(req, rules, _decide_options(server, layer))
+            return {"ok": True, **_build_removal_preview(decision, req, rules), "cached": cached,
+                    "trace": s.trace, **res}
+    except MgmtError as exc:
+        return {"ok": False, "error": str(exc)}
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("removal preview failed (layer=%r)", layer)
+        return {"ok": False, "error": f"removal preview failed: {type(exc).__name__}: {exc}"}
+
+
+def remove_execute(server, secret, req: AccessRequest, layer: str, *, package: Optional[str] = None,
+                   ticket_id: str = "", publish: bool = False) -> dict:
+    """Load -> decide_removal -> apply the revoke in ONE write session. publish commits; else discard
+    (validate with zero commit). NO_OP / REVIEW change nothing. Discards on any error (mirrors execute())."""
+    try:
+        with MgmtSession(server, secret, session_timeout=write_session_timeout(),
+                         session_description="DC-Sim access automation (remove)") as s:
+            block = _dynamic_layer_block(s, layer)
+            if block is not None:
+                return {**block, "applied": False, "published": False, "trace": s.trace}
+            res, unresolved, kind = _correlate(s, req)
+            if unresolved is not None:
+                return {"ok": True, "applied": False, "published": False,
+                        **_obj_review(res, unresolved, kind, {"trace": s.trace})}
+            rules = load_layer(s, layer, package)
+            decision = decide_removal(req, rules, _decide_options(server, layer))
+            base = {"action": "remove", "outcome": decision.outcome.value, "reason": decision.reason,
+                    "target_rule": _brief(decision.target_rule), **res}
+            if decision.notes:
+                base["notes"] = list(decision.notes)
+            if decision.outcome in (RemovalOutcome.NO_OP, RemovalOutcome.REVIEW):
+                return {"ok": True, "applied": False, "published": False, **base, "trace": s.trace}
+            try:
+                applied = _apply_removal(s, decision, req, layer, ticket_id)
+                if publish:
+                    s.publish()
+                    invalidate_cache(server)
+                else:
+                    s.discard()
+            except Exception as exc:  # noqa: BLE001 — release pending changes + locks on any mid-apply failure
+                try:
+                    s.discard()
+                except MgmtError:
+                    sessions = []
+                    try:
+                        sessions = locking_sessions(server, secret)
+                    except Exception:  # noqa: BLE001
+                        pass
+                    return {"ok": False, "lock_conflict": True, "sessions": sessions, "trace": s.trace,
+                            "error": f"the change could not be discarded after a failed removal: {exc}"}
+                if isinstance(exc, MgmtError):
+                    raise
+                return {"ok": False, "error": f"removal failed: {exc}", "trace": s.trace}
+            return {"ok": True, "applied": True, "published": publish,
+                    "validated": not publish, **base, **applied, "trace": s.trace}
+    except MgmtError as exc:
+        msg = str(exc)
+        out = {"ok": False, "error": msg}
+        if _is_lock_error(msg):
+            out["lock_conflict"] = True
+            out["sessions"] = locking_sessions(server, secret)
+        return out
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("access remove failed (layer=%r, publish=%s)", layer, publish)
+        return {"ok": False, "error": f"removal failed: {type(exc).__name__}: {exc}"}
 
 
 # --------------------------------------------------------------------------- #

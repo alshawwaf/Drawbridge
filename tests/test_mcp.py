@@ -61,6 +61,20 @@ def test_apply_publish_allowed_when_setting_on(monkeypatch):
     assert out["published"] is True and seen["publish"] is True
 
 
+def test_remove_access_publish_gate_and_delegates(monkeypatch):
+    # publish gated by mcp_allow_publish (same as apply); dry-run delegates to aa.remove_execute
+    monkeypatch.setattr(app_settings, "get", lambda k: False if k == "mcp_allow_publish" else None)
+    blocked = mcp_tools.remove_access(1, "10.1.2.250", "Any", "Network", application="Facebook", publish=True)
+    assert blocked["ok"] is False and blocked["published"] is False and "disabled" in blocked["error"]
+    _fake_server(monkeypatch)
+    seen = {}
+    monkeypatch.setattr(aa, "remove_execute",
+                        lambda srv, sec, req, layer, package=None, ticket_id="", publish=False:
+                        seen.update(publish=publish) or {"ok": True, "outcome": "deny", "applied": True})
+    out = mcp_tools.remove_access(1, "10.1.2.250", "Any", "Network", application="Facebook")
+    assert out["outcome"] == "deny" and seen["publish"] is False
+
+
 def test_apply_dry_run_always_allowed(monkeypatch):
     monkeypatch.setattr(app_settings, "get", lambda k: False)   # publish disabled...
     _fake_server(monkeypatch)
