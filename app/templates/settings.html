@@ -107,9 +107,8 @@
 
 <div class="row" style="gap:10px;align-items:center;margin-top:14px;">
   <button class="btn" type="submit" form="settings-form">Save settings</button>
-  <form method="post" action="/settings/reset" style="margin:0;"
-        onsubmit="return confirm('Restore all settings to their defaults?');">
-    <button class="btn secondary" type="submit">Restore defaults</button>
+  <form method="post" action="/settings/reset" style="margin:0;">
+    <button class="btn secondary" type="submit" data-confirm="Restore all settings to their defaults?">Restore defaults</button>
   </form>
 </div>
 
@@ -158,9 +157,9 @@
         <td style="padding:7px 8px;" class="small muted">{{ k.last_used.strftime('%Y-%m-%d %H:%M') if k.last_used else 'never' }}</td>
         <td style="padding:7px 8px;" class="small muted">{{ k.expires.strftime('%Y-%m-%d') if k.expires else 'never' }}</td>
         <td style="padding:7px 8px;text-align:right;">
-          <form method="post" action="/settings/api-keys/{{ k.id }}/revoke" style="margin:0;"
-                onsubmit="return confirm('Revoke “{{ k.name }}”? Clients using it will get 401 immediately.');">
-            <button class="btn secondary" type="submit" style="padding:4px 12px;font-size:12px;">Revoke</button>
+          <form method="post" action="/settings/api-keys/{{ k.id }}/revoke" style="margin:0;">
+            <button class="btn secondary" type="submit" style="padding:4px 12px;font-size:12px;"
+                    data-confirm="Revoke “{{ k.name }}”? Clients using it will get 401 immediately.">Revoke</button>
           </form>
         </td>
       </tr>
