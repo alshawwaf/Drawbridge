@@ -3144,3 +3144,28 @@ def test_category_with_app_group_is_subset_not_equal():
     # a cell holding the category AND an app-group is broader than the category alone -> SUBSET, never EQUAL
     rule = aa._parse_svc(["sn", "grp"], _CAT_OD)
     assert aa.svc_relation(ServiceSet(categories={"Social Networking"}), rule) == Relation.SUBSET
+
+
+# --- the live-lab case: an Internet-dest rule must be WIDENable, not read as opaque -> redundant CREATE ----
+def test_internet_rule_recognized_from_live_representation_and_widens_source():
+    # An existing win_server -> Internet -> Facebook rule; a NEW request from a different source for the same
+    # app/Internet must WIDEN that rule's source — not produce a redundant CREATE. The predefined Internet
+    # object is recognized even when the LIVE API returns it with a type and/or a stray address field
+    # (otherwise it reads as opaque -> complex_eff disqualifies the widen). A host *named* Internet still
+    # resolves by IP (the realistic naming conflict).
+    od = {"any": {"uid": "any", "type": "CpmiAnyObject", "name": "Any"},
+          "ws": {"uid": "ws", "type": "host", "name": "win_server", "ipv4-address": "10.1.2.250"},
+          "inet": {"uid": "inet", "name": "Internet", "type": "global", "ipv4-address": "0.0.0.0"},
+          "fb": {"uid": "fb", "type": "application-site", "name": "Facebook"},
+          "acc": {"uid": "acc", "name": "Accept"}, "drp": {"uid": "drp", "name": "Drop"}}
+
+    def _r(u, n, a, s, d, v):
+        return aa._parse_rule({"uid": u, "rule-number": n, "name": u, "enabled": True, "action": a,
+                               "source": s, "destination": d, "service": v}, od)
+
+    assert aa._parse_net([od["inet"]], {})[4].internet == {"Internet"}    # recognized despite type + stray IP
+    req = AccessRequest(["10.1.1.222/32"], [], application="Facebook",
+                        dst_kind="internet", dst_value="Internet")
+    d = aa.decide(req, [_r("r13", 13, "acc", ["ws"], ["inet"], ["fb"]),
+                        _r("rC", 99, "drp", ["any"], ["any"], ["any"])])
+    assert d.outcome is Outcome.WIDEN and d.widen_field == "source" and d.target_rule.uid == "r13"

@@ -669,12 +669,14 @@ def _parse_net(cell, objdict: dict):
         raw_name = o.get("name") or ""
         if t == "cpmianyobject" or name == "any":
             return ANY_IP, False, groups, False, typed
-        # Check Point's predefined topology-based "Internet" object — captured in its own identity space
-        # (no IP extent of its own). Guard on the absence of IP fields so a customer host pathologically
-        # named "Internet" still resolves by its address instead of being mistaken for the global object.
-        if name == "internet" and not any(o.get(k) for k in (
-                "ipv4-address", "ipv6-address", "subnet4", "subnet", "subnet6",
-                "ipv4-address-first", "ipv6-address-first")):
+        # Check Point's predefined topology-based "Internet" object — captured in its own identity space.
+        # Match by its RESERVED name for ANY type EXCEPT a concrete address container (a customer could in
+        # theory name a host/network "Internet" — that still resolves by its IP). Deliberately tolerant of
+        # how the LIVE API returns the object (it may carry a placeholder address field or an unexpected
+        # type), so a real pulled Internet rule is recognised, not read as opaque → which would (correctly)
+        # disqualify it as a reuse/widen candidate and force a redundant CREATE.
+        if name == "internet" and t not in (
+                "host", "network", "address-range", "multicast-address-range", "wildcard"):
             typed.internet.add("Internet")
             continue
         if t == "group":
