@@ -3153,9 +3153,12 @@ def test_internet_rule_recognized_from_live_representation_and_widens_source():
     # object is recognized even when the LIVE API returns it with a type and/or a stray address field
     # (otherwise it reads as opaque -> complex_eff disqualifies the widen). A host *named* Internet still
     # resolves by IP (the realistic naming conflict).
+    # the live Internet object shares the CpmiAnyObject type with predefined "Any" — recognized by its
+    # NAME, checked BEFORE the Any-type check, so it isn't swallowed and read as Any (which would make the
+    # destination SUBSET, not EQUAL, and block the widen).
     od = {"any": {"uid": "any", "type": "CpmiAnyObject", "name": "Any"},
           "ws": {"uid": "ws", "type": "host", "name": "win_server", "ipv4-address": "10.1.2.250"},
-          "inet": {"uid": "inet", "name": "Internet", "type": "global", "ipv4-address": "0.0.0.0"},
+          "inet": {"uid": "inet", "name": "Internet", "type": "CpmiAnyObject"},
           "fb": {"uid": "fb", "type": "application-site", "name": "Facebook"},
           "acc": {"uid": "acc", "name": "Accept"}, "drp": {"uid": "drp", "name": "Drop"}}
 
@@ -3163,7 +3166,8 @@ def test_internet_rule_recognized_from_live_representation_and_widens_source():
         return aa._parse_rule({"uid": u, "rule-number": n, "name": u, "enabled": True, "action": a,
                                "source": s, "destination": d, "service": v}, od)
 
-    assert aa._parse_net([od["inet"]], {})[4].internet == {"Internet"}    # recognized despite type + stray IP
+    assert aa._parse_net([od["inet"]], {})[4].internet == {"Internet"}    # Internet recognized, not read as Any
+    assert aa._parse_net([od["any"]], {})[0] == aa.ANY_IP                 # real Any stays Any, not internet
     req = AccessRequest(["10.1.1.222/32"], [], application="Facebook",
                         dst_kind="internet", dst_value="Internet")
     d = aa.decide(req, [_r("r13", 13, "acc", ["ws"], ["inet"], ["fb"]),
