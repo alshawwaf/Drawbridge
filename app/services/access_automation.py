@@ -199,9 +199,12 @@ class ServiceSet:
     any: bool = False
     by_proto: dict = field(default_factory=dict)
     apps: set = field(default_factory=set)        # exact application-site names (e.g. {"Facebook"})
+    categories: set = field(default_factory=set)  # application-site-CATEGORY names (e.g. {"Social Networking"})
     named: set = field(default_factory=set)       # non-port service objects by name (icmp, GRE, sctp, …)
     opaque: bool = False                          # an app category/group, or a service whose protocol
                                                   # reach we can't bound vs a port request (other/rpc/gtp…)
+    app_group: bool = False                       # holds an application-site-GROUP (an opaque app container
+                                                  # that is NOT one of the captured `categories`)
     complex: bool = False                         # held a service we could not parse (named, >, < ...)
     group_uids: list = field(default_factory=list)  # service-group uids referenced (widen target)
 
@@ -336,9 +339,19 @@ def _portset_overlaps(a: dict, b: dict) -> bool:
 def _svc_single(req: ServiceSet, rule: ServiceSet) -> Relation:
     """Relation for a SINGLE-kind request service (apps XOR named XOR ports) against the rule's cell.
     An opaque app container in the rule yields OVERLAP for a non-matching app request (uncertain)."""
+    if req.categories:                    # APPLICATION-CATEGORY request, e.g. {"Social Networking"}
+        if req.categories & rule.categories:
+            # EXACT only when the cell holds JUST this category and nothing that broadens it. The category
+            # itself sets the rule's `opaque` flag (expected), but ANY other content — apps, ports, named
+            # services, a service-group, or an application-site-GROUP (app_group) — makes the cell broader,
+            # so it's a SUBSET (still a valid reuse), never an over-claiming EQUAL.
+            exact = (rule.categories == req.categories and not rule.apps and not rule.by_proto
+                     and not rule.named and not rule.group_uids and not rule.app_group)
+            return Relation.EQUAL if exact else Relation.SUBSET
+        return Relation.OVERLAP if rule.opaque else Relation.DISJOINT
     if req.apps:                          # APPLICATION request, e.g. {"Facebook"}
         if req.apps & rule.apps:
-            exact = rule.apps == req.apps and not rule.by_proto and not rule.named and not rule.opaque
+            exact = (rule.apps == req.apps and not rule.by_proto and not rule.named and not rule.opaque)
             return Relation.EQUAL if exact else Relation.SUBSET
         return Relation.OVERLAP if rule.opaque else Relation.DISJOINT
     if req.named:                         # NAMED service request (icmp / GRE / sctp / …) — match by name
@@ -378,12 +391,14 @@ def svc_relation(req: ServiceSet, rule: ServiceSet) -> Relation:
         return Relation.SUBSET            # a specific request is a subset of Any
     if req.any:
         return Relation.SUPERSET
-    present = [k for k, v in (("apps", req.apps), ("named", req.named), ("ports", req.by_proto)) if v]
+    present = [k for k, v in (("apps", req.apps), ("categories", req.categories),
+                              ("named", req.named), ("ports", req.by_proto)) if v]
     if len(present) <= 1:
         return _svc_single(req, rule)
     rels = []
     for k in present:
         leg = ServiceSet(apps=req.apps if k == "apps" else set(),
+                         categories=req.categories if k == "categories" else set(),
                          named=req.named if k == "named" else set(),
                          by_proto=req.by_proto if k == "ports" else {})
         rels.append(_svc_single(leg, rule))
@@ -448,7 +463,9 @@ class AccessRequest:
     dst_cidrs: list[str]
     protocol: str = "tcp"     # "tcp" | "udp" (ignored when `application`/`service` is set)
     ports: str = ""           # "443" or "8000-8100" (ignored when `application`/`service` is set)
-    application: Optional[str] = None   # an application-site name (e.g. "Facebook") — overrides everything
+    application: Optional[str] = None   # an application-site OR category name (e.g. "Facebook") — overrides all
+    application_kind: Optional[str] = None  # "application-site-category" (a category) else a single app — set
+                                            # by resolve() so a category compares as a category, not an app
     service: Optional[str] = None       # a named non-port service (e.g. "echo-request", "GRE") by name
     service_kind: Optional[str] = None  # its protocol family (icmp/icmp6/sctp/other/…) — set by resolve()
     action: str = "Accept"
@@ -475,6 +492,8 @@ class AccessRequest:
         if self.svc_set is not None:
             return self.svc_set         # correlation expanded the named service/group to real ports
         if self.application:
+            if self.application_kind == "application-site-category":
+                return ServiceSet(categories={self.application})   # a category matches a category cell
             return ServiceSet(apps={self.application})
         if self.service:                # (family, name): family-less (unresolved) fails safe — it won't
             return ServiceSet(named={(self.service_kind or "", self.service)})  # alias a real family object
@@ -792,8 +811,14 @@ def _parse_svc(cell, objdict: dict) -> ServiceSet:
                 s.by_proto[proto] = _merge(s.by_proto.get(proto, []) + iv)
         elif t == "application-site":
             s.apps.add(name)
-        elif t in ("application-site-category", "application-site-group"):
-            s.opaque = True                 # can't enumerate which apps it contains
+        elif t == "application-site-category":
+            # A category is captured by NAME so an identical-category request matches it (NO_OP/WIDEN), AND
+            # kept opaque so a SINGLE-app request can't claim membership (we can't enumerate the category).
+            s.categories.add(name)
+            s.opaque = True
+        elif t == "application-site-group":
+            s.opaque = True                 # a group: can't enumerate which apps/categories it contains
+            s.app_group = True              # an opaque app container distinct from the captured categories
         elif t in ("service-icmp", "service-icmp6"):
             # PORTLESS protocols (icmp 1 / icmp6 58) matched by type/code, never a port — can NEVER overlap
             # a tcp/udp/sctp port request, so match by name. Key on (family, name): the SAME predefined
@@ -934,6 +959,8 @@ def _svc_uncertain(req_svc: ServiceSet, rule_svc: ServiceSet) -> bool:
         return False
     if req_svc.apps and not (req_svc.apps & rule_svc.apps):
         return rule_svc.opaque
+    if req_svc.categories and not (req_svc.categories & rule_svc.categories):
+        return rule_svc.opaque         # a category request vs an opaque cell that doesn't name it -> uncertain
     if req_svc.named and not (req_svc.named & rule_svc.named):
         return rule_svc.opaque         # a named-service request vs an opaque rule cell -> uncertain
     return False
@@ -973,7 +1000,7 @@ def _svc_indeterminate(req_svc: ServiceSet, rule_svc: ServiceSet) -> bool:
     # false NO_OP claims the app is allowed when the gateway is dropping it). But a rule scoped to ports that
     # can NEVER carry a web app — NetBIOS, DHCP/bootp, SSH, a "Silent Drop" — is provably disjoint from the
     # app: don't let it falsely block a carve-out (apply) or a removal (REVIEW). This is the screenshot case.
-    if req_svc.apps and rule_svc.by_proto and not rule_svc.any:
+    if (req_svc.apps or req_svc.categories) and rule_svc.by_proto and not rule_svc.any:
         return _rule_may_bear_web_app(rule_svc)
     return False
 
@@ -1172,7 +1199,7 @@ def _decide(req: AccessRequest, rules: list[ParsedRule], options: "DecideOptions
     # Guard 2 -- a request that resolves to no concrete service (empty/garbage port, no application) has
     # an empty interval set, which would read as "covered by anything" -> a false NO_OP. Fail loud so the
     # pure surface is self-defending (build_request guards this too, as defense in depth).
-    if not req_svc.any and not req_svc.apps and not req_svc.named and not (
+    if not req_svc.any and not req_svc.apps and not req_svc.categories and not req_svc.named and not (
             req_svc.by_proto and any(iv for iv in req_svc.by_proto.values())):
         return Decision(
             Outcome.REVIEW,
@@ -1275,7 +1302,7 @@ def _decide(req: AccessRequest, rules: list[ParsedRule], options: "DecideOptions
         # would silently override an unmodeled deny. Those cases FALL THROUGH to the conservative
         # note-and-place-below handlers below (the uncertain_deny floor), exactly like the port path — so the
         # operator always sees a review note and the grant lands below the possible block.
-        carveable = (req_svc.apps and r.is_drop and interferes and covering_drop is None
+        carveable = ((req_svc.apps or req_svc.categories) and r.is_drop and interferes and covering_drop is None
                      and not (_is_catchall(r) and i == last_enabled)
                      and not (r.conditional and not options.ignore_conditions)
                      and not complex_eff and not src_approx and not dst_approx)
@@ -1765,7 +1792,7 @@ def decide_removal(req: AccessRequest, rules: list[ParsedRule], options: "Decide
     so the safe universal primitive is the precise Drop-above."""
     options = options or DecideOptions()
     req_src, req_dst, req_svc = req.src_iv(), req.dst_iv(), req.svc()
-    if not req_svc.any and not req_svc.apps and not req_svc.named and not (
+    if not req_svc.any and not req_svc.apps and not req_svc.categories and not req_svc.named and not (
             req_svc.by_proto and any(iv for iv in req_svc.by_proto.values())):
         return RemovalDecision(RemovalOutcome.REVIEW, "the request specifies no concrete service, port, or application")
     for label, kind, value, iv in (("source", req.src_kind, req.src_value, req_src),
@@ -2187,13 +2214,16 @@ def resolve_service(session, protocol: str, port: str, name_hint: Optional[str] 
 
 
 def lookup_application(session, name: str) -> bool:
-    """Whether a predefined/custom application-site by this exact name exists (best-effort)."""
-    try:
-        found = session.call("show-objects",
-                             {"filter": name, "type": "application-site", "limit": 5})  # VERIFY
-    except MgmtError:
-        return False
-    return any((o.get("name") or "") == name for o in found.get("objects", []))
+    """Whether a predefined/custom application-site OR application-site-category by this exact name exists
+    (best-effort) — so the preview's 'reuse vs create' flag is correct for a CATEGORY too, not just an app."""
+    for typ in ("application-site", "application-site-category"):
+        try:
+            found = session.call("show-objects", {"filter": name, "type": typ, "limit": 5})  # VERIFY
+        except MgmtError:
+            continue
+        if any((o.get("name") or "") == name for o in found.get("objects", [])):
+            return True
+    return False
 
 
 def _resolve_svc_object(session, req: AccessRequest) -> str:
@@ -2472,6 +2502,10 @@ def _resolve_app(session, req: AccessRequest):
     res = applications.resolve(session, req.application)
     if res.get("match"):
         req.application = res["match"]
+        # remember whether it resolved to a CATEGORY (vs a single application-site) so the engine reasons
+        # about it in the right space — a category matches a category rule cell, not a single-app cell.
+        req.application_kind = ("application-site-category" if res.get("match_kind") == "category"
+                                else "application-site")
     return res
 
 

@@ -107,7 +107,7 @@ def resolve(session, term: str) -> dict:
     pick. A truncated (== limit) result is never auto-matched — if there could be a hidden twin, we
     refuse to guess and route to a human (a wrong app = wrong access)."""
     term = (term or "").strip()
-    out = {"term": term, "match": None, "confidence": "", "candidates": [], "note": ""}
+    out = {"term": term, "match": None, "match_kind": "", "confidence": "", "candidates": [], "note": ""}
     if not term:
         return out
     apps = _query(session, term, "application-site", _RESOLVE_LIMIT)
@@ -122,9 +122,9 @@ def resolve(session, term: str) -> dict:
     exacts = [c for (lvl, _), c in scored if lvl == "exact"]
     norms = [c for (lvl, _), c in scored if lvl == "normalized"]
     if not truncated and len(exacts) == 1:
-        out["match"], out["confidence"] = exacts[0]["name"], "exact"
+        out["match"], out["confidence"], out["match_kind"] = exacts[0]["name"], "exact", exacts[0]["kind"]
     elif not truncated and not exacts and len(norms) == 1:
-        out["match"], out["confidence"] = norms[0]["name"], "normalized"
+        out["match"], out["confidence"], out["match_kind"] = norms[0]["name"], "normalized", norms[0]["kind"]
 
     out["candidates"] = [{"name": c["name"], "kind": c["kind"], "category": c["category"],
                           "score": round(sc, 2)}
