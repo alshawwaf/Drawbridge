@@ -41,16 +41,29 @@ Tufin / AlgoSec demo, driven straight off the customer's own policy.
 **first-match** semantics, comparing every cell **by value** (IP/port intervals resolved through the
 object dictionary), never by object name. The four outcomes:
 
-- **NO_OP** — the first covering rule before any covering drop is an Accept → change nothing.
+- **NO_OP** — the first covering rule before any covering drop is an Accept → change nothing. The verdict is
+  scoped to **this access layer** (Check Point Ordered Layers chain — a downstream layer can still restrict it).
 - **WIDEN** — a reachable Accept is *exactly equal* to the request in two of {source, destination,
   service} and differs in the third → add the request's value to that **rule cell** (never to a shared
   group, which would widen every rule that references it).
 - **CREATE** — nothing covers it → add a least-privilege Accept (`track: Log`, comment stamped with the
-  ticket id), placed `above` the catch-all cleanup drop and `below` any more-specific rule.
-- **REVIEW** — an explicit (non-cleanup), *resolved* deny covers/overlaps the flow, or a conditional
-  (VPN / time / content / install-on / service-resource) deny lies in the path → hand to a human. The
-  guardrail: the engine **never silently overrides an admin's drop**. Inline ("Apply Layer") rules are
-  pulled and recursed into.
+  ticket id). Placement is computed for first-match correctness: **above** any blocking deny it can fully
+  resolve (an application/category is *carved out* above a rule that blocks it), **below** any more-specific
+  rule, else grouped into a configurable **provisioned section** created just *above* the cleanup section —
+  never *inside* it (Check Point's organize-by-section best practice). If the new allow would also shadow a
+  more-specific deny **below** the one it overrides, that anomaly is flagged with an advisory. An
+  **application/category** request scopes its destination to the predefined **Internet** object (App Control
+  best practice), carrying a note that Internet is topology/blade-dependent.
+- **REVIEW** — reserved for a request that can't be turned into a concrete change (an empty/unparsable
+  service, or a typed endpoint that names no object) or an ambiguous application/service *name*. It is **not**
+  a policy-review stop: the engine never hands a *resolvable* rule to a human — it reuses, widens, or creates.
+  Inline ("Apply Layer") rules are pulled and recursed into; a Dynamic Layer (sk182252) is excluded as
+  out-of-band but still acts as a placement floor.
+
+**The deny is overridden by placement, not a stop.** A *resolved* covering/partial deny → CREATE the allow
+ABOVE it so the access works (first-match then hits the allow); the reason names the deny. A deny it
+**cannot** fully resolve (an infra object collapsed to its main IP, an opaque service category, a conditional
+drop) is *not* overridden — it's noted and the new allow lands BELOW it.
 
 **Opaque rules don't stop the flow.** A rule the engine *can't fully resolve* — an updatable feed (which
 may itself contain the requested object), an unresolvable/negated cell, an over-cap wildcard, an opaque
@@ -59,11 +72,15 @@ a "possible match — review later" and continues** to the real NO_OP / WIDEN / 
 construction: a NO_OP writes nothing, and a new rule is always placed **below** any such opaque
 possible-deny (and a WIDEN that would leap a rule over it is suppressed), so the firewall is never
 weakened — the opaque rule keeps its first-match precedence. The notes ride along on the decision (and
-the webhook/MCP result) so nothing is lost. (A *resolved* deny is different — that's the REVIEW above.)
+the webhook/MCP result) so nothing is lost. (A *resolved* deny is different — it's overridden by placement,
+above, not handed to a human.)
 
-Two admin toggles (Settings) can convert classes of REVIEW into automatic action — `override_deny`
-(create the allow *above* a blocking deny) and `ignore_conditions` — both **off** by default. The live
-decision tree is downloadable as `.drawio` / `.mmd` / `.dot` from `/access-automation/decision-tree/{fmt}`.
+**Behaviour is tunable — data, not code (Settings → Access automation logic).** A one-click **profile**
+(Conservative / Balanced = default / Aggressive / Autopilot) bundles the knobs; individually,
+`aa_override_blocking_deny`, `aa_app_carveout`, `aa_prefer_widen`, `aa_emit_notes`, and `aa_ignore_conditions`
+each govern one judgment call (defaults = the recommended behaviour), and `aa_rule_section` names the
+provisioned section. The live decision tree is downloadable as `.drawio` / `.mmd` / `.dot` from
+`/access-automation/decision-tree/{fmt}`.
 
 ## Typed (non-IP) source/destination
 

@@ -59,8 +59,8 @@ class Edge:
 # nodes in an x=900 column, and the apply/materialise fan along the bottom. Keep new nodes on this grid.
 NODES: list[Node] = [
     # --- CORE spine (left column x=40) + its row-aligned outcomes (right column x=430) ------------
-    Node("req", "Access request", "source · destination · service / app — each endpoint an IP/CIDR/Any or a typed object",
-         "start", 40, 40, 300, 72),
+    Node("req", "Access request", "source · destination · service / app / category — each endpoint an IP/CIDR/Any or a typed object; an application request defaults its destination to the predefined Internet object (App Control best practice)",
+         "start", 40, 40, 300, 86),
     Node("resolve", "Resolve request + each rule cell (top-down, first match wins)",
          "IP: host / network / range / group (exact) · gateway / cluster / mgmt (approx) · typed object → matched by identity · else opaque → note & continue",
          "process", 40, 200, 320, 104),
@@ -71,7 +71,7 @@ NODES: list[Node] = [
          "review", 780, 40, 330, 120),
     Node("perm", "Already permitted?", "first reachable Accept covering all 3 columns, before any covering drop",
          "decision", 40, 400, 300, 68),
-    Node("noop", "No-op", "already allowed — just attach the rule to the ticket", "noop", 430, 402, 250),
+    Node("noop", "No-op", "already allowed WITHIN this access layer — just attach the rule to the ticket (Check Point Ordered Layers chain, so a downstream layer can still restrict it)", "noop", 430, 396, 250, 84),
     Node("deny", "Resolved deny covering the path?",
          "a covering / partial DROP we can fully resolve → CREATE the allow ABOVE it so the access works (first-match then hits the allow). A conditional / opaque possible-deny is NOT here — it’s noted & passed, above.",
          "decision", 40, 540, 320, 104, option="aa_override_blocking_deny"),
@@ -80,8 +80,8 @@ NODES: list[Node] = [
     Node("doWiden", "Widen the rule", "add the differing source / destination / service to the cell (never a shared group)",
          "widen", 430, 760, 260, 72),
     Node("create", "Create least-privilege rule",
-         "above a blocking / cleanup drop · an APPLICATION is carved out ABOVE a rule that blocks it (CP identifies the app; other traffic still hits the rule) · below a more-specific rule · BELOW any opaque possible-deny · else bottom. Every choice here is tunable in Settings → Access automation logic.", "create",
-         40, 760, 320, 84, option="aa_app_carveout"),
+         "above a blocking / cleanup drop · an APPLICATION or category is carved out ABOVE a rule that blocks it (CP identifies the app; other traffic still hits the rule) · below a more-specific rule · BELOW any opaque possible-deny · else grouped into the provisioned SECTION above the cleanup (never inside it). A more-specific deny SHADOWED below the new allow is flagged; an Internet-object destination is noted topology/blade-dependent. Every choice here is tunable in Settings → Access automation logic.", "create",
+         40, 752, 320, 104, option="aa_app_carveout"),
 
     # --- DETAIL tier 1: HOW each source/destination is matched (IP space vs identity space) -------
     # A self-contained branch off "resolve", laid out left→right: kindq → {ipspace, idspace} →
