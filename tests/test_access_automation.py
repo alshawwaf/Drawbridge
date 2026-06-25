@@ -3079,3 +3079,68 @@ def test_decide_removal_internet_regranted_below_is_deny_not_disable():
     cleanup = _inet_rule("rC", 99, "drp", ["any"], ["any"], ["any"])
     d = aa.decide_removal(_req_fb_internet(), [exact, broad, cleanup])
     assert d.outcome is aa.RemovalOutcome.DENY                          # disabling rI alone wouldn't stop it
+
+
+# --- application CATEGORY as a first-class service kind (NO_OP/WIDEN vs an identical-category rule) ----
+_CAT_OD = {
+    "any": {"uid": "any", "type": "CpmiAnyObject", "name": "Any"},
+    "ws": {"uid": "ws", "type": "host", "name": "win_server", "ipv4-address": "10.1.2.250"},
+    "srv": {"uid": "srv", "type": "host", "name": "intranet", "ipv4-address": "172.16.5.10"},
+    "sn": {"uid": "sn", "type": "application-site-category", "name": "Social Networking"},
+    "grp": {"uid": "grp", "type": "application-site-group", "name": "Social Networking"},  # SAME name, a GROUP
+    "drp": {"uid": "drp", "name": "Drop"},
+}
+
+
+def _cat_rule(uid, num, svc_refs, action="acc"):
+    od = dict(_CAT_OD, acc={"uid": "acc", "name": "Accept"})
+    return aa._parse_rule({"uid": uid, "rule-number": num, "name": uid, "enabled": True, "action": action,
+                           "source": ["ws"], "destination": ["srv"], "service": svc_refs}, od)
+
+
+def _cat_cleanup():
+    return aa._parse_rule({"uid": "rC", "rule-number": 99, "name": "cleanup", "enabled": True,
+                           "action": "drp", "source": ["any"], "destination": ["any"],
+                           "service": ["any"]}, _CAT_OD)
+
+
+def _req_category(cat="Social Networking"):
+    return AccessRequest(["10.1.2.250/32"], ["172.16.5.10/32"], application=cat,
+                         application_kind="application-site-category")
+
+
+def test_parse_svc_category_captured_by_name():
+    s = aa._parse_svc(["sn"], _CAT_OD)
+    assert s.categories == {"Social Networking"} and s.opaque and not s.apps and not s.app_group
+
+
+def test_parse_svc_app_group_is_opaque_not_a_category():
+    s = aa._parse_svc(["grp"], _CAT_OD)
+    assert s.app_group and s.opaque and not s.categories          # a group is NOT captured as a category
+
+
+def test_category_request_svc_is_categories():
+    assert _req_category().svc().categories == {"Social Networking"} and not _req_category().svc().apps
+
+
+def test_category_request_reuses_matching_category_rule():
+    d = aa.decide(_req_category(), [_cat_rule("rCat", 5, ["sn"]), _cat_cleanup()])
+    assert d.outcome is Outcome.NO_OP and d.target_rule.uid == "rCat"   # category == category -> reuse
+
+
+def test_category_request_not_matched_by_same_named_app_group():
+    d = aa.decide(_req_category(), [_cat_rule("rGrp", 5, ["grp"]), _cat_cleanup()])
+    assert d.outcome is Outcome.CREATE        # a same-named app-GROUP can't be proven to cover the category
+
+
+def test_single_app_request_not_reused_by_category_rule():
+    req = AccessRequest(["10.1.2.250/32"], ["172.16.5.10/32"], application="Facebook",
+                        application_kind="application-site")
+    d = aa.decide(req, [_cat_rule("rCat", 5, ["sn"]), _cat_cleanup()])
+    assert d.outcome is Outcome.CREATE        # can't prove a single app is a member of the category
+
+
+def test_category_with_app_group_is_subset_not_equal():
+    # a cell holding the category AND an app-group is broader than the category alone -> SUBSET, never EQUAL
+    rule = aa._parse_svc(["sn", "grp"], _CAT_OD)
+    assert aa.svc_relation(ServiceSet(categories={"Social Networking"}), rule) == Relation.SUBSET
