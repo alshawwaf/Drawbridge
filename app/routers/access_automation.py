@@ -282,20 +282,36 @@ def aa_apply(sid: int, body: AccessReqBody, request: Request, db: Session = Depe
 
 class RevertBody(BaseModel):
     publish: bool = False     # symmetric with apply: a bodyless/defaulted call DRY-RUNS (the UI sends true)
-    disable: bool = False     # undo an added-rule change by DISABLING the rule instead of deleting it
-    delete_rule: bool = False  # for a DISABLE entry: DELETE the disabled rule outright (finalize, not undo)
+    disable: bool = False     # undo an added-rule change by DISABLING the rule (a reversible "disabled" state)
+    delete_rule: bool = False  # for a DISABLED rule: DELETE it outright (finalize, not undo)
+    reenable: bool = False    # for a DISABLED rule: turn it back ON (undo the disable)
+
+
+def _revert_state(r) -> str:
+    """The actionable state of a recorded change for the rollback panel:
+      * "resolved" — terminal: the rule was deleted, or the change was fully undone.
+      * "disabled" — the rule is turned OFF but still PRESENT (a removal that disabled it, or an added rule
+                     rolled back BY disabling it) → it can be re-enabled (undo) or deleted (finalize).
+      * "active"   — the change is in effect → it can be rolled back.
+    A "disabled" entry deliberately keeps ``reverted_at`` NULL: it is NOT terminal, so further actions stay
+    available (this was the gap — a created rule rolled back via Disable used to look fully resolved)."""
+    if r.reverted_at and r.resolution != "disabled":
+        return "resolved"
+    if r.resolution == "disabled" or (r.outcome == "disable" and not r.reverted_at):
+        return "disabled"
+    return "active"
 
 
 def _change_row(r) -> dict:
+    state = _revert_state(r)
     return {"id": r.id, "at": r.created_at.isoformat() if r.created_at else "", "by": r.created_by,
             "layer": r.layer, "action": r.action, "outcome": r.outcome, "summary": r.summary,
             "ticket_id": r.ticket_id or "", "objects": list(r.objects_json or []),
             "reverted": bool(r.reverted_at), "reverted_at": r.reverted_at.isoformat() if r.reverted_at else "",
             "reverted_by": r.reverted_by or "", "revert_error": r.revert_error or "",
-            "resolution": r.resolution or "",
-            # a DISABLE removal can be FINALIZED by deleting the rule it turned off (uid is in the inverse).
-            "deletable_disabled": (r.outcome == "disable" and bool(r.inverse_json) and not r.reverted_at),
-            "revertable": bool(r.inverse_json) and not r.reverted_at}
+            "resolution": r.resolution or "", "state": state,
+            "deletable_disabled": state == "disabled",
+            "revertable": state in ("active", "disabled") and bool(r.inverse_json)}
 
 
 @router.get("/access-automation/{sid}/changes")
@@ -324,41 +340,65 @@ def aa_revert(sid: int, cid: int, body: RevertBody, request: Request, db: Sessio
     change = change_log.get(db, cid)
     if change is None or change.server_id != ms.id:
         return JSONResponse({"error": "Change not found for this server."}, status_code=404)
-    if change.reverted_at:
-        return JSONResponse({"error": "This change was already resolved."}, status_code=400)
     if not change.inverse_json:
         return JSONResponse({"error": "This change has no recorded inverse to act on."}, status_code=400)
     actor = f"user:{user.username}"
+    inv0 = (change.inverse_json or [{}])[0]
+    state = _revert_state(change)
+    if state == "resolved":
+        return JSONResponse({"error": "This change was already resolved."}, status_code=400)
+
+    # Decide the action -> (web_api ops, whether to DISABLE an added rule instead of deleting it, the new DB
+    # state to stamp on success). A "disabled" rule (present but off) can be RE-ENABLED or DELETED; an
+    # "active" change can be rolled back, and an added rule can be rolled back BY disabling it (reversible —
+    # it lands in the "disabled" state, NOT terminal, so it can still be deleted later).
     if body.delete_rule:
-        # FINALIZE a removal that DISABLEd a rule: delete that rule outright. Its uid + layer are exactly the
-        # ones the recorded re-enable inverse targets. This is a forward step (not an undo) -> resolution=deleted.
-        if change.outcome != "disable":
-            return JSONResponse({"error": "Delete-rule applies only to a disabled-rule change."}, status_code=400)
-        inv0 = (change.inverse_json or [{}])[0]
-        ops, resolution = [{"op": "delete-access-rule", "uid": inv0.get("uid"), "layer": inv0.get("layer")}], "deleted"
+        if state != "disabled":
+            return JSONResponse({"error": "Delete-rule applies only to a disabled rule."}, status_code=400)
+        ops = [{"op": "delete-access-rule", "uid": inv0.get("uid"), "layer": inv0.get("layer")}]
+        disable_added = False
+        new_fields = {"reverted_at": utcnow(), "reverted_by": actor, "resolution": "deleted", "revert_error": ""}
+    elif body.reenable:
+        if state != "disabled":
+            return JSONResponse({"error": "Re-enable applies only to a disabled rule."}, status_code=400)
+        ops = [{"op": "set-access-rule", "uid": inv0.get("uid"), "layer": inv0.get("layer"), "enabled": True}]
+        disable_added = False
+        # undoing a REMOVAL that disabled a rule restores the access -> terminal; re-enabling an ADDED rule
+        # we'd disabled restores the created rule -> back to ACTIVE (it can be rolled back again).
+        new_fields = ({"reverted_at": utcnow(), "reverted_by": actor, "resolution": "reverted", "revert_error": ""}
+                      if change.outcome == "disable"
+                      else {"reverted_at": None, "reverted_by": actor, "resolution": "", "revert_error": ""})
+    elif body.disable:
+        if change.outcome not in ("create", "deny") or state != "active":
+            return JSONResponse({"error": "Disable applies only to an active added rule."}, status_code=400)
+        ops = list(change.inverse_json or [])      # rewritten to enabled=false by disable_added_rules below
+        disable_added = True
+        new_fields = {"reverted_at": None, "reverted_by": actor, "resolution": "disabled", "revert_error": ""}
     else:
-        ops, resolution = list(change.inverse_json or []), "reverted"
+        if state != "active":
+            return JSONResponse({"error": "This change was already resolved."}, status_code=400)
+        ops = list(change.inverse_json or [])
+        disable_added = False
+        new_fields = {"reverted_at": utcnow(), "reverted_by": actor, "resolution": "reverted", "revert_error": ""}
+
     if body.publish:
-        # ATOMIC claim BEFORE touching the SMS: a conditional UPDATE on reverted_at IS NULL ensures only ONE
-        # of two concurrent reverts proceeds (no double publish, no spurious error stamped on a reverted row).
-        # Stamping first also means a successful SMS revert can never be reported as a failure (M5): the row
-        # is already marked; on SMS failure we release the claim below.
+        # ATOMIC claim BEFORE touching the SMS so only ONE actor transitions the entry (no double publish, no
+        # spurious error stamped on an already-acted row). Every actionable state has reverted_at NULL; we
+        # also guard the current resolution so a concurrent action from a different state can't win. On SMS
+        # failure we restore the captured prior state below (a successful SMS op is never reported as failure).
+        prior = {"reverted_at": change.reverted_at, "reverted_by": change.reverted_by or "",
+                 "resolution": change.resolution or "", "revert_error": change.revert_error or ""}
         claimed = (db.query(AppliedChange)
-                   .filter(AppliedChange.id == cid, AppliedChange.reverted_at.is_(None))
-                   .update({"reverted_at": utcnow(), "reverted_by": actor, "revert_error": "",
-                            "resolution": resolution}, synchronize_session=False))
+                   .filter(AppliedChange.id == cid, AppliedChange.reverted_at.is_(None),
+                           AppliedChange.resolution == (change.resolution or ""))
+                   .update(new_fields, synchronize_session=False))
         db.commit()
         if not claimed:
-            return JSONResponse({"error": "This change was already resolved."}, status_code=400)
-    result = aa.revert_execute(ms, secret, ops, publish=body.publish,
-                               disable_added_rules=body.disable and not body.delete_rule)
+            return JSONResponse({"error": "This change was already resolved or changed."}, status_code=400)
+    result = aa.revert_execute(ms, secret, ops, publish=body.publish, disable_added_rules=disable_added)
     if body.publish and not (result.get("ok") and result.get("reverted")):
-        # the SMS revert did not commit -> RELEASE the claim so the change stays revertable + record why.
-        # Best-effort: a bookkeeping hiccup must never mask the SMS result we return below.
         try:
-            db.query(AppliedChange).filter(AppliedChange.id == cid).update(
-                {"reverted_at": None, "reverted_by": "", "resolution": "",
-                 "revert_error": (result.get("error") or "")[:2000]}, synchronize_session=False)
+            db.query(AppliedChange).filter(AppliedChange.id == cid).update(prior, synchronize_session=False)
             db.commit()
         except Exception:  # noqa: BLE001
             db.rollback()
