@@ -1134,6 +1134,10 @@ def test_access_automation_detail_renders_form_and_webhook():
     assert "Preview decision" in html and "aa-source" in html
     assert "/access-automation/webhook" in html and "X-DCSim-Token" in html
     assert "callback_url" in html and "any ITSM" in html
+    # Internet object: a destination-only kind (App Control / URL Filtering), with the JS that couples it
+    # to an Application service (pick an app -> destination defaults to Internet).
+    assert 'value="internet"' in html and "Internet (to the internet / DMZ)" in html
+    assert "dt.value = 'internet'" in html       # syncSvcType auto-selects Internet for an app request
     # the "behind the scenes" decision tree — a custom canvas the client renders from the engine's own
     # graph JSON, still exportable to the user's diagram tool (.drawio / .mmd / .dot)
     assert 'id="aa-flow-canvas"' in html and "How it decides" in html
@@ -2808,3 +2812,120 @@ def test_widen_suppressed_past_opaque_deny_and_created_below_it():
     assert d.outcome is Outcome.CREATE                       # WIDEN suppressed
     assert d.position == {"above": "rC"}                     # bottom — below the opaque deny (rule 1)
     assert _noted(d, "rule 1", "block")
+
+
+# --- Predefined "Internet" object (App Control / URL Filtering destination) ----------------------
+_INET_OD = {
+    "any": {"uid": "any", "type": "CpmiAnyObject", "name": "Any"},
+    "inet": {"uid": "inet", "name": "Internet"},                      # predefined topology object (no IP)
+    "ws": {"uid": "ws", "type": "host", "name": "win_server", "ipv4-address": "10.1.2.250"},
+    "gw": {"uid": "gw", "type": "simple-gateway", "name": "GW", "ipv4-address": "10.0.0.1"},  # -> approx
+    "srv": {"uid": "srv", "type": "host", "name": "intranet", "ipv4-address": "172.16.5.10"},
+    "fb": {"uid": "fb", "type": "application-site", "name": "Facebook"},
+    "acc": {"uid": "acc", "name": "Accept"}, "drp": {"uid": "drp", "name": "Drop"},
+}
+
+
+def _inet_rule(uid, num, action, source, destination, service):
+    return aa._parse_rule({"uid": uid, "rule-number": num, "name": uid, "enabled": True,
+                           "action": action, "source": source, "destination": destination,
+                           "service": service}, _INET_OD)
+
+
+def _req_fb_internet():
+    """What build_request now yields for "win_server -> Facebook": destination defaulted to Internet."""
+    return AccessRequest(["10.1.2.250/32"], [], application="Facebook",
+                         dst_kind="internet", dst_value="Internet")
+
+
+def _blocked(d):
+    return any("block" in n.lower() or "stealth" in n.lower() for n in (d.notes or []))
+
+
+def test_parse_net_detects_internet_object_no_ip():
+    iv, cx, groups, approx, typed = aa._parse_net([{"name": "Internet"}], {})
+    assert typed.internet == {"Internet"} and typed.any_members()
+    assert iv == [] and not cx and not approx                        # no IP extent, not opaque/REVIEW
+
+
+def test_parse_net_host_named_internet_still_resolves_by_ip():
+    # a customer host pathologically named "Internet" must NOT be mistaken for the global object
+    iv, cx, _, _, typed = aa._parse_net(
+        [{"name": "Internet", "type": "host", "ipv4-address": "10.9.9.9"}], {})
+    assert not typed.internet and iv == _host("10.9.9.9")
+
+
+def test_internet_request_reuses_internet_dest_rule():
+    r = _inet_rule("rI", 13, "acc", ["ws"], ["inet"], ["fb"])
+    cleanup = _inet_rule("rC", 99, "drp", ["any"], ["any"], ["any"])
+    d = aa.decide(_req_fb_internet(), [r, cleanup])
+    assert d.outcome is Outcome.NO_OP and d.target_rule.uid == "rI"   # Internet == Internet -> reuse
+
+
+def test_internet_request_covered_by_any_dest_rule():
+    r = _inet_rule("rA", 5, "acc", ["ws"], ["any"], ["fb"])          # Any dest is a superset of Internet
+    cleanup = _inet_rule("rC", 99, "drp", ["any"], ["any"], ["any"])
+    assert aa.decide(_req_fb_internet(), [r, cleanup]).outcome is Outcome.NO_OP
+
+
+def test_internet_request_not_covered_by_specific_ip_dest_rule():
+    r = _inet_rule("rS", 5, "acc", ["ws"], ["srv"], ["fb"])          # to a specific internal server
+    cleanup = _inet_rule("rC", 99, "drp", ["any"], ["any"], ["any"])
+    assert aa.decide(_req_fb_internet(), [r, cleanup]).outcome is Outcome.CREATE
+
+
+def test_internet_request_steps_past_stealth_gw_drop():
+    # the user's scenario: a Stealth rule (Any -> GW, drop) must NOT block / floor an Internet-dest app
+    # request — a gateway IP is provably DISJOINT from the Internet object, so the rule is out of path.
+    stealth = _inet_rule("r6", 6, "drp", ["any"], ["gw"], ["any"])
+    cleanup = _inet_rule("rC", 99, "drp", ["any"], ["any"], ["any"])
+    d = aa.decide(_req_fb_internet(), [stealth, cleanup])
+    assert d.outcome is Outcome.CREATE and not _blocked(d)           # no "Stealth Rule may block" note
+
+
+def test_any_dest_app_still_floored_below_approx_gw_drop():
+    # a GENUINE Any-destination app request still respects an approx (gateway) DROP in the path: it can
+    # include the gateway plane, so the new allow is placed BELOW the drop and the note is kept.
+    stealth = _inet_rule("r6", 6, "drp", ["any"], ["gw"], ["any"])
+    cleanup = _inet_rule("rC", 99, "drp", ["any"], ["any"], ["any"])
+    req = AccessRequest(["10.1.2.250/32"], ["0.0.0.0/0"], application="Facebook")   # Any dest (IP)
+    d = aa.decide(req, [stealth, cleanup])
+    assert d.outcome is Outcome.CREATE and _blocked(d)               # uncertain-deny note preserved
+
+
+def test_build_request_app_any_defaults_to_internet():
+    r = tk.build_request("10.1.2.250", "Any", "tcp", "", application="Facebook")
+    assert r.dst_kind == "internet" and r.dst_value == "Internet" and r.dst_cidrs == []
+    assert r.application == "Facebook"
+
+
+def test_build_request_app_specific_destination_kept_as_ip():
+    r = tk.build_request("10.1.2.250", "172.16.5.10", "tcp", "", application="Facebook")
+    assert r.dst_kind == "ip" and r.dst_cidrs == ["172.16.5.10/32"]   # specific dest is honored, not upgraded
+
+
+def test_build_request_explicit_internet_destination_kind():
+    r = tk.build_request("10.1.2.250", "ignored-value", "tcp", "443", destination_kind="internet")
+    assert r.dst_kind == "internet" and r.dst_value == "Internet" and r.dst_cidrs == []
+
+
+def test_build_request_internet_rejected_as_source():
+    with pytest.raises(ValueError):
+        tk.build_request("anything", "Any", "tcp", "443", source_kind="internet")
+
+
+def test_build_request_non_app_any_stays_any():
+    r = tk.build_request("10.1.2.250", "Any", "tcp", "443")           # a port request, not an app
+    assert r.dst_kind == "ip" and r.dst_cidrs == ["Any"]
+
+
+def test_internet_destination_resolves_without_session_calls():
+    req = _req_fb_internet()
+
+    class _Boom:
+        def call(self, *a, **k):
+            raise AssertionError("Internet is predefined — no object lookup/creation expected")
+
+    assert aa._resolve_endpoint_object(_Boom(), req, "destination") == "Internet"
+    prev = aa._endpoint_object_preview(_Boom(), req, "destination")
+    assert prev["name"] == "Internet" and prev["exists"] is True

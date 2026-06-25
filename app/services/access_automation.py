@@ -253,8 +253,16 @@ _KIND_FIELD = {
     "dynamic-object": "dynamic",
     "updatable-object": "updatable",
     "security-zone": "zones",
+    # Check Point's predefined, topology-based "Internet" object — the canonical destination for an
+    # Application Control / URL Filtering rule (it matches traffic egressing an External/DMZ interface,
+    # i.e. everything the gateway does not know as internal). Its own identity space: a request to
+    # Internet is EQUAL to a cell holding Internet, SUBSET of Any, and DISJOINT from any IP cell (a
+    # gateway/host IP is not the Internet object) — which is why an Internet-dest request steps cleanly
+    # past a Stealth rule (Any -> gateway, drop) instead of being floored below it.
+    "internet": "internet",
 }
-TYPED_KINDS = tuple(_KIND_FIELD)   # the selectable non-IP request kinds, in declaration order
+TYPED_KINDS = tuple(k for k in _KIND_FIELD if k != "internet")  # user-pickable typed kinds (both sides)
+DEST_ONLY_KINDS = ("internet",)    # selectable only as a destination (App Control / URL Filtering)
 
 
 @dataclass
@@ -266,12 +274,14 @@ class TypedExtent:
     dynamic: set = field(default_factory=set)      # dynamic-object names
     updatable: set = field(default_factory=set)    # updatable-object names (CP-curated feeds)
     zones: set = field(default_factory=set)        # security-zone names
+    internet: set = field(default_factory=set)     # the predefined Internet object (held as {"Internet"})
 
     def add(self, kind: str, name: str) -> None:
         getattr(self, kind).add(name)
 
     def any_members(self) -> bool:
-        return bool(self.domains or self.roles or self.dynamic or self.updatable or self.zones)
+        return bool(self.domains or self.roles or self.dynamic or self.updatable or self.zones
+                    or self.internet)
 
     def merge(self, o: "TypedExtent") -> None:
         self.domains |= o.domains
@@ -279,6 +289,7 @@ class TypedExtent:
         self.dynamic |= o.dynamic
         self.updatable |= o.updatable
         self.zones |= o.zones
+        self.internet |= o.internet
 
 
 def _domain_norm(name: str) -> tuple[str, bool]:
@@ -639,6 +650,14 @@ def _parse_net(cell, objdict: dict):
         raw_name = o.get("name") or ""
         if t == "cpmianyobject" or name == "any":
             return ANY_IP, False, groups, False, typed
+        # Check Point's predefined topology-based "Internet" object — captured in its own identity space
+        # (no IP extent of its own). Guard on the absence of IP fields so a customer host pathologically
+        # named "Internet" still resolves by its address instead of being mistaken for the global object.
+        if name == "internet" and not any(o.get(k) for k in (
+                "ipv4-address", "ipv6-address", "subnet4", "subnet", "subnet6",
+                "ipv4-address-first", "ipv6-address-first")):
+            typed.internet.add("Internet")
+            continue
         if t == "group":
             groups.append(o.get("uid", ""))
             mem = o.get("members")
@@ -1026,6 +1045,20 @@ def _dim_relation(kind: str, value: str, req_iv, r: ParsedRule, which: str) -> t
     has_ip = bool(cell_ip) and not is_any
     rel, unknown = typed_relation(kind, value, is_any, has_ip, typed, cell_cx, negate)
     return rel, unknown, False
+
+
+def _widen_mixes_internet(field: str, req: "AccessRequest", r: ParsedRule) -> bool:
+    """A DESTINATION widen must not combine the topology-based predefined "Internet" object with IP /
+    other-typed destinations in one cell: mixing match semantics that way is not an endorsed Check Point
+    pattern (Internet is resolved by gateway topology, an IP/object by address/identity). When a widen
+    would create such a mixed cell, the engine prefers a clean separate rule (CREATE) instead."""
+    if field != "destination":
+        return False
+    req_inet = req.dst_kind == "internet"
+    rule_inet = bool(r.dst_typed.internet)
+    rule_other = bool(r.dst) or any(getattr(r.dst_typed, f)
+                                    for f in _KIND_FIELD.values() if f != "internet")
+    return (req_inet and rule_other) or (not req_inet and rule_inet)
 
 
 @dataclass(frozen=True)
@@ -1481,7 +1514,8 @@ def _decide(req: AccessRequest, rules: list[ParsedRule], options: "DecideOptions
             not_covered = [d for d in ("source", "destination", "service") if not cov[d]]
             if len(not_covered) == 1:
                 field = not_covered[0]
-                if all(eq[d] for d in ("source", "destination", "service") if d != field):
+                if (all(eq[d] for d in ("source", "destination", "service") if d != field)
+                        and not _widen_mixes_internet(field, req, r)):
                     widen_target, widen_field = r, field
 
         # Placement lower bound: a fully-resolved rule strictly MORE specific than req (don't shadow it).
@@ -1990,6 +2024,8 @@ def _resolve_endpoint_object(session, req: "AccessRequest", side: str) -> str:
     if kind == "ip":
         cidrs = req.src_cidrs if side == "source" else req.dst_cidrs
         return resolve_endpoint(session, cidrs[0])
+    if kind == "internet":
+        return "Internet"          # predefined topology object — referenced by name, never created
     value = req.src_value if side == "source" else req.dst_value
     return resolve_typed_object(session, kind, value)
 
@@ -2001,6 +2037,8 @@ def _endpoint_object_preview(session, req: "AccessRequest", side: str) -> dict:
         ex = lookup_endpoint(session, cidr)
         return {"ip": cidr, "exists": bool(ex),
                 "name": ex or _endpoint_name(ipaddress.ip_network(cidr, strict=False))}
+    if kind == "internet":
+        return {"name": "Internet", "exists": True, "kind": "internet"}
     return typed_object_preview(session, kind, req.src_value if side == "source" else req.dst_value)
 
 

@@ -124,6 +124,14 @@ def _resolve_endpoint(value, kind, label) -> tuple[list, str, str]:
             return [_norm_endpoint(value)], "ip", ""
         except ValueError as exc:
             raise ValueError(f"Invalid {label}: {exc}")
+    if kind == "internet":
+        # Check Point's predefined topology-based Internet object: a fixed singleton (the submitted value
+        # is ignored), and meaningful ONLY as a destination — it scopes a rule to internet/DMZ-bound
+        # traffic for Application Control / URL Filtering, which has no "source" analogue.
+        if label != "destination":
+            raise ValueError("the Internet object can only be used as a destination (it scopes "
+                             "Application Control / URL Filtering traffic to the internet).")
+        return [], "internet", "Internet"
     if kind not in TYPED_KINDS:
         raise ValueError(f"Invalid {label} type {kind!r}.")
     val = str(value or "").strip()
@@ -150,9 +158,17 @@ def build_request(source, destination, protocol, port, application=None, service
         raise ValueError("source and destination are required.")
     s_cidrs, s_kind, s_val = _resolve_endpoint(source, source_kind, "source")
     d_cidrs, d_kind, d_val = _resolve_endpoint(destination, destination_kind, "destination")
+    application = str(application).strip() if application else ""
+    # Check Point best practice (R82.10 "Best Practices for Access Control Rules"): an Application Control
+    # / URL Filtering rule's destination is the predefined "Internet" object, NOT "Any" — Internet scopes
+    # the rule to internet/DMZ-bound traffic via gateway topology, so the gateway doesn't inspect
+    # internal-to-internal flows. So when an application request left the destination as Any, build it
+    # against Internet instead. A SPECIFIC destination (an internal server/network/domain) or an explicit
+    # Internet pick is honored as-is; only the "anywhere" default is upgraded.
+    if application and d_kind == "ip" and d_cidrs == ["Any"]:
+        d_cidrs, d_kind, d_val = [], "internet", "Internet"
     common = dict(src_cidrs=s_cidrs, dst_cidrs=d_cidrs,
                   src_kind=s_kind, src_value=s_val, dst_kind=d_kind, dst_value=d_val)
-    application = str(application).strip() if application else ""
     if application:
         return AccessRequest(**common, application=application)
     service = str(service).strip() if service else ""
