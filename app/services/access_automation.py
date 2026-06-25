@@ -975,6 +975,19 @@ def _provably_disjoint(rel: Relation, unknown: bool) -> bool:
     return (not unknown) and rel == Relation.DISJOINT
 
 
+def _out_of_path(rel_src, src_unknown, rel_dst, dst_unknown, rel_svc, svc_unknown, svc_indeterminate) -> bool:
+    """Is a rule PROVABLY out of the request's path (disjoint on some dimension)? The ONE definition shared by
+    decide(), decide_removal(), and _still_granted_below() so they can't drift (that drift was the root cause
+    of the QA-found over/under-conservatism). The IP legs are judged on RESOLVED extents only — an APPROX
+    cell (a gateway/SMS resolved to its main IP) that is resolved-disjoint is treated as unrelated, NOT
+    dragged into the path by the under-approximation caveat (an approx cell that OVERLAPS is not DISJOINT, so
+    it still stays in path). The SERVICE leg folds svc_indeterminate (App Control can carry an app over a
+    rule's L4 ports, so an http/https rule is never 'disjoint' from an app request)."""
+    return (_provably_disjoint(rel_src, src_unknown)
+            or _provably_disjoint(rel_dst, dst_unknown)
+            or _provably_disjoint(rel_svc, svc_unknown or svc_indeterminate))
+
+
 def _cant_cover_dim(rel: Relation, req_any: bool, cell_any: bool, unresolved: bool) -> bool:
     """PROVE that this rule cell cannot be a superset-or-equal of the request on one dimension — i.e. the
     rule cannot COVER (already permit) the request. Two provable cases:
@@ -1153,13 +1166,13 @@ def _decide(req: AccessRequest, rules: list[ParsedRule], options: "DecideOptions
         # (This is the safety invariant: never reason past a rule whose real reach is unknown.)
         svc_uncertain = _svc_uncertain(req_svc, r.svc)
         svc_indeterminate = _svc_indeterminate(req_svc, r.svc)
-        # An approx cell (infra object resolved to its main IP) is an under-approximation, so it can
-        # never be PROVEN disjoint — fold it into the per-cell "unknown". An ACCEPT with an approx cell
-        # that doesn't otherwise match simply isn't acted on (harmless); a DROP stays in the path so a
-        # possibly-wider deny is never silently stepped over.
-        interferes = not (_provably_disjoint(rel_src, src_unknown or src_approx)
-                          or _provably_disjoint(rel_dst, dst_unknown or dst_approx)
-                          or _provably_disjoint(rel_svc, r.svc_unknown or svc_indeterminate))
+        # In the request's path unless PROVABLY disjoint on some dimension (the ONE shared rule — see
+        # _out_of_path). IP legs judged on resolved extents: a resolved-disjoint APPROX rule (a gateway
+        # resolved to its main IP, unrelated to the request) is stepped over rather than dragged in by the
+        # under-approximation caveat; an approx rule that OVERLAPS is not DISJOINT, so it still stays in path
+        # (a DROP whose approx extent overlaps is still floored below). Service leg folds svc_indeterminate.
+        interferes = not _out_of_path(rel_src, src_unknown, rel_dst, dst_unknown,
+                                      rel_svc, r.svc_unknown, svc_indeterminate)
 
         # A Dynamic Layer (sk182252) is managed OUT-OF-BAND by other admins -> EXCLUDED from our logic: we
         # never descend into it, reason about its sub-rules, or flag it (no note — the user asked for it to
@@ -1562,9 +1575,7 @@ def _still_granted_below(req: AccessRequest, req_src, req_dst, req_svc,
         # src+dst rule on http/https (tcp 80/443) DOES re-grant a web APP request via App Control, so it must
         # NOT be read as disjoint (that was a silent under-removal). A genuinely-unknown cell (negated /
         # opaque) is never resolved-disjoint, so it still falls through to the conservative "survives" below.
-        if (_provably_disjoint(rel_src, src_unknown)
-                or _provably_disjoint(rel_dst, dst_unknown)
-                or _provably_disjoint(rel_svc, r.svc_unknown or svc_indeterminate)):
+        if _out_of_path(rel_src, src_unknown, rel_dst, dst_unknown, rel_svc, r.svc_unknown, svc_indeterminate):
             continue                                      # provably out of this request's path -> not a re-granter
         # An interfering Dynamic Layer (sk182252, "Apply Layer") is managed out-of-band: its sub-rulebase is
         # invisible to us (inline_rules is None) and MAY grant the flow once the exact ACCEPT above it is
@@ -1616,16 +1627,12 @@ def decide_removal(req: AccessRequest, rules: list[ParsedRule], options: "Decide
         all_ip = req.src_kind == "ip" and req.dst_kind == "ip"
         complex_eff = bool(src_unknown or dst_unknown or r.svc_unknown or (all_ip and r.complex))
         svc_indeterminate = _svc_indeterminate(req_svc, r.svc)
-        # In a REMOVAL the IP legs are judged on RESOLVED extents (no `or src_approx`/`or dst_approx`): an
-        # unrelated rule whose only link to the request is an approx (gateway main-IP) source/dest — e.g. a
-        # "CP Updates" accept GW/SMS -> http/https sitting ABOVE the real grant — is resolved-disjoint and must
-        # be STEPPED OVER so the walk reaches the rule that actually grants, not bail to REVIEW (was the
-        # reported failure; parity with _still_granted_below). The SERVICE leg keeps svc_indeterminate (an
-        # http/https rule on the SAME src+dst genuinely could carry an app). A truly-unresolvable cell still
-        # carries src_unknown/dst_unknown -> never resolved-disjoint -> still routes to REVIEW below.
-        interferes = not (_provably_disjoint(rel_src, src_unknown)
-                          or _provably_disjoint(rel_dst, dst_unknown)
-                          or _provably_disjoint(rel_svc, r.svc_unknown or svc_indeterminate))
+        # In the path unless PROVABLY out of it (the ONE shared rule — see _out_of_path). An unrelated rule
+        # whose only link is an approx (gateway main-IP) source/dest — e.g. a "CP Updates" accept GW/SMS ->
+        # http/https sitting ABOVE the real grant — is resolved-disjoint and STEPPED OVER, so the walk reaches
+        # the rule that actually grants rather than bailing to REVIEW (was the reported failure).
+        interferes = not _out_of_path(rel_src, src_unknown, rel_dst, dst_unknown,
+                                      rel_svc, r.svc_unknown, svc_indeterminate)
         # GOLDEN RULE: a DYNAMIC layer (sk182252) is managed out-of-band (Gaia pushes its content straight to
         # the GW) — invisible to us, so it is SKIPPED from matching. Look PAST it for the real, management-
         # visible rule that grants the flow rather than bailing to REVIEW. (The DISABLE-vs-DENY safety for a

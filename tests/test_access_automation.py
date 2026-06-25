@@ -1263,18 +1263,23 @@ def test_approx_accept_is_harmless_request_widens_later_rule():
     assert d.outcome is Outcome.WIDEN and d.target_rule.number == 2 and d.widen_field == "source"
 
 
-def test_approx_drop_never_under_approximates():
+def test_approx_drop_stepped_over_only_when_resolved_disjoint():
+    # An approx DROP (a gateway resolved to its main IP — true reach may be wider) is judged on its RESOLVED
+    # extent (the signed-off resolved-disjointness rule, _out_of_path):
+    #  (a) resolved-DISJOINT from the request -> an UNRELATED gateway -> stepped over (not flagged, not a floor).
+    #  (b) resolved-OVERLAP with the request -> kept IN the path: NOTED + placed below, never silently stepped
+    #      over. So an approx drop that actually applies is still never under-approximated.
     od = _od_infra()
-    rules = [_irule(1, ["gw"], ["any"], ["any"], "drp", od),           # deny from a (multi-homable) gateway
-             _irule(2, ["any"], ["any"], ["any"], "drp", od)]
-    req = AccessRequest(src_cidrs=["10.7.7.7/32"], dst_cidrs=["Any"], application="Facebook")
-    d = aa.decide(req, rules)
-    # an APPLICATION request never STEPS OVER (overrides) a drop whose extent we can't prove — a multi-homable
-    # gateway resolved to its main IP is an UNDER-approximation, so we can't be sure how far it reaches. It is
-    # NOTED as a possible block and the new rule is placed BELOW it (symmetric with the port path), NOT carved
-    # above — leaping above an unprovable deny would silently override it (audit M1).
-    assert d.outcome is Outcome.CREATE and d.position != {"above": "r1"}
-    assert any("rule 1" in n for n in d.notes)        # the possible block is flagged for review
+    drop_gw = _irule(1, ["gw"], ["any"], ["any"], "drp", od)          # gw main IP 10.1.1.1, approx
+    cleanup = _irule(2, ["any"], ["any"], ["any"], "drp", od)
+    # (a) request for an unrelated host -> the gateway drop is resolved-disjoint -> stepped over (no rule-1 note)
+    d1 = aa.decide(AccessRequest(src_cidrs=["10.7.7.7/32"], dst_cidrs=["Any"], application="Facebook"),
+                   [drop_gw, cleanup])
+    assert d1.outcome is Outcome.CREATE and not any("rule 1" in n for n in d1.notes)
+    # (b) request for the gateway's OWN main IP -> resolved-overlap -> kept in path, NOTED + placed below
+    d2 = aa.decide(AccessRequest(src_cidrs=["10.1.1.1/32"], dst_cidrs=["Any"], application="Facebook"),
+                   [drop_gw, cleanup])
+    assert d2.outcome is Outcome.CREATE and any("rule 1" in n for n in d2.notes)
 
 
 def test_malformed_port_reviews_not_crashes():
