@@ -2929,3 +2929,91 @@ def test_internet_destination_resolves_without_session_calls():
     assert aa._resolve_endpoint_object(_Boom(), req, "destination") == "Internet"
     prev = aa._endpoint_object_preview(_Boom(), req, "destination")
     assert prev["name"] == "Internet" and prev["exists"] is True
+
+
+# --- Section-aware floor placement (provisioned section, not inside the cleanup section) ----------
+_SECT_OD = {"any": {"uid": "any", "type": "CpmiAnyObject", "name": "Any"},
+            "drp": {"uid": "drp", "name": "Drop"}, "acc": {"uid": "acc", "name": "Accept"},
+            "h": {"uid": "h", "type": "host", "name": "web", "ipv4-address": "10.0.0.9"}}
+_SECT = "Provisioned (automation)"   # the aa_rule_section default
+
+
+def _cleanup_rule(uid="r14", num=14):
+    return {"uid": uid, "type": "access-rule", "rule-number": num, "name": "Cleanup rule",
+            "enabled": True, "action": "drp", "source": ["any"], "destination": ["any"], "service": ["any"]}
+
+
+def _normal_rule():
+    return {"uid": "r1", "type": "access-rule", "rule-number": 1, "name": "web", "enabled": True,
+            "action": "acc", "source": ["h"], "destination": ["h"], "service": ["any"]}
+
+
+class _SectSess:
+    """A fake session that serves one rulebase page + records add-access-section / add-access-rule calls."""
+    def __init__(self, items):
+        self._items, self.calls = items, []
+
+    def call(self, cmd, payload=None):
+        self.calls.append((cmd, payload or {}))
+        if cmd == "show-access-rulebase":
+            return {"rulebase": self._items, "objects-dictionary": list(_SECT_OD.values()),
+                    "total": 1, "to": 1}                          # to >= total -> single page, stop
+        if cmd == "add-access-section":
+            return {"uid": "sec-new"}
+        return {}
+
+    def _addsecs(self):
+        return [c[1] for c in self.calls if c[0] == "add-access-section"]
+
+
+def test_floor_position_creates_provisioned_section_above_cleanup_section():
+    sess = _SectSess([_normal_rule(),
+                      {"type": "access-section", "uid": "sC", "name": "Clean up rule",
+                       "rulebase": [_cleanup_rule()]}])
+    out = {"ops": []}
+    pos = aa._floor_position(sess, "Network", None, out)
+    assert pos == {"bottom": _SECT}                               # rule lands at the bottom of the section
+    sec = sess._addsecs()
+    assert sec and sec[0] == {"layer": "Network", "name": _SECT, "position": {"above": "Clean up rule"}}
+    assert any(o.startswith("add-access-section") for o in out["ops"])
+
+
+def test_floor_position_reuses_existing_provisioned_section():
+    sess = _SectSess([{"type": "access-section", "uid": "sP", "name": _SECT, "rulebase": []},
+                      {"type": "access-section", "uid": "sC", "name": "Clean up rule",
+                       "rulebase": [_cleanup_rule()]}])
+    pos = aa._floor_position(sess, "Network", None, {"ops": []})
+    assert pos == {"bottom": _SECT} and not sess._addsecs()        # reused, never recreated
+
+
+def test_floor_position_bare_cleanup_rule_sits_above_it_no_section():
+    sess = _SectSess([_normal_rule(), _cleanup_rule("r99", 99)])
+    pos = aa._floor_position(sess, "Network", None, {"ops": []})
+    assert pos == {"above": "r99"} and not sess._addsecs()         # no wrapping section -> just above it
+
+
+def test_floor_position_disabled_falls_back_to_bottom(monkeypatch):
+    monkeypatch.setattr("app.services.naming.rule_section", lambda: "")
+    sess = _SectSess([_normal_rule(), _cleanup_rule()])
+    assert aa._floor_position(sess, "Network", None, {"ops": []}) == "bottom"
+    assert not sess.calls                                          # short-circuits before any read
+
+
+def test_floor_position_degrades_to_bottom_when_no_cleanup_found():
+    sess = _SectSess([_normal_rule()])                             # no recognizable catch-all cleanup
+    assert aa._floor_position(sess, "Network", None, {"ops": []}) == "bottom"
+
+
+def test_floor_position_degrades_above_section_when_creation_rejected():
+    items = [_normal_rule(), {"type": "access-section", "uid": "sC", "name": "Clean up rule",
+                              "rulebase": [_cleanup_rule()]}]
+
+    class _Reject(_SectSess):
+        def call(self, cmd, payload=None):
+            if cmd == "add-access-section":
+                self.calls.append((cmd, payload or {}))
+                raise aa.MgmtError("a section named that already exists")
+            return super().call(cmd, payload)
+
+    pos = aa._floor_position(_Reject(items), "Network", None, {"ops": []})
+    assert pos == {"above": "Clean up rule"}                       # degrade: above the cleanup SECTION

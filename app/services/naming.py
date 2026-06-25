@@ -118,3 +118,15 @@ def rule_tags() -> list:
     except Exception:  # noqa: BLE001
         raw = ""
     return [t.strip() for t in raw.replace(";", ",").split(",") if t.strip()]
+
+
+def rule_section() -> str:
+    """The section that floor-placed (above-cleanup) rules are grouped into, so a created rule never lands
+    INSIDE the cleanup section (Check Point's organize-by-section best practice). ``aa_rule_section``;
+    cleared to "" falls back to bare bottom placement (no section management). Trusted admin Setting —
+    kept verbatim (CP section names allow spaces/punctuation), only trimmed + length-capped."""
+    try:
+        raw = (app_settings.get("aa_rule_section") or "").strip()
+    except Exception:  # noqa: BLE001 — a settings read must never break the apply path
+        raw = ""
+    return raw[:120]
