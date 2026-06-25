@@ -2168,6 +2168,48 @@ def test_revert_execute_no_inverse_is_an_error():
     assert res["ok"] is False and "inverse" in res["error"]
 
 
+class _GoneSession:
+    """A write session whose rule edits all fail 'not found' — models a rule deleted out-of-band."""
+    def __init__(self, *a, **k):
+        self.trace = []
+    def __enter__(self):
+        return self
+    def __exit__(self, *a):
+        return False
+    def call(self, cmd, payload=None, **k):
+        if cmd in ("delete-access-rule", "set-access-rule"):
+            raise aa.MgmtError("Requested object [Entities can not be found] not found")
+        return {}
+    def publish(self):
+        pass
+    def discard(self):
+        pass
+
+
+def test_revert_execute_idempotent_when_rule_gone_out_of_band(monkeypatch):
+    # the reported case: the rule the rollback targets was deleted out-of-band -> the web_api errors
+    # 'not found'. The rollback's intent (that rule absent) is ALREADY met, so it succeeds, not stuck.
+    monkeypatch.setattr(aa, "MgmtSession", _GoneSession)
+    r1 = aa.revert_execute(object(), "secret", [{"op": "delete-access-rule", "uid": "gone", "layer": "L"}], publish=True)
+    assert r1["ok"] and r1["reverted"] is True and any("already absent" in o for o in r1["ops"])
+    # re-enabling a rule that no longer exists is likewise moot -> success (nothing to undo)
+    r2 = aa.revert_execute(object(), "secret",
+                           [{"op": "set-access-rule", "uid": "gone", "layer": "L", "enabled": True}], publish=True)
+    assert r2["ok"] and r2["reverted"] is True
+
+
+def test_revert_execute_real_error_still_fails(monkeypatch):
+    # a genuine (non-not-found) error must NOT be swallowed by the idempotent-missing handling.
+    class _RejectSession(_GoneSession):
+        def call(self, cmd, payload=None, **k):
+            if cmd == "delete-access-rule":
+                raise aa.MgmtError("server rejected the change: invalid payload")
+            return {}
+    monkeypatch.setattr(aa, "MgmtSession", _RejectSession)
+    res = aa.revert_execute(object(), "secret", [{"op": "delete-access-rule", "uid": "u", "layer": "L"}], publish=True)
+    assert res["ok"] is False and "rejected" in res["error"]
+
+
 def test_revert_execute_disable_mode_maps_delete_to_disable(monkeypatch):
     # Check Point lets a rule be disabled instead of deleted -> the gentler, reversible undo. With
     # disable_added_rules, a delete-access-rule inverse becomes set-access-rule enabled=false; the

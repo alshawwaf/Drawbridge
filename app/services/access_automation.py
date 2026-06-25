@@ -2703,6 +2703,27 @@ def remove_execute(server, secret, req: AccessRequest, layer: str, *, package: O
 _REVERT_FIELDS = {"source", "destination", "service"}
 
 
+def _is_not_found_error(msg: str) -> bool:
+    """The SMS reports a missing object ('Requested object [...] not found' / '... can not be found'). For a
+    ROLLBACK that means the rule this op targets was already removed OUT-OF-BAND — the change is effectively
+    already undone, so the op is a successful no-op, not a failure that strands the change as un-reverted."""
+    m = (msg or "").lower()
+    return ("not found" in m or "can not be found" in m or "cannot be found" in m or "does not exist" in m)
+
+
+def _revert_call(session, command: str, payload: dict, note: str) -> str:
+    """Run one rollback web_api call IDEMPOTENTLY: if the target rule is already gone (deleted out-of-band in
+    SmartConsole), the rollback's intent is already satisfied -> swallow the not-found as a successful no-op
+    rather than failing the whole revert and leaving the audit entry stuck (the reported case)."""
+    try:
+        session.call(command, payload)  # VERIFY
+        return note
+    except MgmtError as exc:
+        if _is_not_found_error(str(exc)):
+            return note + " — rule already absent (removed out-of-band)"
+        raise
+
+
 def _apply_inverse_op(session, op: dict) -> str:
     """Translate ONE recorded inverse op (a flat, validated dict) into its web_api call. STRICTLY
     whitelisted — only the three rule edits the engine itself ever emits are accepted (delete a rule,
@@ -2713,16 +2734,17 @@ def _apply_inverse_op(session, op: dict) -> str:
     if not uid or not layer:
         raise MgmtError(f"malformed rollback op (missing uid/layer): {op!r}")
     if kind == "delete-access-rule":
-        session.call("delete-access-rule", {"uid": uid, "layer": layer})  # VERIFY
-        return f"delete-access-rule {uid}"
+        return _revert_call(session, "delete-access-rule", {"uid": uid, "layer": layer},
+                            f"delete-access-rule {uid}")
     if kind == "set-access-rule":
         if "enabled" in op:
-            session.call("set-access-rule", {"uid": uid, "layer": layer, "enabled": bool(op["enabled"])})  # VERIFY
-            return f"set-access-rule {uid} enabled={bool(op['enabled'])}"
+            return _revert_call(session, "set-access-rule",
+                                {"uid": uid, "layer": layer, "enabled": bool(op["enabled"])},
+                                f"set-access-rule {uid} enabled={bool(op['enabled'])}")
         field, obj = op.get("field"), op.get("remove")
         if field in _REVERT_FIELDS and obj:
-            session.call("set-access-rule", {"uid": uid, "layer": layer, field: {"remove": obj}})  # VERIFY
-            return f"set-access-rule {uid} {field}.remove {obj}"
+            return _revert_call(session, "set-access-rule", {"uid": uid, "layer": layer, field: {"remove": obj}},
+                                f"set-access-rule {uid} {field}.remove {obj}")
     raise MgmtError(f"unsupported rollback op: {op!r}")
 
 
