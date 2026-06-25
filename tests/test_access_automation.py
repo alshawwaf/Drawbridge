@@ -2974,7 +2974,8 @@ def test_floor_position_creates_provisioned_section_above_cleanup_section():
     pos = aa._floor_position(sess, "Network", None, out)
     assert pos == {"bottom": _SECT}                               # rule lands at the bottom of the section
     sec = sess._addsecs()
-    assert sec and sec[0] == {"layer": "Network", "name": _SECT, "position": {"above": "Clean up rule"}}
+    # anchored on the cleanup section's UID (unambiguous), not its name
+    assert sec and sec[0] == {"layer": "Network", "name": _SECT, "position": {"above": "sC"}}
     assert any(o.startswith("add-access-section") for o in out["ops"])
 
 
@@ -3016,4 +3017,65 @@ def test_floor_position_degrades_above_section_when_creation_rejected():
             return super().call(cmd, payload)
 
     pos = aa._floor_position(_Reject(items), "Network", None, {"ops": []})
-    assert pos == {"above": "Clean up rule"}                       # degrade: above the cleanup SECTION
+    assert pos == {"above": "sC"}                                  # degrade: above the cleanup SECTION (uid)
+
+
+def test_floor_position_relocated_section_degrades_to_above_cleanup():
+    # an admin moved the provisioned section ABOVE a business rule (not bottom-adjacent). Reusing it for a
+    # floored allow could leap the allow above the rule that forced the floor (e.g. the Stealth rule), so
+    # anchor relative to the cleanup instead — never trust a relocated section's height.
+    items = [{"type": "access-section", "uid": "sP", "name": _SECT, "rulebase": []},
+             _normal_rule(),
+             {"type": "access-section", "uid": "sC", "name": "Clean up rule", "rulebase": [_cleanup_rule()]}]
+    sess = _SectSess(items)
+    pos = aa._floor_position(sess, "Network", None, {"ops": []})
+    assert pos == {"above": "sC"} and not sess._addsecs()          # not recreated; safe bottom, not the section
+
+
+# --- MEDIUM-1: creating above an overridden deny flags a SHADOWED more-specific deny below ----------
+def test_create_above_partial_deny_flags_shadowed_specific_deny_below():
+    A = _rule("rA", 1, "Drop", _net("10.0.0.0/16"), _net("10.2.0.0/24"), _tcp(443))   # partial deny
+    B = _rule("rB", 2, "Drop", _host("10.5.5.5"), _net("10.2.0.0/24"), _tcp(443))      # more-specific deny
+    req = AccessRequest(["10.0.0.0/8"], ["10.2.0.0/24"], "tcp", "443")                 # ⊋ A (src) and ⊋ B
+    d = aa.decide(req, [A, B, CLEANUP])
+    assert d.outcome is Outcome.CREATE and d.position == {"above": "rA", "_anomaly": True}
+    assert any("rB" in n for n in (d.notes or []))                 # advisory names the shadowed deny
+
+
+def test_create_above_partial_deny_no_flag_when_nothing_specific_below():
+    A = _rule("rA", 1, "Drop", _net("10.0.0.0/16"), _net("10.2.0.0/24"), _tcp(443))
+    req = AccessRequest(["10.0.0.0/8"], ["10.2.0.0/24"], "tcp", "443")
+    d = aa.decide(req, [A, CLEANUP])
+    assert d.outcome is Outcome.CREATE and d.position == {"above": "rA"}   # no _anomaly, no shadow note
+
+
+def test_app_carveout_flags_shadowed_app_deny_below():
+    drop = _rule("rD", 1, "Drop", _net("10.0.0.0/8"), _net("172.16.0.0/16"), _tcp(443))    # L4 drop -> carve
+    fbdrop = _rule("rS", 2, "Drop", _host("10.5.5.5"), _net("172.16.0.0/16"), _app(["Facebook"]))  # app deny
+    req = AccessRequest(["10.0.0.0/8"], ["172.16.0.0/16"], application="Facebook")
+    d = aa.decide(req, [drop, fbdrop, CLEANUP])
+    assert d.outcome is Outcome.CREATE and (d.position or {}).get("_anomaly") is True
+    assert any("rS" in n for n in (d.notes or []))
+
+
+# --- removal symmetry for the Internet object (it routes through the shared primitives) -----------
+def test_decide_removal_internet_exact_rule_disables():
+    r = _inet_rule("rI", 13, "acc", ["ws"], ["inet"], ["fb"])          # win_server -> Internet -> Facebook
+    cleanup = _inet_rule("rC", 99, "drp", ["any"], ["any"], ["any"])
+    d = aa.decide_removal(_req_fb_internet(), [r, cleanup])
+    assert d.outcome is aa.RemovalOutcome.DISABLE and d.target_rule.uid == "rI"
+
+
+def test_decide_removal_internet_deny_above_broader_any_dest_rule():
+    r = _inet_rule("rA", 5, "acc", ["ws"], ["any"], ["fb"])            # Any dest is broader than Internet
+    cleanup = _inet_rule("rC", 99, "drp", ["any"], ["any"], ["any"])
+    d = aa.decide_removal(_req_fb_internet(), [r, cleanup])
+    assert d.outcome is aa.RemovalOutcome.DENY and d.position == {"above": "rA"}   # no over-removal
+
+
+def test_decide_removal_internet_regranted_below_is_deny_not_disable():
+    exact = _inet_rule("rI", 13, "acc", ["ws"], ["inet"], ["fb"])
+    broad = _inet_rule("rA", 20, "acc", ["ws"], ["any"], ["fb"])       # below: still grants it
+    cleanup = _inet_rule("rC", 99, "drp", ["any"], ["any"], ["any"])
+    d = aa.decide_removal(_req_fb_internet(), [exact, broad, cleanup])
+    assert d.outcome is aa.RemovalOutcome.DENY                          # disabling rI alone wouldn't stop it

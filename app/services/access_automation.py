@@ -1061,6 +1061,32 @@ def _widen_mixes_internet(field: str, req: "AccessRequest", r: ParsedRule) -> bo
     return (req_inet and rule_other) or (not req_inet and rule_inet)
 
 
+def _more_specific_deny_below(req: "AccessRequest", req_src, req_dst, req_svc,
+                              rules: list, i: int) -> Optional["ParsedRule"]:
+    """Scan rules BELOW index ``i`` for an enabled, fully-resolved DROP strictly MORE SPECIFIC than the
+    request (request ⊋ rule). When we CREATE an allow ABOVE an overridden/partial deny, such a lower deny is
+    SHADOWED — it no longer matches its (overlapping) scope. First-match can't both override the upper deny
+    AND preserve this lower one, so the placement is by design; the gap this closes is the missing ADVISORY.
+    Returns the first such rule, else None. The catch-all cleanup is excluded (it's the floor); approx /
+    unresolved denies are skipped (not provably narrower, so not provably shadowed)."""
+    for r2 in rules[i + 1:]:
+        if not r2.enabled or not r2.is_drop or _is_catchall(r2):
+            continue
+        rel_s, su, sa = _dim_relation(req.src_kind, req.src_value, req_src, r2, "source")
+        rel_d, du, da = _dim_relation(req.dst_kind, req.dst_value, req_dst, r2, "destination")
+        if su or du or sa or da or r2.svc_unknown:
+            continue
+        if _is_proper_superset(rel_s, rel_d, svc_relation(req_svc, r2.svc)):
+            return r2
+    return None
+
+
+def _shadow_note(shadowed: "ParsedRule") -> str:
+    return (f"this allow is placed above the more-specific deny rule {shadowed.number} "
+            f"({shadowed.name}) below it, which overlaps this request — that deny will no longer match its "
+            f"scope. Review the intent.")
+
+
 @dataclass(frozen=True)
 class DecideOptions:
     """Admin-tunable decision/placement behaviour (built from Settings by the caller; decide() stays pure).
@@ -1116,6 +1142,15 @@ def decide(req: AccessRequest, rules: list[ParsedRule], options: "DecideOptions"
     options = options or DecideOptions()
     notes: list[str] = []
     decision = _decide(req, rules, options, notes)
+    # The predefined Internet object is TOPOLOGY- and BLADE-dependent (it matches only internet/DMZ-bound
+    # traffic via the gateway's External interface, and only inside an App Control / URL Filtering layer).
+    # Surface that prerequisite whenever we build a rule against it, so a PoV doesn't install a green policy
+    # whose app rule silently matches nothing.
+    if req.dst_kind == "internet" and decision.outcome in (Outcome.CREATE, Outcome.WIDEN):
+        notes.append("destination is the predefined Internet object (Application Control / URL Filtering "
+                     "best practice for app rules) — it matches only internet/DMZ-bound traffic, so it needs "
+                     "the gateway topology defined (an External interface) and the Application Control / URL "
+                     "Filtering blade enabled, or the rule will match nothing.")
     # ``emit_notes`` off = quiet mode: drop the advisory notes (placement/uncertain_deny safety is decided
     # inside _decide and is unaffected — only the human-facing advisories are suppressed).
     if options.emit_notes and notes:
@@ -1252,12 +1287,17 @@ def _decide(req: AccessRequest, rules: list[ParsedRule], options: "DecideOptions
                 # one fewer rule; the widened rule sits above the drop so first-match grants the app).
                 if options.prefer_widen and widen_target is not None and not uncertain_deny:
                     return _widen_above_block(widen_target, widen_field, r)
+                pos = {"above": r.uid}
+                shadowed = _more_specific_deny_below(req, req_src, req_dst, req_svc, rules, i)
+                if shadowed is not None:        # carving above this drop also shadows a more-specific deny below
+                    pos["_anomaly"] = True
+                    notes.append(_shadow_note(shadowed))
                 return Decision(
                     Outcome.CREATE,
                     f"rule {r.number} ({r.name}) blocks the requested application; creating the allow ABOVE "
                     f"it so Check Point carves out just that application — the rule still drops all of its "
                     f"other traffic",
-                    target_rule=r, position={"above": r.uid},
+                    target_rule=r, position=pos,
                 )
             # app_carveout OFF, or the operator disallows overriding denies: place BELOW + flag, and STOP.
             # Returning (not continuing) avoids a lower Accept being read as a false NO_OP — per CP this drop
@@ -1423,11 +1463,13 @@ def _decide(req: AccessRequest, rules: list[ParsedRule], options: "DecideOptions
         # were already NOTED and skipped above; complex+provably-disjoint rules are excluded below).
         fully_covers = not complex_eff and _is_subset(rel_src, rel_dst, rel_svc)
 
-        # (1) already permitted? first covering ACCEPT before any covering DROP wins.
+        # (1) already permitted? first covering ACCEPT before any covering DROP wins. The verdict is scoped
+        # to THIS access layer — Check Point Ordered Layers chain (an Accept here only advances evaluation to
+        # the next layer), so a downstream layer could still restrict the flow.
         if fully_covers and r.is_accept and covering_drop is None:
             return Decision(
                 Outcome.NO_OP,
-                f"already permitted by rule {r.number} ({r.name})",
+                f"already permitted by rule {r.number} ({r.name}) within this access layer",
                 target_rule=r,
             )
 
@@ -1485,11 +1527,16 @@ def _decide(req: AccessRequest, rules: list[ParsedRule], options: "DecideOptions
                 return _widen_above_block(widen_target, widen_field, r)
             # An overlapping deny blocks PART of the requested scope. Create the allow ABOVE it so the full
             # request takes effect (first-match hits the allow before this partial deny).
+            pos = {"above": r.uid}
+            shadowed = _more_specific_deny_below(req, req_src, req_dst, req_svc, rules, i)
+            if shadowed is not None:            # placing above this partial deny also shadows a narrower deny below
+                pos["_anomaly"] = True
+                notes.append(_shadow_note(shadowed))
             return Decision(
                 Outcome.CREATE,
                 f"rule {r.number} ({r.name}) partially denies the requested scope; creating the allow "
                 f"ABOVE it so the requested access takes effect",
-                target_rule=r, position={"above": r.uid},
+                target_rule=r, position=pos,
             )
 
         # (2) widen candidate: a reachable ACCEPT that is EXACTLY EQUAL to the request in two of the
@@ -1565,30 +1612,33 @@ def _placement(covering_drop, lower_anchor) -> dict:
     return {"_above_cleanup": True}
 
 
-def _find_section(items: list, name: str) -> bool:
-    """Is a top-level access-section with this name already present in the layer? (case-insensitive)."""
+def _section_index(items: list, name: str) -> int:
+    """Index of the top-level access-section with this name (case-insensitive), or -1 if absent."""
     low = (name or "").strip().lower()
-    return any(it.get("type") == "access-section" and (it.get("name") or "").strip().lower() == low
-               for it in (items or []))
+    for idx, it in enumerate(items or []):
+        if it.get("type") == "access-section" and (it.get("name") or "").strip().lower() == low:
+            return idx
+    return -1
 
 
 def _cleanup_anchor(items: list, objdict: dict):
     """Where to insert the provisioned section so it sits ABOVE the cleanup. The cleanup is the catch-all
-    DROP at the layer tail: either a trailing SECTION that ends in one (anchor above that section by name)
-    or a bare trailing catch-all RULE (anchor above that rule by uid). Returns ("section", name) |
-    ("rule", uid) | None (can't locate it -> caller degrades to bare bottom)."""
+    DROP at the layer tail: either a trailing SECTION that ends in one or a bare trailing catch-all RULE.
+    Returns ``("section"|"rule", uid, index)`` (anchored on the UID — unambiguous, unlike a name that could
+    collide), or None (can't locate it -> caller degrades to bare bottom)."""
     def _is_catchall_item(e: dict) -> bool:
         return e.get("type") == "access-rule" and _is_catchall(_parse_rule(e, objdict))
 
-    last = (items or [])[-1] if items else None
-    if not last:
+    if not items:
         return None
+    idx = len(items) - 1
+    last = items[idx]
     if last.get("type") == "access-section":
         if any(_is_catchall_item(m) for m in (last.get("rulebase") or [])):
-            return "section", (last.get("name") or last.get("uid"))
+            return "section", last.get("uid"), idx
         return None
     if _is_catchall_item(last):
-        return "rule", last.get("uid")
+        return "rule", last.get("uid"), idx
     return None
 
 
@@ -1599,7 +1649,7 @@ def _floor_position(session, layer: str, package: Optional[str], out: dict):
 
     Falls back to bare ``"bottom"`` whenever a section isn't configured, the layer can't be read, or its
     cleanup can't be located — so placement never breaks, it just isn't tidied. The web_api position forms
-    here (section by name) are marked VERIFY: dry-run them on the live SMS before publishing."""
+    here are marked VERIFY: dry-run them on the live SMS before publishing."""
     from . import naming
     section = naming.rule_section()
     if not section:
@@ -1608,12 +1658,23 @@ def _floor_position(session, layer: str, package: Optional[str], out: dict):
         items, objdict = _pull_items(session, layer, package)
     except Exception:  # noqa: BLE001 — discovery must never break the apply; degrade to bottom
         return "bottom"
-    if _find_section(items, section):
-        return {"bottom": section}              # VERIFY: place at the bottom of the existing section
     anchor = _cleanup_anchor(items, objdict)
+    sec_idx = _section_index(items, section)
+    if sec_idx >= 0:
+        # The section already exists. Reuse it ONLY when it is bottom-adjacent to the cleanup (sits directly
+        # above it). If an admin RELOCATED the section higher up (above some blocking rule, e.g. the Stealth
+        # rule), placing a floored allow into it could leap the allow above the very rule that forced the
+        # floor -> first-match exposes that traffic. In that case anchor relative to the cleanup instead, so
+        # the rule stays at the safe bottom height. (decide() floors only below the cleanup or a possible
+        # block; the cleanup is always below such a block, so above-the-cleanup is always a safe floor.)
+        if anchor is not None and sec_idx == anchor[2] - 1:
+            return {"bottom": section}           # VERIFY: bottom of the existing, bottom-adjacent section
+        if anchor is not None:
+            return {"above": anchor[1]}          # relocated section -> safe bottom, not the relocated group
+        return "bottom"
     if anchor is None:
         return "bottom"                          # can't locate the cleanup -> safe degrade
-    kind, ref = anchor
+    kind, ref, _ = anchor
     if kind == "rule":
         # a BARE cleanup rule (no wrapping section): just sit above it. Creating a section here would risk
         # the section absorbing the cleanup rule beneath its header -> the allow shadowed below the drop.
