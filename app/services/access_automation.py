@@ -82,6 +82,13 @@ _V6_BASE = 1 << 33
 _V6_MAX = (1 << 128) - 1
 ANY_IP: list[tuple[int, int]] = [(0, _V4_MAX), (_V6_BASE, _V6_BASE + _V6_MAX)]
 
+# The predefined topology-based "Internet" object. It is a global object in the "Check Point Data" domain
+# with the FIXED uid below and type "Internet" — and it is NOT returned in a per-rulebase
+# objects-dictionary, so a destination reference to it frequently can't be dereferenced to a name (only the
+# bare uid is available). Recognize it by this uid (definitive across deployments — predefined uids are
+# fixed) or by type, so an Internet-dest rule isn't read as opaque and disqualified from reuse/widen.
+_INTERNET_UID = "f99b1488-7510-11e2-8668-87656188709b"
+
 
 def _addr_point(addr: str) -> int:
     """An IP (v4 or v6) -> its point on the shared integer line (v6 offset into its band)."""
@@ -668,14 +675,14 @@ def _parse_net(cell, objdict: dict):
         name = (o.get("name") or "").lower()
         raw_name = o.get("name") or ""
         # Check Point's predefined topology-based "Internet" object — captured in its own identity space.
-        # Checked BEFORE the Any check on purpose: the Internet object shares the **CpmiAnyObject** type with
-        # the predefined Any (its NAME, not its type, distinguishes them), so the Any check would otherwise
-        # swallow it and read the rule's destination as Any → Internet⊆Any is SUBSET, not EQUAL → the widen's
-        # "two dimensions equal" test fails on destination → a redundant CREATE instead of widening. Match by
-        # the RESERVED name for ANY type EXCEPT a concrete address container (a customer host/network named
-        # "Internet" still resolves by its IP). Tolerant of however the live API returns the object.
-        if name == "internet" and t not in (
-                "host", "network", "address-range", "multicast-address-range", "wildcard"):
+        # Recognize it ROBUSTLY: by its FIXED predefined uid (it lives in the "Check Point Data" domain and
+        # is NOT in a rulebase's objects-dictionary, so a destination reference usually can't be dereferenced
+        # to a name — only the bare uid is available), by its type "Internet", or (fallback) by its reserved
+        # name for a non-address type. Checked BEFORE the Any check. A customer host/network *named* "Internet"
+        # (a concrete address type) still resolves by its IP.
+        if (o.get("uid") == _INTERNET_UID or t == "internet"
+                or (name == "internet" and t not in
+                    ("host", "network", "address-range", "multicast-address-range", "wildcard"))):
             typed.internet.add("Internet")
             continue
         if t == "cpmianyobject" or name == "any":
