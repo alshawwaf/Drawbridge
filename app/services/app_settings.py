@@ -152,6 +152,14 @@ SETTINGS: list[Setting] = [
             "Comma-separated tag names to attach to a created rule (e.g. automation, pov). The tags must "
             "already exist on the management server — Check Point won't auto-create them. Blank = none.",
             group="Access automation", max=300),
+    Setting("aa_rule_section", "str", "Provisioned (automation)",
+            "Provisioned-rule section",
+            "When the engine places a created rule at the cleanup floor (no more-specific anchor), it groups "
+            "it into a section by this name, created just ABOVE the layer's cleanup section — so a new "
+            "business rule never lands INSIDE the 'Cleanup' section (Check Point's organize-by-section best "
+            "practice). The rule's first-match HEIGHT is unchanged (still above the cleanup); only its "
+            "section is tidied. Blank = no section management (place at the bare bottom, the old behavior).",
+            group="Access automation", max=120),
     # --- Decision / placement logic (tune the engine from here — no code) ----------------------------
     # Each knob maps to one judgment call in the reuse-or-create engine; defaults are the recommended
     # behaviour, so leaving them as-is decides exactly as documented. (See the "How it decides" diagram.)

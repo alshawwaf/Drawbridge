@@ -1565,6 +1565,68 @@ def _placement(covering_drop, lower_anchor) -> dict:
     return {"_above_cleanup": True}
 
 
+def _find_section(items: list, name: str) -> bool:
+    """Is a top-level access-section with this name already present in the layer? (case-insensitive)."""
+    low = (name or "").strip().lower()
+    return any(it.get("type") == "access-section" and (it.get("name") or "").strip().lower() == low
+               for it in (items or []))
+
+
+def _cleanup_anchor(items: list, objdict: dict):
+    """Where to insert the provisioned section so it sits ABOVE the cleanup. The cleanup is the catch-all
+    DROP at the layer tail: either a trailing SECTION that ends in one (anchor above that section by name)
+    or a bare trailing catch-all RULE (anchor above that rule by uid). Returns ("section", name) |
+    ("rule", uid) | None (can't locate it -> caller degrades to bare bottom)."""
+    def _is_catchall_item(e: dict) -> bool:
+        return e.get("type") == "access-rule" and _is_catchall(_parse_rule(e, objdict))
+
+    last = (items or [])[-1] if items else None
+    if not last:
+        return None
+    if last.get("type") == "access-section":
+        if any(_is_catchall_item(m) for m in (last.get("rulebase") or [])):
+            return "section", (last.get("name") or last.get("uid"))
+        return None
+    if _is_catchall_item(last):
+        return "rule", last.get("uid")
+    return None
+
+
+def _floor_position(session, layer: str, package: Optional[str], out: dict):
+    """Resolve the floor (above-cleanup) placement to a SECTION-aware web_api 'position', so a created
+    rule lands in the configured 'provisioned' section ABOVE the cleanup section — never inside it. The
+    rule's first-match HEIGHT is unchanged (still above the cleanup); only its grouping is tidied.
+
+    Falls back to bare ``"bottom"`` whenever a section isn't configured, the layer can't be read, or its
+    cleanup can't be located — so placement never breaks, it just isn't tidied. The web_api position forms
+    here (section by name) are marked VERIFY: dry-run them on the live SMS before publishing."""
+    from . import naming
+    section = naming.rule_section()
+    if not section:
+        return "bottom"
+    try:
+        items, objdict = _pull_items(session, layer, package)
+    except Exception:  # noqa: BLE001 — discovery must never break the apply; degrade to bottom
+        return "bottom"
+    if _find_section(items, section):
+        return {"bottom": section}              # VERIFY: place at the bottom of the existing section
+    anchor = _cleanup_anchor(items, objdict)
+    if anchor is None:
+        return "bottom"                          # can't locate the cleanup -> safe degrade
+    kind, ref = anchor
+    if kind == "rule":
+        # a BARE cleanup rule (no wrapping section): just sit above it. Creating a section here would risk
+        # the section absorbing the cleanup rule beneath its header -> the allow shadowed below the drop.
+        return {"above": ref}                    # VERIFY (above a rule uid — the always-supported form)
+    try:
+        session.call("add-access-section",       # VERIFY: position forms mirror add-access-rule
+                     {"layer": layer, "name": section, "position": {"above": ref}})
+        out.setdefault("ops", []).append("add-access-section " + section)
+    except MgmtError:
+        return {"above": ref}                    # creation rejected -> still place above the cleanup SECTION
+    return {"bottom": section}                    # VERIFY: rule -> bottom of the new provisioned section
+
+
 # --------------------------------------------------------------------------- #
 # REMOVE-access engine  (the inverse of decide(): revoke a granted access)
 # --------------------------------------------------------------------------- #
@@ -2123,7 +2185,10 @@ def _rules_for_layer(decision: Decision, rules: list[ParsedRule]) -> list[Parsed
 def _position_human(hint: Optional[dict], rules: list[ParsedRule]) -> str:
     hint = hint or {}
     if hint.get("_above_cleanup") or (not hint.get("above") and not hint.get("below")):
-        return "bottom (above the implicit cleanup)"
+        from . import naming
+        section = naming.rule_section()
+        return (f"in the “{section}” section, above the cleanup" if section
+                else "bottom (above the implicit cleanup)")
     by_uid = {r.uid: r for r in rules}
     if hint.get("above"):
         r = by_uid.get(hint["above"])
@@ -2172,7 +2237,7 @@ def _naming_ctx(req: AccessRequest, ticket_id: str, src_name: str, dst_name: str
 
 
 def _apply(session, decision: Decision, req: AccessRequest, layer: str,
-           rules: list[ParsedRule], ticket_id: str) -> dict:
+           rules: list[ParsedRule], ticket_id: str, package: Optional[str] = None) -> dict:
     out: dict = {"ops": []}
     # decide() reasons over the FULL request (all of src_cidrs/dst_cidrs, merged), but the materialization
     # below writes one object per endpoint. The public build_request() always yields single-element lists;
@@ -2213,9 +2278,15 @@ def _apply(session, decision: Decision, req: AccessRequest, layer: str,
     # Customer naming/track/tag conventions (Settings → "Access automation"; data-driven templates). The
     # PLACEMENT (position) is NOT a convention — the engine computes it for first-match correctness.
     nctx = _naming_ctx(req, ticket_id, src_name, dst_name, target_layer, "Accept")
+    # An anchored placement ({above/below: rule uid}) is first-match-critical — keep it exactly. A FLOOR
+    # placement (above the cleanup) is instead routed into the configured 'provisioned' section so the new
+    # rule doesn't land INSIDE the cleanup section; same height, tidier grouping (may create the section).
+    pos_hint = decision.position or {}
+    position = (_position_payload(pos_hint) if (pos_hint.get("above") or pos_hint.get("below"))
+                else _floor_position(session, target_layer, package, out))
     payload = {
         "layer": target_layer,
-        "position": _position_payload(decision.position or {}),
+        "position": position,
         "name": naming.rule_name(ticket_id, nctx),
         "source": src_name,
         "destination": dst_name,
@@ -2562,7 +2633,7 @@ def execute(server, secret, req: AccessRequest, layer: str, *, package: Optional
             if decision.outcome in (Outcome.NO_OP, Outcome.REVIEW):
                 return {"ok": True, "applied": False, "published": False, **base, "trace": s.trace}
             try:
-                applied = _apply(s, decision, req, layer, rules, ticket_id)
+                applied = _apply(s, decision, req, layer, rules, ticket_id, package)
                 if publish:
                     s.publish()
                     invalidate_cache(server)   # our change advanced the revision -> drop the read cache
