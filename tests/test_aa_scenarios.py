@@ -132,6 +132,50 @@ SCENARIOS = [
       _rule("ba", 2, "Accept", _net("10.0.0.0/24"), _host("1.1.1.1"), ServiceSet(any=True)), CLEANUP],
      _req("10.0.0.5/32", "1.1.1.1/32", protocol="tcp", ports="443"), DecideOptions(ignore_conditions=True),
      lambda d: d.outcome is RemovalOutcome.REVIEW),
+
+    # ---- resolved-disjointness BOUNDARY guards (the exact above/below, disjoint/overlap, src-disjoint/src-
+    #      overlap edges the QA reports pinned — _out_of_path must hold these) -----------------------------
+    # a Stealth 'Any->GW Drop' (dst_approx) whose GW main IP is resolved-DISJOINT from the request dest is
+    # stepped over -> the real grant is disabled (not a partial-drop REVIEW).
+    ("rem-stealth-drop-disjoint-disable", "rem",
+     [_flag(_rule("st", 2, "Drop", ANY, _host("10.1.2.1"), ServiceSet(any=True)), dst_approx=True),
+      _rule("cnn", 5, "Accept", _host("10.1.2.250"), _host("172.16.5.10"), _tcp("443")), CLEANUP],
+     _req("10.1.2.250/32", "172.16.5.10/32", protocol="tcp", ports="443"), None,
+     lambda d: d.outcome is RemovalOutcome.DISABLE and d.target_rule.uid == "cnn"),
+    # MUST STAY REVIEW: a CP-Updates rule whose SOURCE genuinely overlaps the request (src == the host) and
+    # whose dst is updatable/unresolvable -> resolved-overlapping + opaque -> REVIEW (don't guess).
+    ("rem-cpupd-src-overlaps-review", "rem",
+     [_flag(_rule("cpo", 3, "Accept", _host("10.1.2.250"), _net("23.0.0.0/8"), _tcp("80,443")),
+            dst_unknown=True, complex=True),
+      _rule("cnn", 5, "Accept", _host("10.1.2.250"), ANY, _app({"CNN"})), CLEANUP],
+     _req("10.1.2.250/32", application="CNN"), None,
+     lambda d: d.outcome is RemovalOutcome.REVIEW),
+    # MUST STAY NO_OP: a resolved DROP that fully covers -> already denied, nothing to remove.
+    ("rem-resolved-drop-covers-noop", "rem",
+     [_rule("d", 2, "Drop", _host("10.1.2.250"), ANY, _app({"CNN"})), CLEANUP],
+     _req("10.1.2.250/32", application="CNN"), None,
+     lambda d: d.outcome is RemovalOutcome.NO_OP),
+    # control for the under-removal guard: an http/https accept below on a DIFFERENT source is resolved-
+    # disjoint on src -> NOT a re-granter -> the app rule is cleanly DISABLEd (the SVC-12 fix must not over-fire).
+    ("rem-web-below-diff-src-disable", "rem",
+     [_rule("rfb", 8, "Accept", _host("10.1.2.50"), _host("172.16.5.10"), _app({"Facebook"})),
+      _rule("rw2", 9, "Accept", _host("10.9.9.9"), _host("172.16.5.10"), ServiceSet(by_proto={"tcp": [(80, 80), (443, 443)]})),
+      CLEANUP],
+     _req("10.1.2.50/32", "172.16.5.10/32", application="Facebook"), None,
+     lambda d: d.outcome is RemovalOutcome.DISABLE and d.target_rule.uid == "rfb"),
+    # ADD: a resolved-DISJOINT approx Stealth drop must NOT suppress a legitimate widen.
+    ("add-stealth-disjoint-widen", "add",
+     [_rule("tkt", 4, "Accept", _host("10.1.2.250"), _host("172.16.5.50"), _tcp("1433")),
+      _flag(_rule("st", 10, "Drop", ANY, _host("192.0.2.1"), ServiceSet(any=True)), dst_approx=True), CLEANUP],
+     _req("10.1.2.99/32", "172.16.5.50/32", protocol="tcp", ports="1433"), None,
+     lambda d: d.outcome is Outcome.WIDEN and d.target_rule.uid == "tkt"),
+    # ADD control: an approx Stealth drop whose dst OVERLAPS the request stays conservative (create, not
+    # widen-above — its true reach may be wider, so don't leap above it).
+    ("add-stealth-overlap-create", "add",
+     [_rule("tkt", 4, "Accept", _host("10.1.2.250"), _host("172.16.5.50"), _tcp("1433")),
+      _flag(_rule("st", 10, "Drop", ANY, _host("172.16.5.50"), ServiceSet(any=True)), dst_approx=True), CLEANUP],
+     _req("10.1.2.99/32", "172.16.5.50/32", protocol="tcp", ports="1433"), None,
+     lambda d: d.outcome is Outcome.CREATE),
 ]
 
 
