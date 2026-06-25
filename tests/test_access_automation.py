@@ -3148,28 +3148,26 @@ def test_category_with_app_group_is_subset_not_equal():
 
 # --- the live-lab case: an Internet-dest rule must be WIDENable, not read as opaque -> redundant CREATE ----
 def test_internet_rule_recognized_from_live_representation_and_widens_source():
-    # An existing win_server -> Internet -> Facebook rule; a NEW request from a different source for the same
-    # app/Internet must WIDEN that rule's source — not produce a redundant CREATE. The predefined Internet
-    # object is recognized even when the LIVE API returns it with a type and/or a stray address field
-    # (otherwise it reads as opaque -> complex_eff disqualifies the widen). A host *named* Internet still
-    # resolves by IP (the realistic naming conflict).
-    # the live Internet object shares the CpmiAnyObject type with predefined "Any" — recognized by its
-    # NAME, checked BEFORE the Any-type check, so it isn't swallowed and read as Any (which would make the
-    # destination SUBSET, not EQUAL, and block the widen).
+    # The real lab representation: the predefined "Internet" object (uid f99b1488-…, type "Internet") lives
+    # in the "Check Point Data" domain and is NOT returned in the rulebase's objects-dictionary — so rule
+    # 13's destination is a BARE UID the engine can't dereference to a name. It must still be recognized
+    # (by that fixed uid), or it reads as opaque -> complex_eff disqualifies the widen -> redundant CREATE.
+    UID = aa._INTERNET_UID
     od = {"any": {"uid": "any", "type": "CpmiAnyObject", "name": "Any"},
           "ws": {"uid": "ws", "type": "host", "name": "win_server", "ipv4-address": "10.1.2.250"},
-          "inet": {"uid": "inet", "name": "Internet", "type": "CpmiAnyObject"},
           "fb": {"uid": "fb", "type": "application-site", "name": "Facebook"},
           "acc": {"uid": "acc", "name": "Accept"}, "drp": {"uid": "drp", "name": "Drop"}}
+    # NOTE: the Internet uid is deliberately ABSENT from od (mirrors the live objdict gap).
 
     def _r(u, n, a, s, d, v):
         return aa._parse_rule({"uid": u, "rule-number": n, "name": u, "enabled": True, "action": a,
                                "source": s, "destination": d, "service": v}, od)
 
-    assert aa._parse_net([od["inet"]], {})[4].internet == {"Internet"}    # Internet recognized, not read as Any
-    assert aa._parse_net([od["any"]], {})[0] == aa.ANY_IP                 # real Any stays Any, not internet
+    assert aa._parse_net([UID], {})[4].internet == {"Internet"}                 # bare uid -> recognized
+    assert aa._parse_net([{"uid": "x", "name": "Internet", "type": "Internet"}], {})[4].internet == {"Internet"}
+    assert aa._parse_net([od["any"]], {})[0] == aa.ANY_IP                       # real Any stays Any, not internet
     req = AccessRequest(["10.1.1.222/32"], [], application="Facebook",
                         dst_kind="internet", dst_value="Internet")
-    d = aa.decide(req, [_r("r13", 13, "acc", ["ws"], ["inet"], ["fb"]),
+    d = aa.decide(req, [_r("r13", 13, "acc", ["ws"], [UID], ["fb"]),
                         _r("rC", 99, "drp", ["any"], ["any"], ["any"])])
     assert d.outcome is Outcome.WIDEN and d.widen_field == "source" and d.target_rule.uid == "r13"
