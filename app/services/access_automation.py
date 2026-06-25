@@ -667,18 +667,19 @@ def _parse_net(cell, objdict: dict):
         t = (o.get("type") or "").lower()
         name = (o.get("name") or "").lower()
         raw_name = o.get("name") or ""
-        if t == "cpmianyobject" or name == "any":
-            return ANY_IP, False, groups, False, typed
         # Check Point's predefined topology-based "Internet" object — captured in its own identity space.
-        # Match by its RESERVED name for ANY type EXCEPT a concrete address container (a customer could in
-        # theory name a host/network "Internet" — that still resolves by its IP). Deliberately tolerant of
-        # how the LIVE API returns the object (it may carry a placeholder address field or an unexpected
-        # type), so a real pulled Internet rule is recognised, not read as opaque → which would (correctly)
-        # disqualify it as a reuse/widen candidate and force a redundant CREATE.
+        # Checked BEFORE the Any check on purpose: the Internet object shares the **CpmiAnyObject** type with
+        # the predefined Any (its NAME, not its type, distinguishes them), so the Any check would otherwise
+        # swallow it and read the rule's destination as Any → Internet⊆Any is SUBSET, not EQUAL → the widen's
+        # "two dimensions equal" test fails on destination → a redundant CREATE instead of widening. Match by
+        # the RESERVED name for ANY type EXCEPT a concrete address container (a customer host/network named
+        # "Internet" still resolves by its IP). Tolerant of however the live API returns the object.
         if name == "internet" and t not in (
                 "host", "network", "address-range", "multicast-address-range", "wildcard"):
             typed.internet.add("Internet")
             continue
+        if t == "cpmianyobject" or name == "any":
+            return ANY_IP, False, groups, False, typed
         if t == "group":
             groups.append(o.get("uid", ""))
             mem = o.get("members")
