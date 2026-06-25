@@ -55,6 +55,9 @@
             <option value="updatable-object">Updatable object</option>
             <option value="security-zone">Security zone</option>
           </optgroup>
+          <optgroup label="Application Control">
+            <option value="internet">Internet (to the internet / DMZ)</option>
+          </optgroup>
         </select>
         <input id="aa-dest" class="grow" placeholder="172.16.5.10" autocomplete="off" list="aa-dstlist">
         <datalist id="aa-dstlist"></datalist>
@@ -317,6 +320,8 @@ Content-Type: application/json
       if (PORT_BASED[t]) { b.protocol = t; b.port = document.getElementById('aa-port').value.trim(); }
       else if (t === 'app') { b.application = document.getElementById('aa-app').value.trim(); }
       else { b.service = document.getElementById('aa-svc').value.trim(); }
+      // the Internet object is a fixed predefined singleton (its input is pinned + disabled)
+      if (b.destination_kind === 'internet') { b.destination = 'Internet'; }
       return b;
     }
     // show the input that matches the chosen service type; the predefined named protocols filter the
@@ -330,6 +335,18 @@ Content-Type: application/json
       document.getElementById('aa-svc-wrap').hidden = !named;
       document.getElementById('aa-app-wrap').hidden = t !== 'app';
       if (named) document.getElementById('aa-svc-hint').textContent = SVC_HINTS[t] || 'name';
+      // Check Point convention: an Application Control / URL Filtering rule targets the predefined
+      // Internet object, not Any. Couple the controls — picking an Application defaults the destination
+      // to Internet (unless a specific one was already set); leaving Application resets an Internet
+      // destination back to IP (Internet is only meaningful for app/URLF traffic).
+      var dt = document.getElementById('aa-dsttype'), dv = document.getElementById('aa-dest');
+      if (t === 'app') {
+        if (dt.value === 'ip' && (!dv.value.trim() || /^any$/i.test(dv.value.trim()))) {
+          dt.value = 'internet'; syncEndpointType('dst');
+        }
+      } else if (dt.value === 'internet') {
+        dt.value = 'ip'; syncEndpointType('dst');
+      }
     }
     // Source/destination type — adapt the input's hint + placeholder to the chosen object kind so the
     // user knows what to enter (an IP/CIDR, an FQDN, or a Check Point object name).
@@ -339,7 +356,8 @@ Content-Type: application/json
       'access-role':      { hint: '(access-role name)',      ph: 'Finance_Users' },
       'dynamic-object':   { hint: '(dynamic-object name)',   ph: 'DObj_AppServers' },
       'updatable-object': { hint: '(updatable-object name)', ph: 'Office365 Services' },
-      'security-zone':    { hint: '(security-zone name)',    ph: 'InternalZone' }
+      'security-zone':    { hint: '(security-zone name)',    ph: 'InternalZone' },
+      internet:           { hint: '(predefined — internet / DMZ-bound traffic)', ph: 'Internet', fixed: true }
     };
     function syncEndpointType(which) {
       var sel = which === 'src' ? 'aa-srctype' : 'aa-dsttype';
@@ -347,7 +365,12 @@ Content-Type: application/json
       var hint = which === 'src' ? 'aa-src-hint' : 'aa-dst-hint';
       var m = EP_META[document.getElementById(sel).value] || EP_META.ip;
       document.getElementById(hint).textContent = m.hint;
-      document.getElementById(inp).setAttribute('placeholder', m.ph);
+      var el = document.getElementById(inp);
+      el.setAttribute('placeholder', m.ph);
+      // The Internet object is a fixed predefined singleton — no value to type. Pin + disable the input
+      // (server ignores the value anyway); re-enable + clear when switching to any other kind.
+      if (m.fixed) { el.value = 'Internet'; el.disabled = true; }
+      else if (el.disabled) { el.disabled = false; el.value = ''; }
     }
     function outcomeBadge(o) {
       var map = {
