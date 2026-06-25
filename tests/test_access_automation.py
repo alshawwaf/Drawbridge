@@ -2791,29 +2791,52 @@ def test_resolved_covering_deny_creates_above_it():
     assert d.outcome is Outcome.CREATE and d.position == {"above": "rd"}
 
 
-def test_widen_suppressed_past_opaque_deny_and_created_below_it():
-    # SAFETY: an opaque DROP above a would-be widen target. WIDEN is suppressed (widening a rule above the
-    # possible block would pull the request's traffic over it -> under-deny). Instead CREATE, placed at the
-    # bottom (above the cleanup) so it sits BELOW the opaque deny and can never override it.
-    od = {"any": {"uid": "any", "type": "CpmiAnyObject", "name": "Any"},
-          "zone": {"uid": "zone", "type": "security-zone", "name": "Z"},
-          "hd": {"uid": "hd", "type": "host", "name": "w", "ipv4-address": "172.16.5.10"},
-          "hs": {"uid": "hs", "type": "host", "name": "c", "ipv4-address": "10.0.0.5"},
-          "t443": {"uid": "t443", "type": "service-tcp", "name": "https", "port": "443"},
-          "acc": {"uid": "acc", "name": "Accept"}, "drp": {"uid": "drp", "name": "Drop"}}
+def _ow_od():
+    return {"any": {"uid": "any", "type": "CpmiAnyObject", "name": "Any"},
+            "zone": {"uid": "zone", "type": "security-zone", "name": "Z"},
+            "hd": {"uid": "hd", "type": "host", "name": "w", "ipv4-address": "172.16.5.10"},
+            "hs": {"uid": "hs", "type": "host", "name": "c", "ipv4-address": "10.0.0.5"},
+            "t443": {"uid": "t443", "type": "service-tcp", "name": "https", "port": "443"},
+            "acc": {"uid": "acc", "name": "Accept"}, "drp": {"uid": "drp", "name": "Drop"}}
+
+
+def test_widen_allowed_when_target_is_below_an_opaque_deny():
+    # An opaque (zone) DROP ABOVE a clean widen target. The target sits BELOW the opaque deny, so widening
+    # it CANNOT leap the request over the block (first-match still hits the deny first for traffic it
+    # matches) -> widening is safe AND preferable to a duplicate. (The live Dynamic-Layer-above-rule-13
+    # case.) The opaque deny is still flagged for review.
+    od = _ow_od()
     odrop = aa._parse_rule({"uid": "od", "rule-number": 1, "name": "zone drop", "enabled": True,
                             "action": "drp", "source": ["zone"], "destination": ["hd"],
-                            "service": ["t443"]}, od)                       # opaque (zone) DROP
+                            "service": ["t443"]}, od)                       # opaque (zone) DROP, on top
     acc = aa._parse_rule({"uid": "wa", "rule-number": 2, "name": "win", "enabled": True, "action": "acc",
-                          "source": ["hs"], "destination": ["hd"], "service": ["t443"]}, od)  # widen target
+                          "source": ["hs"], "destination": ["hd"], "service": ["t443"]}, od)  # widen target BELOW
     cleanup = aa._parse_rule({"uid": "rC", "rule-number": 99, "name": "cleanup", "enabled": True,
                               "action": "drp", "source": ["any"], "destination": ["any"],
                               "service": ["any"]}, od)
     req = AccessRequest(["10.0.0.9/32"], ["172.16.5.10/32"], "tcp", "443")   # src differs from acc -> widen
     d = aa.decide(req, [odrop, acc, cleanup])
-    assert d.outcome is Outcome.CREATE                       # WIDEN suppressed
-    assert d.position == {"above": "rC"}                     # bottom — below the opaque deny (rule 1)
-    assert _noted(d, "rule 1", "block")
+    assert d.outcome is Outcome.WIDEN and d.widen_field == "source" and d.target_rule.uid == "wa"
+    assert _noted(d, "rule 1", "block")                      # opaque deny still flagged
+
+
+def test_widen_suppressed_when_target_is_above_an_opaque_deny():
+    # SAFETY (unchanged): the widen target sits ABOVE the opaque deny. Widening it WOULD pull the request's
+    # traffic over the block (first-match leaps the deny) -> under-deny. So WIDEN is suppressed -> CREATE
+    # below the deny.
+    od = _ow_od()
+    acc = aa._parse_rule({"uid": "wa", "rule-number": 1, "name": "win", "enabled": True, "action": "acc",
+                          "source": ["hs"], "destination": ["hd"], "service": ["t443"]}, od)  # widen target ON TOP
+    odrop = aa._parse_rule({"uid": "od", "rule-number": 2, "name": "zone drop", "enabled": True,
+                            "action": "drp", "source": ["zone"], "destination": ["hd"],
+                            "service": ["t443"]}, od)                       # opaque (zone) DROP, BELOW
+    cleanup = aa._parse_rule({"uid": "rC", "rule-number": 99, "name": "cleanup", "enabled": True,
+                              "action": "drp", "source": ["any"], "destination": ["any"],
+                              "service": ["any"]}, od)
+    req = AccessRequest(["10.0.0.9/32"], ["172.16.5.10/32"], "tcp", "443")
+    d = aa.decide(req, [acc, odrop, cleanup])
+    assert d.outcome is Outcome.CREATE                       # WIDEN suppressed (target above the deny)
+    assert _noted(d, "rule 2", "block")
 
 
 # --- Predefined "Internet" object (App Control / URL Filtering destination) ----------------------
@@ -3208,3 +3231,13 @@ def test_change_row_disabled_added_rule_stays_deletable():
     import datetime as _dt
     term = aar._change_row(_chg_ns(reverted_at=_dt.datetime.now(_dt.timezone.utc), resolution="deleted"))
     assert term["state"] == "resolved" and term["revertable"] is False
+
+
+def test_disabled_rule_near_match_is_noted_on_create():
+    # a DISABLED accept that already matches the access -> CREATE (disabled rules are correctly skipped),
+    # but the operator is advised to re-enable it instead of adding a duplicate.
+    r = _inet_rule("rD", 13, "acc", ["ws"], ["inet"], ["fb"]); r.enabled = False
+    cleanup = _inet_rule("rC", 99, "drp", ["any"], ["any"], ["any"])
+    d = aa.decide(_req_fb_internet(), [r, cleanup])
+    assert d.outcome is Outcome.CREATE
+    assert any("DISABLED" in n and "re-enable" in n.lower() for n in (d.notes or []))

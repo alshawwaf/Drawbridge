@@ -1238,6 +1238,7 @@ def _decide(req: AccessRequest, rules: list[ParsedRule], options: "DecideOptions
     covering_drop: Optional[ParsedRule] = None   # the catch-all cleanup that floors placement
     widen_target: Optional[ParsedRule] = None    # reachable accept EQUAL in 2 dims, differing in the 3rd
     widen_field: Optional[str] = None            # the dimension to extend: source | destination | service
+    widen_below_uncertain = False                # was the widen target found BELOW an opaque possible-deny?
     lower_anchor: Optional[ParsedRule] = None     # last rule strictly more specific than req
     conditional_skip: Optional[ParsedRule] = None  # a conditional ACCEPT we skipped (for the CREATE note)
     last_enabled = max((i for i, r in enumerate(rules) if r.enabled), default=-1)
@@ -1247,9 +1248,19 @@ def _decide(req: AccessRequest, rules: list[ParsedRule], options: "DecideOptions
     # match would let it leap over a possible block) -> we force bottom placement when it's set. (The
     # advisory text lives in ``notes``, which the decide() wrapper tags onto the returned outcome.)
     uncertain_deny = False
+    disabled_match: Optional[ParsedRule] = None   # a DISABLED accept that would cover/extend the request
 
     for i, r in enumerate(rules):
         if not r.enabled:
+            # A disabled rule grants nothing, so it's correctly skipped from matching — but if it's an
+            # ACCEPT that (were it on) would already cover or be widenable for this exact access, remember
+            # it: at a CREATE we advise re-enabling it rather than silently adding a duplicate.
+            if disabled_match is None and r.is_accept and not r.svc_unknown:
+                # resolve FOR THIS REQUEST (r.complex is the IP-path flag — a typed/Internet dst sets it,
+                # yet the rule is perfectly resolvable for a typed request): dst covered + svc covered.
+                d_rel, d_unk, _ = _dim_relation(req.dst_kind, req.dst_value, req_dst, r, "destination")
+                if not d_unk and _dim_covered(d_rel) and _dim_covered(svc_relation(req_svc, r.svc)):
+                    disabled_match = r
             continue
 
         # Relate each dimension to the rule cell, dispatching on the request's kind (IP vs typed). The
@@ -1600,16 +1611,22 @@ def _decide(req: AccessRequest, rules: list[ParsedRule], options: "DecideOptions
                 field = not_covered[0]
                 if (all(eq[d] for d in ("source", "destination", "service") if d != field)
                         and not _widen_mixes_internet(field, req, r)):
+                    # If an opaque possible-deny was ALREADY passed, this widen target sits BELOW it — so
+                    # widening it can't leap the request over that block (first-match still hits the block
+                    # first). Record that, so the suppression below applies only to ABOVE-the-block widens.
                     widen_target, widen_field = r, field
+                    widen_below_uncertain = uncertain_deny
 
         # Placement lower bound: a fully-resolved rule strictly MORE specific than req (don't shadow it).
         if not complex_eff and _is_proper_superset(rel_src, rel_dst, rel_svc):
             lower_anchor = r
 
-    # WIDEN is suppressed once we've passed an opaque possible-deny: widening a rule that sits ABOVE such
-    # a deny would pull the request's traffic into it and let it bypass the (possible) block — a first-
-    # match under-deny. CREATE below it is the safe alternative (placement is forced to the bottom above).
-    if widen_target is not None and not uncertain_deny:
+    # WIDEN is suppressed only when widening would let the request LEAP an opaque possible-deny: i.e. the
+    # widen target sits ABOVE such a deny (widening it pulls the request's traffic over the block — a
+    # first-match under-deny). A target found BELOW the deny (``widen_below_uncertain``) is safe — first-
+    # match still hits the block first — so it widens normally. (This was the live bug: a Dynamic Layer
+    # high in the rulebase set uncertain_deny and wrongly suppressed a widen of a rule far below it.)
+    if widen_target is not None and (not uncertain_deny or widen_below_uncertain):
         others = {"source": "destination + service", "destination": "source + service",
                   "service": "source + destination"}[widen_field]
         return Decision(
@@ -1624,6 +1641,10 @@ def _decide(req: AccessRequest, rules: list[ParsedRule], options: "DecideOptions
         reason += (f" (rule {conditional_skip.number} ({conditional_skip.name}) overlaps this request "
                    f"but only applies under {', '.join(conditional_skip.conditions)}, so it does not "
                    f"grant this traffic)")
+    if disabled_match is not None:
+        notes.append(f"rule {disabled_match.number} ({disabled_match.name}) already matches this access but "
+                     f"is DISABLED — re-enable it (and the engine will extend it) instead of creating a "
+                     f"duplicate, if that rule is what you intended.")
     # If an opaque rule that COULD deny was passed over, never anchor the new allow on a more-specific
     # rule above it (that could place the allow ABOVE the possible-deny -> a first-match leap over it).
     # Drop lower_anchor so placement falls to the cleanup floor / bottom — guaranteed below any such rule.
