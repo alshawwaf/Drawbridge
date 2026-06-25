@@ -1138,6 +1138,8 @@ def test_access_automation_detail_renders_form_and_webhook():
     # to an Application service (pick an app -> destination defaults to Internet).
     assert 'value="internet"' in html and "Internet (to the internet / DMZ)" in html
     assert "dt.value = 'internet'" in html       # syncSvcType auto-selects Internet for an app request
+    # rollback panel: a "disabled" rule is a non-terminal state (Re-enable | Delete rule), and re-enable maps
+    assert "c.state === 'disabled'" in html and "bodyObj.reenable = true" in html
     # the "behind the scenes" decision tree — a custom canvas the client renders from the engine's own
     # graph JSON, still exportable to the user's diagram tool (.drawio / .mmd / .dot)
     assert 'id="aa-flow-canvas"' in html and "How it decides" in html
@@ -3171,3 +3173,38 @@ def test_internet_rule_recognized_from_live_representation_and_widens_source():
     d = aa.decide(req, [_r("r13", 13, "acc", ["ws"], [UID], ["fb"]),
                         _r("rC", 99, "drp", ["any"], ["any"], ["any"])])
     assert d.outcome is Outcome.WIDEN and d.widen_field == "source" and d.target_rule.uid == "r13"
+
+
+# --- rollback panel: "disabled" is a non-terminal, actionable state (re-enable OR delete) -----------
+def _chg_ns(**kw):
+    base = dict(id=1, created_at=None, created_by="u", layer="L", action="apply", outcome="create",
+                summary="allow x -> y", ticket_id="", objects_json=[], reverted_at=None, reverted_by="",
+                revert_error="", resolution="",
+                inverse_json=[{"op": "delete-access-rule", "uid": "x", "layer": "L"}])
+    base.update(kw)
+    return types.SimpleNamespace(**base)
+
+
+def test_revert_state_machine():
+    import datetime as _dt
+    now = _dt.datetime.now(_dt.timezone.utc)
+    assert aar._revert_state(_chg_ns(outcome="create")) == "active"
+    assert aar._revert_state(_chg_ns(outcome="widen")) == "active"
+    # a created rule rolled back BY disabling it -> "disabled" (NOT terminal), reverted_at stays NULL
+    assert aar._revert_state(_chg_ns(outcome="create", resolution="disabled")) == "disabled"
+    # a removal that DISABLEd a rule (not yet finalized) -> "disabled"
+    assert aar._revert_state(_chg_ns(outcome="disable")) == "disabled"
+    # terminal states
+    assert aar._revert_state(_chg_ns(reverted_at=now, resolution="deleted")) == "resolved"
+    assert aar._revert_state(_chg_ns(reverted_at=now, resolution="reverted")) == "resolved"
+
+
+def test_change_row_disabled_added_rule_stays_deletable():
+    # THE BUG: a created rule rolled back via Disable must remain re-enable/delete-able, not look resolved.
+    row = aar._change_row(_chg_ns(outcome="create", resolution="disabled"))
+    assert row["state"] == "disabled" and row["deletable_disabled"] is True and row["revertable"] is True
+    assert row["reverted"] is False                          # reverted_at NULL -> not terminal
+    assert aar._change_row(_chg_ns(outcome="create"))["state"] == "active"
+    import datetime as _dt
+    term = aar._change_row(_chg_ns(reverted_at=_dt.datetime.now(_dt.timezone.utc), resolution="deleted"))
+    assert term["state"] == "resolved" and term["revertable"] is False

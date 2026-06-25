@@ -870,16 +870,17 @@ Content-Type: application/json
     }
 
     function rowHtml(c) {
-      var status;
-      if (c.reverted) {
+      var status, errLine = c.revert_error ? '<div class="muted" style="font-size:12px; color:var(--danger); margin-top:4px;">last attempt: ' + esc(c.revert_error) + '</div>' : '';
+      if (c.state === 'resolved') {
         status = resolvedLabel(c);
-      } else if (c.revertable) {
-        // kind drives the inline choice: an added rule (create/deny) -> disable|delete; a DISABLEd rule ->
-        // re-enable|delete; a widen -> single confirm (remove the widened object).
-        var kind = (c.outcome === 'create' || c.outcome === 'deny') ? 'adds'
-                 : (c.outcome === 'disable' ? 'disabled' : 'plain');
-        status = '<button type="button" class="btn secondary" data-revert="' + c.id + '" data-kind="' + kind + '">Roll back</button>';
-        if (c.revert_error) status += '<div class="muted" style="font-size:12px; color:var(--danger); margin-top:4px;">last attempt: ' + esc(c.revert_error) + '</div>';
+      } else if (c.state === 'disabled') {
+        // the rule is OFF but still present -> Resolve expands to Re-enable (undo) | Delete rule (finalize)
+        status = '<span class="muted" style="font-size:12px; display:block; margin-bottom:3px;">⏻ rule disabled</span>' +
+          '<button type="button" class="btn secondary" data-revert="' + c.id + '" data-kind="disabled">Resolve</button>' + errLine;
+      } else if (c.state === 'active' && c.revertable) {
+        // kind drives the inline choice: an added rule (create/deny) -> disable|delete; a widen -> single confirm.
+        var kind = (c.outcome === 'create' || c.outcome === 'deny') ? 'adds' : 'plain';
+        status = '<button type="button" class="btn secondary" data-revert="' + c.id + '" data-kind="' + kind + '">Roll back</button>' + errLine;
       } else {
         status = '<span class="muted">—</span>';
       }
@@ -968,6 +969,7 @@ Content-Type: application/json
         var bodyObj = { publish: true };
         if (mode === 'disable') bodyObj.disable = true;
         else if (mode === 'delete-disabled') bodyObj.delete_rule = true;
+        else if (mode === 'reenable') bodyObj.reenable = true;
         var label = { disable: 'Disabling…', 'delete-disabled': 'Deleting rule…', reenable: 'Re-enabling…',
                       delete: 'Deleting…' }[mode] || 'Rolling back…';
         var cell = yes.parentNode;
