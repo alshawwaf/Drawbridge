@@ -107,13 +107,35 @@ def _safe_commit(db: Session) -> bool:
         return False
 
 
-def mark_reverted(db: Session, change: AppliedChange, actor: str = "") -> None:
+def mark_reverted(db: Session, change: AppliedChange, actor: str = "", resolution: str = "reverted") -> None:
+    """Close a change: ``resolution`` is 'reverted' (the inverse was applied — the normal rollback) or
+    'deleted' (a DISABLEd rule was then deleted outright — the removal finalized, not undone). Both stamp
+    the resolved-at/by; the kind drives the panel's wording (↩ rolled back vs 🗑 rule deleted)."""
     change.reverted_at = dt.datetime.now(dt.timezone.utc)
     change.reverted_by = actor or ""
     change.revert_error = ""
+    change.resolution = resolution
     _safe_commit(db)
 
 
 def mark_revert_failed(db: Session, change: AppliedChange, error: str) -> None:
     change.revert_error = (error or "")[:2000]
     _safe_commit(db)
+
+
+def delete_entry(db: Session, change: AppliedChange) -> None:
+    """Remove ONE audit/rollback record from the list. Pure bookkeeping — never touches live policy. Once
+    gone, that change can no longer be rolled back from the panel (it's a manual list-management action)."""
+    db.delete(change)
+    _safe_commit(db)
+
+
+def clear_resolved(db: Session, server_id: int) -> int:
+    """Bulk-remove the RESOLVED audit records for a server (rolled back or disabled-rule-deleted) — the done
+    ones — leaving open/failed entries (still actionable) in place. Returns how many were removed."""
+    rows = list(db.scalars(select(AppliedChange).where(
+        AppliedChange.server_id == server_id, AppliedChange.reverted_at.is_not(None))))
+    for r in rows:
+        db.delete(r)
+    _safe_commit(db)
+    return len(rows)

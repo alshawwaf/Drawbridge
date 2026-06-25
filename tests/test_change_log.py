@@ -79,6 +79,36 @@ def test_mark_reverted_then_clears_any_prior_error(db):
     assert row.reverted_at is not None and row.reverted_by == "user:khalid" and row.revert_error == ""
 
 
+def _seed(db, outcome="create"):
+    return change_log.record(db, server=_Srv(), request=REQ, layer="L",
+                             result={"ok": True, "published": True, "applied": True, "outcome": outcome,
+                                     "inverse": [{"op": "delete-access-rule", "uid": "u", "layer": "L"}]})
+
+
+def test_mark_reverted_resolution_distinguishes_deleted_from_rolledback(db):
+    a, b = _seed(db, "disable"), _seed(db, "disable")
+    change_log.mark_reverted(db, a, actor="user:x")                       # default = reverted
+    change_log.mark_reverted(db, b, actor="user:x", resolution="deleted")
+    assert a.resolution == "reverted" and b.resolution == "deleted"
+    assert a.reverted_at is not None and b.reverted_at is not None
+
+
+def test_delete_entry_removes_one(db):
+    row = _seed(db)
+    change_log.delete_entry(db, row)
+    assert change_log.recent(db) == []
+
+
+def test_clear_resolved_keeps_open_and_failed(db):
+    open_row = _seed(db)                                                  # untouched -> stays
+    done = _seed(db); change_log.mark_reverted(db, done, actor="user:x")  # resolved -> cleared
+    failed = _seed(db); change_log.mark_revert_failed(db, failed, "boom")  # failed but not resolved -> stays
+    removed = change_log.clear_resolved(db, 7)
+    assert removed == 1
+    ids = {r.id for r in change_log.recent(db)}
+    assert open_row.id in ids and failed.id in ids and done.id not in ids
+
+
 def test_snapshot_request_reads_ip_and_typed_endpoints():
     class _Req:
         src_kind, src_cidrs, src_value = "ip", ["10.1.2.250/32"], ""

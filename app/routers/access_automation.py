@@ -283,6 +283,7 @@ def aa_apply(sid: int, body: AccessReqBody, request: Request, db: Session = Depe
 class RevertBody(BaseModel):
     publish: bool = False     # symmetric with apply: a bodyless/defaulted call DRY-RUNS (the UI sends true)
     disable: bool = False     # undo an added-rule change by DISABLING the rule instead of deleting it
+    delete_rule: bool = False  # for a DISABLE entry: DELETE the disabled rule outright (finalize, not undo)
 
 
 def _change_row(r) -> dict:
@@ -291,6 +292,9 @@ def _change_row(r) -> dict:
             "ticket_id": r.ticket_id or "", "objects": list(r.objects_json or []),
             "reverted": bool(r.reverted_at), "reverted_at": r.reverted_at.isoformat() if r.reverted_at else "",
             "reverted_by": r.reverted_by or "", "revert_error": r.revert_error or "",
+            "resolution": r.resolution or "",
+            # a DISABLE removal can be FINALIZED by deleting the rule it turned off (uid is in the inverse).
+            "deletable_disabled": (r.outcome == "disable" and bool(r.inverse_json) and not r.reverted_at),
             "revertable": bool(r.inverse_json) and not r.reverted_at}
 
 
@@ -321,11 +325,19 @@ def aa_revert(sid: int, cid: int, body: RevertBody, request: Request, db: Sessio
     if change is None or change.server_id != ms.id:
         return JSONResponse({"error": "Change not found for this server."}, status_code=404)
     if change.reverted_at:
-        return JSONResponse({"error": "This change was already rolled back."}, status_code=400)
+        return JSONResponse({"error": "This change was already resolved."}, status_code=400)
     if not change.inverse_json:
-        return JSONResponse({"error": "This change has no recorded inverse to roll back."}, status_code=400)
-    inverse = list(change.inverse_json or [])
+        return JSONResponse({"error": "This change has no recorded inverse to act on."}, status_code=400)
     actor = f"user:{user.username}"
+    if body.delete_rule:
+        # FINALIZE a removal that DISABLEd a rule: delete that rule outright. Its uid + layer are exactly the
+        # ones the recorded re-enable inverse targets. This is a forward step (not an undo) -> resolution=deleted.
+        if change.outcome != "disable":
+            return JSONResponse({"error": "Delete-rule applies only to a disabled-rule change."}, status_code=400)
+        inv0 = (change.inverse_json or [{}])[0]
+        ops, resolution = [{"op": "delete-access-rule", "uid": inv0.get("uid"), "layer": inv0.get("layer")}], "deleted"
+    else:
+        ops, resolution = list(change.inverse_json or []), "reverted"
     if body.publish:
         # ATOMIC claim BEFORE touching the SMS: a conditional UPDATE on reverted_at IS NULL ensures only ONE
         # of two concurrent reverts proceeds (no double publish, no spurious error stamped on a reverted row).
@@ -333,25 +345,53 @@ def aa_revert(sid: int, cid: int, body: RevertBody, request: Request, db: Sessio
         # is already marked; on SMS failure we release the claim below.
         claimed = (db.query(AppliedChange)
                    .filter(AppliedChange.id == cid, AppliedChange.reverted_at.is_(None))
-                   .update({"reverted_at": utcnow(), "reverted_by": actor, "revert_error": ""},
-                           synchronize_session=False))
+                   .update({"reverted_at": utcnow(), "reverted_by": actor, "revert_error": "",
+                            "resolution": resolution}, synchronize_session=False))
         db.commit()
         if not claimed:
-            return JSONResponse({"error": "This change was already rolled back."}, status_code=400)
-    result = aa.revert_execute(ms, secret, inverse, publish=body.publish, disable_added_rules=body.disable)
+            return JSONResponse({"error": "This change was already resolved."}, status_code=400)
+    result = aa.revert_execute(ms, secret, ops, publish=body.publish,
+                               disable_added_rules=body.disable and not body.delete_rule)
     if body.publish and not (result.get("ok") and result.get("reverted")):
         # the SMS revert did not commit -> RELEASE the claim so the change stays revertable + record why.
         # Best-effort: a bookkeeping hiccup must never mask the SMS result we return below.
         try:
             db.query(AppliedChange).filter(AppliedChange.id == cid).update(
-                {"reverted_at": None, "reverted_by": "", "revert_error": (result.get("error") or "")[:2000]},
-                synchronize_session=False)
+                {"reverted_at": None, "reverted_by": "", "resolution": "",
+                 "revert_error": (result.get("error") or "")[:2000]}, synchronize_session=False)
             db.commit()
         except Exception:  # noqa: BLE001
             db.rollback()
             import logging
             logging.getLogger("dcsim.access_automation").exception("releasing revert claim failed")
     return JSONResponse({**result, "change_id": cid}, status_code=200 if result.get("ok") else 400)
+
+
+@router.post("/access-automation/{sid}/changes/{cid}/delete")
+def aa_delete_change(sid: int, cid: int, request: Request, db: Session = Depends(get_db)):
+    """Remove ONE audit/rollback entry from the list. Pure bookkeeping — NEVER touches live policy (it only
+    forgets the record). After this the change can no longer be rolled back from the panel."""
+    user = get_user_or_none(request, db)
+    if user is None:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    ms = _owned(db, sid, user)
+    change = change_log.get(db, cid)
+    if change is None or change.server_id != ms.id:
+        return JSONResponse({"error": "Change not found for this server."}, status_code=404)
+    change_log.delete_entry(db, change)
+    return JSONResponse({"ok": True, "deleted": cid})
+
+
+@router.post("/access-automation/{sid}/changes/clear-resolved")
+def aa_clear_resolved(sid: int, request: Request, db: Session = Depends(get_db)):
+    """Bulk-remove the RESOLVED audit entries (rolled back / disabled-rule-deleted) for this server, leaving
+    open + failed ones (still actionable) in place. Bookkeeping only — never touches live policy."""
+    user = get_user_or_none(request, db)
+    if user is None:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    ms = _owned(db, sid, user)
+    removed = change_log.clear_resolved(db, ms.id)
+    return JSONResponse({"ok": True, "removed": removed})
 
 
 # --- Generic ticketing webhook (no portal session; authenticated by a shared token) ----------

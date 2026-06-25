@@ -63,6 +63,7 @@ _ADDED_COLUMNS = {
         "title": "VARCHAR(120) DEFAULT ''",
     },
     "api_keys": {"expires_at": "DATETIME"},     # key-expiry, added after the table shipped
+    "applied_changes": {"resolution": "VARCHAR(16) DEFAULT ''"},   # rolled-back vs disabled-rule-deleted
 }
 
 

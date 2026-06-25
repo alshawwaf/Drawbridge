@@ -295,9 +295,11 @@ class AppliedChange(Base):
     request_json: Mapped[dict] = mapped_column(JSON, default=dict)     # the request tuple (display + audit)
     inverse_json: Mapped[list] = mapped_column(JSON, default=list)     # precomputed inverse op(s) — see revert
     objects_json: Mapped[list] = mapped_column(JSON, default=list)     # object names touched (display only)
-    reverted_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    reverted_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)  # resolved-at
     reverted_by: Mapped[str] = mapped_column(String(120), default="")
     revert_error: Mapped[str] = mapped_column(Text, default="")        # last failed-revert reason, if any
+    resolution: Mapped[str] = mapped_column(String(16), default="")    # "" open | "reverted" (inverse applied)
+    #                                                                    | "deleted" (a disabled rule was deleted)
 
 
 class Notification(Base):
