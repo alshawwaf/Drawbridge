@@ -3492,3 +3492,41 @@ def test_amend_target_from_change_only_resolves_a_CREATED_rule():
         layer = "X"
         inverse_json = []
     assert mt._amend_target_from_change(_Empty()) == (None, "X")
+
+
+# --- remove an APPLICATION when a broad L4 accept above can carry it (block ABOVE the enabler) -------
+def _app_req(src="10.1.1.222/32"):
+    return AccessRequest(src_cidrs=[src], dst_cidrs=["Any"], application="Facebook")
+
+
+def test_remove_app_blocks_above_enabling_l4_accept_with_explicit_grant():
+    # The lab case: Outbound (net -> Any, http/https) sits ABOVE an explicit "Allow Facebook" rule whose
+    # source has two hosts. Blocking 10.1.1.222 -> Facebook must drop ABOVE Outbound (first-match), not next
+    # to the app rule (which Outbound's https would bypass). Used to bail to REVIEW.
+    web = _rule("web", 9, "Accept", _net("10.1.1.0/24"), ANY, _tcp("80,443"))
+    fb = _rule("fb", 13, "Accept", _host("10.1.1.222") + _host("10.1.2.250"), ANY, _app({"Facebook"}))
+    d = aa.decide_removal(_app_req(), [web, fb, CLEANUP])
+    assert d.outcome is aa.RemovalOutcome.DENY
+    assert d.target_rule.uid == "web" and d.position == {"above": "web"}          # ABOVE the L4 enabler
+    assert any("narrow" in n.lower() for n in d.notes)                            # flags the explicit grant
+
+
+def test_remove_app_only_web_accept_denies_above_it():
+    # No explicit app rule — just the L4 Outbound that can carry the app. Block above it (post-loop), not REVIEW.
+    web = _rule("web", 9, "Accept", _net("10.1.1.0/24"), ANY, _tcp("80,443"))
+    d = aa.decide_removal(_app_req(), [web, CLEANUP])
+    assert d.outcome is aa.RemovalOutcome.DENY and d.target_rule.uid == "web" and d.position == {"above": "web"}
+
+
+def test_remove_app_explicit_only_still_disables():
+    # No broad L4 accept above -> the explicit app rule grants EXACTLY this -> clean DISABLE (no regression).
+    fb = _rule("fb", 13, "Accept", _host("10.1.1.222"), ANY, _app({"Facebook"}))
+    d = aa.decide_removal(_app_req(), [fb, CLEANUP])
+    assert d.outcome is aa.RemovalOutcome.DISABLE and d.target_rule.uid == "fb"
+
+
+def test_remove_port_request_vs_app_rule_still_reviews():
+    # A PORT removal (not an app) facing an indeterminate app rule stays conservative -> REVIEW (unchanged).
+    appr = _rule("ar", 9, "Accept", _net("10.1.1.0/24"), ANY, _app({"Facebook"}))
+    d = aa.decide_removal(_req("10.1.1.222/32", "172.16.5.10/32"), [appr, CLEANUP])
+    assert d.outcome is aa.RemovalOutcome.REVIEW
