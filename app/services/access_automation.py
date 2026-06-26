@@ -2087,36 +2087,62 @@ def lookup_host(session, ip: str) -> Optional[str]:
     return None
 
 
-def lookup_address_object(session, ip: str) -> Optional[str]:
-    """An existing NON-host object that owns this exact IP — a gateway / cluster / cluster-member / Check
-    Point host (any single-address infra object), or None. A /32 request to a gateway's IP must REUSE that
-    object, not fabricate a duplicate ``h-<ip>`` host: the rule-parsing side already resolves gateways (it
-    reads the Stealth rule's GW cell), so the request side has to match by IP too. Read-only. Matched on the
-    exact ipv4/ipv6-address; ``host`` results are skipped (an exact host is handled by lookup_host first,
-    which wins), and network/group/range objects carry no single address so they never match here."""
+def _object_ip_span(o: dict) -> Optional[tuple]:
+    """The (lo, hi, version) integer IP interval an object spans, or None if it carries no FIXED address
+    scope (a group / Any / identity object / unresolved cell). Covers every address-bearing Check Point
+    object kind uniformly — a host or any single-address infra object (gateway / cluster / cluster-member /
+    Check Point host / interop ...) via ipv4/ipv6-address; a network via subnet+mask; an address-range (incl.
+    multicast) via first/last. This lets endpoint reuse match by EXACT scope across ALL types, not a per-type
+    allowlist."""
+    a = o.get("ipv4-address") or o.get("ipv6-address")
+    if a:
+        try:
+            ip = ipaddress.ip_address(a)
+            return (int(ip), int(ip), ip.version)
+        except ValueError:
+            return None
     try:
-        want = ipaddress.ip_address(ip)
+        if o.get("subnet4") is not None and o.get("mask-length4") is not None:
+            n = ipaddress.ip_network(f"{o['subnet4']}/{int(o['mask-length4'])}", strict=False)
+            return (int(n.network_address), int(n.broadcast_address), 4)
+        if o.get("subnet6") is not None and o.get("mask-length6") is not None:
+            n = ipaddress.ip_network(f"{o['subnet6']}/{int(o['mask-length6'])}", strict=False)
+            return (int(n.network_address), int(n.broadcast_address), 6)
+        f = o.get("ipv4-address-first") or o.get("ipv6-address-first")
+        l = o.get("ipv4-address-last") or o.get("ipv6-address-last")
+        if f and l:
+            lo, hi = ipaddress.ip_address(f), ipaddress.ip_address(l)
+            return (int(lo), int(hi), lo.version)
     except ValueError:
-        want = None
-    # ip-only returns everything whose scope CONTAINS the ip (a covering range / group / network too), and
-    # only details-level=full echoes the single-address fields — so we ask for full and keep ONLY an object
-    # whose own ipv4/ipv6-address EXACTLY equals the ip. That precise match excludes the broad containers
-    # (a range/group/network carries no single ipv4-address) and a host (handled by lookup_host).
-    found = session.call("show-objects",
-                         {"filter": ip, "ip-only": True, "details-level": "full", "limit": 25})  # VERIFY
-    for o in found.get("objects", []):
-        if (o.get("type") or "").lower() == "host":
-            continue
-        for v in (o.get("ipv4-address"), o.get("ipv6-address")):
-            if not v:
-                continue
-            try:
-                if want is not None and ipaddress.ip_address(v) == want:
-                    return o["name"]
-            except ValueError:
-                if v == ip:
-                    return o["name"]
+        return None
     return None
+
+
+# Reuse precedence among objects that EXACTLY match the requested scope: the canonical address objects
+# first (host for a single IP, network for a CIDR, then address-range), any other matching type (a gateway /
+# cluster / Check Point host / interop) last — so a duplicate is never created, but the most natural object
+# wins a tie. Unknown types sort after these.
+_ENDPOINT_TYPE_RANK = {"host": 0, "network": 1, "address-range": 2, "multicast-address-range": 2}
+
+
+def lookup_address_object(session, cidr_or_ip: str) -> Optional[str]:
+    """The existing object whose address scope EXACTLY equals the requested IP/CIDR, across ALL supported
+    address-bearing types (host / network / address-range / gateway / cluster / cluster-member / Check Point
+    host / interop / ...), or None. ``ip-only`` returns everything whose scope CONTAINS the address (covering
+    ranges/groups/networks too) and only ``details-level=full`` echoes the address fields — so we ask for full
+    and keep only an object whose own span is IDENTICAL to the request (never a broader container, which would
+    over-grant). Read-only dedup so a request reuses the right object instead of fabricating a duplicate."""
+    net = ipaddress.ip_network(cidr_or_ip, strict=False)
+    want = (int(net.network_address), int(net.broadcast_address), net.version)
+    found = session.call("show-objects",
+                         {"filter": str(net.network_address), "ip-only": True,
+                          "details-level": "full", "limit": 50})  # VERIFY
+    matches = [o for o in found.get("objects", [])
+               if o.get("name") and _object_ip_span(o) == want]
+    if not matches:
+        return None
+    matches.sort(key=lambda o: _ENDPOINT_TYPE_RANK.get((o.get("type") or "").lower(), 9))
+    return matches[0]["name"]
 
 
 def resolve_host(session, ip: str, name_hint: Optional[str] = None) -> str:
@@ -2151,16 +2177,14 @@ def lookup_network(session, net) -> Optional[str]:
 
 
 def lookup_endpoint(session, cidr: str) -> Optional[str]:
-    """Existing object for a request endpoint — the predefined Any, a host for /32 & /128, else a
-    network — or None."""
+    """Existing object for a request endpoint — the predefined Any, else ANY supported address-bearing
+    object whose scope EXACTLY equals the request (host / network / address-range / gateway / cluster /
+    Check Point host / interop / ...), or None. Matching by exact IP span (not a per-type allowlist) means a
+    /32 to a gateway reuses the gateway, a CIDR reuses a matching network OR an equivalent address-range,
+    etc. — never a duplicate, never a broader container."""
     if _is_any(cidr):
         return "Any"
-    net = ipaddress.ip_network(cidr, strict=False)
-    if net.prefixlen == net.max_prefixlen:
-        ip = str(net.network_address)
-        # host wins (most specific); else a gateway/cluster/CP-host that owns this exact IP.
-        return lookup_host(session, ip) or lookup_address_object(session, ip)
-    return lookup_network(session, net)
+    return lookup_address_object(session, cidr)
 
 
 def resolve_endpoint(session, cidr: str) -> str:
