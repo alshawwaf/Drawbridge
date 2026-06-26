@@ -1816,6 +1816,11 @@ class RemovalDecision:
     target_rule: Optional[ParsedRule] = None
     position: Optional[dict] = None
     notes: list = field(default_factory=list)
+    # An explicit ACCEPT (BELOW the enabling L4 accept) that ALSO grants this app and whose source is broader
+    # than the request -> a secondary cleanup: narrow its source (remove the now-blocked host) so the rulebase
+    # isn't left with a shadowed grant. Only set for an app block where a Drop is placed above the enabler;
+    # the actual removal is proven SAFE (direct host member, >=2 members) at APPLY time -> else just a note.
+    narrow_rule: Optional[ParsedRule] = None
 
 
 def _still_granted_below(req: AccessRequest, req_src, req_dst, req_svc,
@@ -1955,9 +1960,10 @@ def decide_removal(req: AccessRequest, rules: list[ParsedRule], options: "Decide
                 # A higher L4 accept can carry the app, so the ONLY first-match-correct block is a Drop ABOVE
                 # that accept. This rule ALSO explicitly grants it; if its source is broader than the request
                 # (it has other members), recommend narrowing its source rather than leaving a shadowed grant.
-                note = (f"rule {r.number} ({r.name}) also explicitly grants this — narrow its source to drop "
+                narrowable = rel_src == Relation.SUBSET     # the rule has OTHER sources -> remove just this host
+                note = (f"rule {r.number} ({r.name}) also explicitly grants this — narrowing its source to drop "
                         f"just this host (it has other sources), so the rulebase isn't left with a shadowed "
-                        f"grant" if rel_src == Relation.SUBSET else
+                        f"grant" if narrowable else
                         f"rule {r.number} ({r.name}) also explicitly grants this and is now shadowed by the "
                         f"Drop — review whether it is still needed")
                 return RemovalDecision(
@@ -1965,7 +1971,8 @@ def decide_removal(req: AccessRequest, rules: list[ParsedRule], options: "Decide
                     f"rule {enabling_accept.number} ({enabling_accept.name}) can carry this application over "
                     f"its L4 ports, so a least-privilege Drop is placed ABOVE it — first-match then blocks "
                     f"just this flow while that rule still serves its other traffic",
-                    target_rule=enabling_accept, position={"above": enabling_accept.uid}, notes=[note])
+                    target_rule=enabling_accept, position={"above": enabling_accept.uid}, notes=[note],
+                    narrow_rule=r if narrowable else None)
             # DISABLE only when the rule grants EXACTLY this and NOTHING ELSE relies on it. Two proofs are
             # required, both safety-critical: (1) no approx cell — an infra object resolved to its main IP
             # reads EQUAL but its true reach may be WIDER, so disabling the rule would revoke access for
@@ -2993,9 +3000,35 @@ def _build_removal_preview(decision: RemovalDecision, req: AccessRequest, rules:
     return out
 
 
+def _narrow_member_name(session, rule_uid: str, layer: str, req: AccessRequest) -> Optional[str]:
+    """The DIRECT source member of ``rule_uid`` to SAFELY remove when an app block shadows an explicit grant —
+    or None (don't narrow). PROVES safety at apply time against the live rule: the request source is a single
+    IP/CIDR; the rule's source has >= 2 direct members (so removing one leaves the rule meaningful); and
+    EXACTLY ONE direct member's address span equals the request source's. A host hidden INSIDE a group member
+    never matches (a group has no single span), so a group is never silently edited — the conservative reason
+    NARROW was avoided in the pure engine, now discharged with live data."""
+    if req.src_kind != "ip" or not req.src_cidrs:
+        return None
+    try:
+        net = ipaddress.ip_network(req.src_cidrs[0], strict=False)
+    except ValueError:
+        return None
+    want = (int(net.network_address), int(net.broadcast_address), net.version)
+    try:
+        cur = session.call("show-access-rule", {"uid": rule_uid, "layer": layer, "details-level": "full"})  # VERIFY
+    except MgmtError:
+        return None
+    members = cur.get("source") or []
+    if len(members) < 2:                              # removing the sole member would empty the cell -> not a narrow
+        return None
+    matches = [m.get("name") for m in members if m.get("name") and _object_ip_span(m) == want]
+    return matches[0] if len(matches) == 1 else None   # exactly one direct member equals the request source
+
+
 def _apply_removal(session, decision: RemovalDecision, req: AccessRequest, layer: str, ticket_id: str) -> dict:
     """Materialise a removal: DISABLE = turn the granting rule off; DENY = add a least-privilege Drop ABOVE
-    it for exactly src->dst:svc. NO_OP / REVIEW write nothing (handled by the caller)."""
+    it for exactly src->dst:svc (and, for an app block that shadows an explicit grant, optionally NARROW that
+    grant's source — proven safe at apply time). NO_OP / REVIEW write nothing (handled by the caller)."""
     out: dict = {"ops": []}
     # DENY materializes one object per endpoint, so (like _apply) a multi-CIDR IP endpoint would write less
     # than was reasoned — fail loud. build_request() always yields single-element lists; this guards a
@@ -3032,6 +3065,24 @@ def _apply_removal(session, decision: RemovalDecision, req: AccessRequest, layer
         # the exact inverse: delete the Drop we just added (rollback/undo) -> the broad rule grants again.
         if created_uid:
             out["inverse"] = [{"op": "delete-access-rule", "uid": created_uid, "layer": layer}]
+        # SECONDARY (app block best practice): the Drop above the enabler shadows an explicit grant that also
+        # lists this host. If that host is a SAFELY-removable direct source member, narrow the grant's source
+        # so the rulebase isn't left with a redundant shadowed entry. Proven at apply time; else just noted.
+        if decision.narrow_rule is not None:
+            member = _narrow_member_name(session, decision.narrow_rule.uid, layer, req)
+            if member:
+                session.call("set-access-rule",                                       # VERIFY
+                             {"uid": decision.narrow_rule.uid, "layer": layer, "source": {"remove": member}})
+                out["ops"].append(f"set-access-rule {decision.narrow_rule.uid} source.remove {member}")
+                out["narrowed"] = {"rule_uid": decision.narrow_rule.uid, "member": member}
+                if out.get("inverse"):                # extend the inverse: re-add the member we removed (rollback)
+                    out["inverse"].append({"op": "set-access-rule", "uid": decision.narrow_rule.uid,
+                                           "layer": layer, "field": "source", "add": member})
+            else:
+                out.setdefault("notes", []).append(
+                    f"left rule {decision.narrow_rule.number} ({decision.narrow_rule.name}) unchanged — this "
+                    f"host isn't a safely-removable direct source member (it may be inside a group, or the "
+                    f"rule's only source); narrow it manually if needed")
         return out
     return out
 
@@ -3313,6 +3364,10 @@ def _apply_inverse_op(session, op: dict) -> str:
         if field in _REVERT_FIELDS and obj:
             return _revert_call(session, "set-access-rule", {"uid": uid, "layer": layer, field: {"remove": obj}},
                                 f"set-access-rule {uid} {field}.remove {obj}")
+        add = op.get("add")                          # re-add a source member removed by a narrow (undo)
+        if field in _REVERT_FIELDS and add:
+            return _revert_call(session, "set-access-rule", {"uid": uid, "layer": layer, field: {"add": add}},
+                                f"set-access-rule {uid} {field}.add {add}")
     raise MgmtError(f"unsupported rollback op: {op!r}")
 
 
