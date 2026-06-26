@@ -3241,3 +3241,33 @@ def test_disabled_rule_near_match_is_noted_on_create():
     d = aa.decide(_req_fb_internet(), [r, cleanup])
     assert d.outcome is Outcome.CREATE
     assert any("DISABLED" in n and "re-enable" in n.lower() for n in (d.notes or []))
+
+
+# --- QA matrix findings: regression guards --------------------------------------------------------
+def test_multikind_service_overlap_creates_not_widens():
+    # QA BUG-1 (HIGH): a multi-kind service request {tcp/443 + icmp} where a rule covers only the tcp/443
+    # leg -> svc_relation=OVERLAP. A single-object widen would silently DROP the icmp leg (under-grant), so
+    # the engine must CREATE, not WIDEN, when the request service can't be added as one object.
+    rule = _rule("r1", 1, "Accept", _host("10.1.1.5"), _host("172.16.5.10"), _tcp(443))
+    req = AccessRequest(["10.1.1.5/32"], ["172.16.5.10/32"], "tcp", "443")
+    req.svc_set = ServiceSet(by_proto={"tcp": aa._ports_to_iv("443")}, named={("icmp", "echo-request")})
+    d = aa.decide(req, [rule, CLEANUP])
+    assert d.outcome is Outcome.CREATE                      # was a silent-under-grant WIDEN before the fix
+    # control: a single-kind clean diff still widens; a full-cover rule still NO_OPs
+    d2 = aa.decide(AccessRequest(["10.1.1.5/32"], ["172.16.5.10/32"], "tcp", "8080"),
+                   [_rule("r2", 1, "Accept", _host("10.1.1.5"), _host("172.16.5.10"), _tcp(443)), CLEANUP])
+    assert d2.outcome is Outcome.WIDEN and d2.widen_field == "service"
+    full = _rule("rf", 1, "Accept", _host("10.1.1.5"), _host("172.16.5.10"),
+                 ServiceSet(by_proto={"tcp": aa._ports_to_iv("443")}, named={("icmp", "echo-request")}))
+    assert aa.decide(req, [full, CLEANUP]).outcome is Outcome.NO_OP
+
+
+def test_exact_covering_deny_override_flags_shadowed_deny_below():
+    # QA BUG-2: overriding an EXACT-covering deny (create the allow above it) must flag a more-specific deny
+    # BELOW it — same anomaly the partial-deny branch already raised (advisory parity).
+    A = _rule("rA", 1, "Drop", _net("10.1.1.0/24"), _net("10.2.0.0/24"), _tcp(443))   # exact-covering deny
+    B = _rule("rB", 2, "Drop", _host("10.1.1.5"), _net("10.2.0.0/24"), _tcp(443))       # more-specific, below
+    req = AccessRequest(["10.1.1.0/24"], ["10.2.0.0/24"], "tcp", "443")                 # EQUAL to A's scope
+    d = aa.decide(req, [A, B, CLEANUP])
+    assert d.outcome is Outcome.CREATE and d.position == {"above": "rA", "_anomaly": True}
+    assert any("rB" in n for n in (d.notes or []))

@@ -1118,6 +1118,16 @@ def _more_specific_deny_below(req: "AccessRequest", req_src, req_dst, req_svc,
     return None
 
 
+def _service_widenable(req: "AccessRequest") -> bool:
+    """A SERVICE widen adds exactly ONE object to the rule's cell — the object the apply materializer builds:
+    ``req.application`` (a single app/category), ``req.service`` (a named service OR a services-group whose
+    NAME was kept), or the single port-service it creates for a plain protocol+port request. That object
+    fully covers the request's service ONLY in those cases. A MULTI-kind ``svc_set`` built with no backing
+    object name (e.g. {tcp/443 + icmp} passed directly) can't be added as one object — the other legs would
+    be SILENTLY DROPPED — so it must NOT widen; fall through to CREATE instead."""
+    return bool(req.application or req.service) or req.svc_set is None
+
+
 def _shadow_note(shadowed: "ParsedRule") -> str:
     return (f"this allow is placed above the more-specific deny rule {shadowed.number} "
             f"({shadowed.name}) below it, which overlaps this request — that deny will no longer match its "
@@ -1546,11 +1556,16 @@ def _decide(req: AccessRequest, rules: list[ParsedRule], options: "DecideOptions
                 # requested access work, so we CREATE the least-privilege allow directly ABOVE that deny
                 # (first-match then hits the allow). The reason names the deny so the operator sees exactly
                 # what the new rule takes precedence over.
+                pos = {"above": r.uid}
+                shadowed = _more_specific_deny_below(req, req_src, req_dst, req_svc, rules, i)
+                if shadowed is not None:        # the allow above this deny also shadows a narrower deny below
+                    pos["_anomaly"] = True
+                    notes.append(_shadow_note(shadowed))
                 return Decision(
                     Outcome.CREATE,
                     f"traffic is currently denied by rule {r.number} ({r.name}); creating the allow ABOVE "
                     f"it so the requested access takes effect",
-                    target_rule=r, position={"above": r.uid},
+                    target_rule=r, position=pos,
                 )
 
         # A reachable DROP that overlaps the request but does NOT fully cover it partially blocks the
@@ -1610,7 +1625,8 @@ def _decide(req: AccessRequest, rules: list[ParsedRule], options: "DecideOptions
             if len(not_covered) == 1:
                 field = not_covered[0]
                 if (all(eq[d] for d in ("source", "destination", "service") if d != field)
-                        and not _widen_mixes_internet(field, req, r)):
+                        and not _widen_mixes_internet(field, req, r)
+                        and not (field == "service" and not _service_widenable(req))):
                     # If an opaque possible-deny was ALREADY passed, this widen target sits BELOW it — so
                     # widening it can't leap the request over that block (first-match still hits the block
                     # first). Record that, so the suppression below applies only to ABOVE-the-block widens.
