@@ -169,13 +169,21 @@ SCENARIOS = [
       _flag(_rule("st", 10, "Drop", ANY, _host("192.0.2.1"), ServiceSet(any=True)), dst_approx=True), CLEANUP],
      _req("10.1.2.99/32", "172.16.5.50/32", protocol="tcp", ports="1433"), None,
      lambda d: d.outcome is Outcome.WIDEN and d.target_rule.uid == "tkt"),
-    # ADD control: an approx Stealth drop whose dst OVERLAPS the request stays conservative (create, not
-    # widen-above — its true reach may be wider, so don't leap above it).
-    ("add-stealth-overlap-create", "add",
-     [_rule("tkt", 4, "Accept", _host("10.1.2.250"), _host("172.16.5.50"), _tcp("1433")),
-      _flag(_rule("st", 10, "Drop", ANY, _host("172.16.5.50"), ServiceSet(any=True)), dst_approx=True), CLEANUP],
+    # ADD: an approx Stealth drop that PROVABLY COVERS the request (the request dst IS the drop's resolved
+    # main IP) -> placing the allow below would be shadowed/dead -> carve it ABOVE the drop (approx only
+    # widens the drop, so full resolved coverage means it definitely blocks this exact flow). The Stealth
+    # case: an allow to the gateway belongs above the Stealth rule.
+    ("add-stealth-covers-carve-above", "add",
+     [_flag(_rule("st", 10, "Drop", ANY, _host("172.16.5.50"), ServiceSet(any=True)), dst_approx=True), CLEANUP],
      _req("10.1.2.99/32", "172.16.5.50/32", protocol="tcp", ports="1433"), None,
-     lambda d: d.outcome is Outcome.CREATE),
+     lambda d: d.outcome is Outcome.CREATE and d.position == {"above": "st"}),
+    # ADD control: an approx Stealth drop whose dst only PARTIALLY overlaps a BROADER request (a /24 superset
+    # of the drop's main IP) stays conservative — floored below, NOT carved above (carving the whole /24
+    # above would over-grant the gateway-IP part the drop means to block).
+    ("add-stealth-partial-overlap-below", "add",
+     [_flag(_rule("st", 10, "Drop", ANY, _host("172.16.5.50"), ServiceSet(any=True)), dst_approx=True), CLEANUP],
+     _req("10.1.2.99/32", "172.16.5.0/24", protocol="tcp", ports="1433"), None,
+     lambda d: d.outcome is Outcome.CREATE and d.position != {"above": "st"}),
 ]
 
 

@@ -1511,6 +1511,43 @@ def _decide(req: AccessRequest, rules: list[ParsedRule], options: "DecideOptions
         # above (the branches below) -- there we can prove exactly what it blocks, which is the access the
         # caller asked us to make work.
         if r.is_drop and interferes and (svc_indeterminate or src_approx or dst_approx):
+            # BUT if — despite the approx — the request is provably WITHIN this drop's RESOLVED extent (every
+            # dimension SUBSET/EQUAL and no truly-unknown cell), the drop DEFINITELY blocks this exact request.
+            # Approx is an UNDER-approximation (an infra object resolved to its main IP; true reach ⊇ resolved),
+            # so a wider real extent only blocks MORE — it can't make this request escape. Placing the allow
+            # BELOW such a drop would shadow it ENTIRELY (first-match hits the drop, the allow is dead). So the
+            # allow MUST be carved ABOVE it to take effect — this is the Stealth-rule case (Any→Gateway Drop,
+            # request to the gateway IP): an allow to the gateway belongs ABOVE the Stealth rule (CP best
+            # practice). Gated by override_blocking_deny, identical to the resolved covering-drop branch below.
+            provably_covered = (not svc_indeterminate and not r.svc_unknown and not src_unknown
+                                and not dst_unknown and _is_subset(rel_src, rel_dst, rel_svc)
+                                and not (_is_catchall(r) and i == last_enabled))
+            if provably_covered and covering_drop is None:
+                if not options.override_blocking_deny:
+                    return Decision(
+                        Outcome.CREATE,
+                        f"traffic is denied by rule {r.number} ({r.name}); per policy the deny is NOT "
+                        f"overridden — the new rule is placed below it and will not take effect until that "
+                        f"rule is changed (review)",
+                        target_rule=r, position={"below": r.uid},
+                    )
+                if options.prefer_widen and widen_target is not None and not uncertain_deny:
+                    return _widen_above_block(widen_target, widen_field, r)
+                pos = {"above": r.uid}
+                shadowed = _more_specific_deny_below(req, req_src, req_dst, req_svc, rules, i)
+                if shadowed is not None:
+                    pos["_anomaly"] = True
+                    notes.append(_shadow_note(shadowed))
+                return Decision(
+                    Outcome.CREATE,
+                    f"traffic is currently denied by rule {r.number} ({r.name}); creating the allow ABOVE it "
+                    f"so the requested access takes effect — placed below, first-match would let that drop "
+                    f"shadow it (an allow to the gateway must sit above the Stealth rule)",
+                    target_rule=r, position=pos,
+                )
+            # Otherwise the drop only POSSIBLY / partially covers (its approx extent may be wider than the
+            # request, or its service is indeterminate) — we can't prove it blocks THIS exact request, so stay
+            # conservative: NOTE it and place the new allow BELOW it (never leap a deny we can't pin down).
             dim = "service" if svc_indeterminate else "source / destination"
             notes.append(f"rule {r.number} ({r.name}) may block this request — its {dim} extent can't be "
                          f"fully resolved, so the new rule is placed below it. Review it later.")
