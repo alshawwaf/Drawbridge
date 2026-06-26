@@ -1886,6 +1886,8 @@ def decide_removal(req: AccessRequest, rules: list[ParsedRule], options: "Decide
         if kind == "ip" and not iv:
             return RemovalDecision(RemovalOutcome.REVIEW, f"the {label} resolves to no concrete IP extent")
 
+    is_app_req = bool(req_svc.apps or req_svc.categories)   # an APPLICATION/category block (vs IP/port)
+    enabling_accept = None                                   # highest in-path L4 ACCEPT that may CARRY the app
     for idx, r in enumerate(rules):
         if not r.enabled:
             continue
@@ -1916,22 +1918,54 @@ def decide_removal(req: AccessRequest, rules: list[ParsedRule], options: "Decide
                 or (r.conditional and r.is_drop)   # a conditional DROP only blocks UNDER its condition; in a
                 #                                    REMOVAL it must NEVER assert a full deny (which would mask a
                 #                                    re-granting ACCEPT below), even under ignore_conditions.
-                or complex_eff or svc_indeterminate or not r.is_resolved_action):
+                or complex_eff or not r.is_resolved_action):
             return RemovalDecision(RemovalOutcome.REVIEW,
                                    f"rule {r.number} ({r.name}) lies in the path but can't be fully resolved "
                                    f"(inline layer / conditional / opaque cell / non-Accept-Drop action) — "
                                    f"review the removal manually")
+        # APP-vs-L4 ambiguity. An otherwise-resolved ACCEPT whose only in-path reason is svc_indeterminate may
+        # CARRY an application over its L4 ports (e.g. an Outbound http/https accept carrying Facebook). For an
+        # APPLICATION removal it is an ENABLER: the block must be placed ABOVE it (first-match), so record the
+        # FIRST (highest) one and keep walking to also find an explicit app rule below. Any other indeterminate
+        # case (a port request vs an app rule, or an indeterminate DROP) stays conservative -> REVIEW.
+        if svc_indeterminate:
+            if is_app_req and r.is_accept:
+                if enabling_accept is None:
+                    enabling_accept = r
+                continue
+            return RemovalDecision(RemovalOutcome.REVIEW,
+                                   f"rule {r.number} ({r.name}) lies in the path with an indeterminate "
+                                   f"service/application match — review the removal manually", target_rule=r)
         fully_covers = _is_subset(rel_src, rel_dst, rel_svc)
         if r.is_drop:
-            if fully_covers:
-                return RemovalDecision(RemovalOutcome.NO_OP,
-                                       f"already denied by rule {r.number} ({r.name}) — the access is not "
-                                       f"permitted; nothing to remove", target_rule=r)
-            return RemovalDecision(RemovalOutcome.REVIEW,
-                                   f"rule {r.number} ({r.name}) partially denies the request; the removal "
-                                   f"interacts with it — review manually", target_rule=r)
+            # An enabling ACCEPT already found ABOVE carries the app, so this drop is shadowed for it (not the
+            # effective verdict) — keep walking; the block lands above the enabling accept.
+            if enabling_accept is None:
+                if fully_covers:
+                    return RemovalDecision(RemovalOutcome.NO_OP,
+                                           f"already denied by rule {r.number} ({r.name}) — the access is not "
+                                           f"permitted; nothing to remove", target_rule=r)
+                return RemovalDecision(RemovalOutcome.REVIEW,
+                                       f"rule {r.number} ({r.name}) partially denies the request; the removal "
+                                       f"interacts with it — review manually", target_rule=r)
+            continue
         # a reachable ACCEPT
         if fully_covers:
+            if enabling_accept is not None:
+                # A higher L4 accept can carry the app, so the ONLY first-match-correct block is a Drop ABOVE
+                # that accept. This rule ALSO explicitly grants it; if its source is broader than the request
+                # (it has other members), recommend narrowing its source rather than leaving a shadowed grant.
+                note = (f"rule {r.number} ({r.name}) also explicitly grants this — narrow its source to drop "
+                        f"just this host (it has other sources), so the rulebase isn't left with a shadowed "
+                        f"grant" if rel_src == Relation.SUBSET else
+                        f"rule {r.number} ({r.name}) also explicitly grants this and is now shadowed by the "
+                        f"Drop — review whether it is still needed")
+                return RemovalDecision(
+                    RemovalOutcome.DENY,
+                    f"rule {enabling_accept.number} ({enabling_accept.name}) can carry this application over "
+                    f"its L4 ports, so a least-privilege Drop is placed ABOVE it — first-match then blocks "
+                    f"just this flow while that rule still serves its other traffic",
+                    target_rule=enabling_accept, position={"above": enabling_accept.uid}, notes=[note])
             # DISABLE only when the rule grants EXACTLY this and NOTHING ELSE relies on it. Two proofs are
             # required, both safety-critical: (1) no approx cell — an infra object resolved to its main IP
             # reads EQUAL but its true reach may be WIDER, so disabling the rule would revoke access for
@@ -1953,11 +1987,20 @@ def decide_removal(req: AccessRequest, rules: list[ParsedRule], options: "Decide
                                    f"it removes exactly this request by first-match while the rule still "
                                    f"serves its other traffic", target_rule=r,
                                    position={"above": r.uid})
-        # accept overlaps but is narrower than the request -> granted piecemeal across rules
-        return RemovalDecision(RemovalOutcome.REVIEW,
-                               f"rule {r.number} ({r.name}) grants only part of the requested scope; the access "
-                               f"spans multiple rules — review the removal manually")
+        # accept overlaps but is narrower than the request -> granted piecemeal. With an enabling accept above,
+        # the Drop-above-it covers the whole flow, so the piecemeal grant is moot; otherwise -> REVIEW.
+        if enabling_accept is None:
+            return RemovalDecision(RemovalOutcome.REVIEW,
+                                   f"rule {r.number} ({r.name}) grants only part of the requested scope; the "
+                                   f"access spans multiple rules — review the removal manually")
 
+    if enabling_accept is not None:
+        # An L4 accept carries the app but no explicit app rule was found below it -> Drop above that accept.
+        return RemovalDecision(
+            RemovalOutcome.DENY,
+            f"rule {enabling_accept.number} ({enabling_accept.name}) can carry this application over its L4 "
+            f"ports; a least-privilege Drop is placed ABOVE it so first-match blocks just this flow",
+            target_rule=enabling_accept, position={"above": enabling_accept.uid})
     return RemovalDecision(RemovalOutcome.NO_OP,
                            "no rule grants this access — it is already not permitted; nothing to remove")
 
