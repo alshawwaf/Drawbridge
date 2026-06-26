@@ -270,6 +270,109 @@ def remove_access(server_id: str, source: str, destination: str, layer: str, ser
     return result
 
 
+def _amend_target_from_change(change) -> tuple:
+    """(rule_uid, layer) of the rule a recorded change CREATED — and ONLY a create/deny change qualifies: its
+    inverse is a ``delete-access-rule`` of the rule it added. A WIDEN or DISABLE change's inverse instead
+    set-access-rule's a PRE-EXISTING rule (the broad rule it widened / the rule it disabled) — relabelling
+    THAT via change_id would silently rename the wrong production rule, so this returns (None, layer) for
+    those and the caller refuses (amend it by rule_uid instead). Falls back to (None, change.layer)."""
+    for op in (change.inverse_json or []):
+        if op.get("op") == "delete-access-rule" and op.get("uid"):
+            return op["uid"], (op.get("layer") or change.layer or "")
+    return None, (change.layer or "")
+
+
+def amend_access_rule(server_id: str | None = None, layer: str | None = None,
+                      change_id: int | None = None, rule_uid: str | None = None,
+                      name: str | None = None, comment: str | None = None,
+                      tags: list[str] | None = None, publish: bool = False) -> dict:
+    """EDIT an existing access rule's METADATA — its name, comment, and/or tags (e.g. to add the rule name
+    you forgot on a rule you just created). Identify the rule EITHER by `change_id` (from list_changes — must
+    be a change that CREATED a rule, i.e. an apply→create or a remove→deny Drop; it also supplies the layer)
+    OR by `rule_uid` + `layer` + `server_id`. A widen/disable change_id is refused (its rule pre-existed —
+    edit it by rule_uid so you don't relabel the wrong rule). This NEVER changes the rule's match columns
+    (source / destination / service / action) — use apply_access / remove_access for those. With publish=false
+    it DRY-RUNS (validate then discard); publish=true COMMITS, allowed ONLY when an admin enabled
+    'mcp_allow_publish'. The edit is itself recorded + rollback-able (revert_change restores the prior
+    name/comment/tags)."""
+    if publish:
+        from . import app_settings
+        try:
+            allowed = bool(app_settings.get("mcp_allow_publish"))
+        except Exception:  # noqa: BLE001
+            allowed = False
+        if not allowed:
+            return {"ok": False, "outcome": "review", "applied": False, "published": False,
+                    "error": "publishing is disabled for the MCP agent — an admin must enable 'Let the MCP "
+                             "agent publish to live policy' in Settings. Re-run with publish=false to dry-run."}
+    if name is None and comment is None and tags is None:
+        return {"ok": False, "error": "nothing to change — provide a name, comment, and/or tags"}
+    db = SessionLocal()
+    try:
+        if change_id is not None:
+            from . import change_log
+            change = change_log.get(db, int(change_id))
+            if change is None:
+                return {"ok": False, "error": f"no recorded change with id {change_id}"}
+            if change.reverted_at:                       # the rule it created was rolled back (likely deleted)
+                return {"ok": False, "error": f"change {change_id} was already rolled back "
+                                              f"at {change.reverted_at.isoformat()} — nothing to edit"}
+            # Resolve the server STRICTLY by the recorded id (never the fuzzy matcher) so a stale id can't
+            # misroute this WRITE onto a different live SMS — same guard as revert_change.
+            ms = db.get(ManagementServer, change.server_id) if change.server_id is not None else None
+            if ms is None:
+                return {"ok": False, "error": "the management server for this change no longer exists"}
+            from . import mgmt_creds
+            secret = mgmt_creds.get_secret(db, ms)
+            if not (ms.username and secret):
+                return {"ok": False, "error": f"server “{ms.name}” (id {ms.id}) has no stored credential"}
+            uid, tgt_layer = _amend_target_from_change(change)
+            if not uid:
+                return {"ok": False, "error": f"change {change_id} did not create a new rule (it widened or "
+                        f"disabled an existing one) — relabelling that rule by change_id could rename the "
+                        f"wrong production rule. Identify it by rule_uid + layer instead."}
+            layer = tgt_layer or layer                   # the recorded layer is authoritative for a change_id edit
+        else:
+            if not rule_uid or not layer:
+                return {"ok": False, "error": "identify the rule by change_id, OR by rule_uid + layer "
+                                              "(+ server_id)"}
+            try:
+                ms, secret = _server_secret(db, server_id)
+            except ValueError as exc:
+                return {"ok": False, "error": str(exc)}
+            uid = rule_uid
+        try:
+            from .gaia_client import ensure_pinned
+            ensure_pinned(db, ms)
+        except Exception:  # noqa: BLE001 — pinning is best-effort; the call still verifies the saved cert
+            pass
+        ms_id, ms_layer = ms, layer
+    finally:
+        db.close()
+    from . import access_automation as aa
+    try:
+        result = aa.amend_execute(ms_id, secret, uid=uid, layer=ms_layer, name=name, comment=comment,
+                                  tags=tags, publish=publish)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("amend_access_rule failed (uid=%s, layer=%r)", uid, ms_layer)
+        return {"ok": False, "applied": False, "published": False, "error": f"{type(exc).__name__}: {exc}"}
+    if isinstance(result, dict):
+        result.setdefault("autopilot", _autopilot(ms_id, ms_layer))
+    # Record the published edit so it shows in list_changes and revert_change can undo it (restore old meta).
+    if result.get("ok") and result.get("published") and result.get("applied"):
+        try:
+            from . import change_log
+            db2 = SessionLocal()
+            try:
+                change_log.record(db2, server=ms_id, result=result,
+                                  request={"_amend": result.get("changed", {})}, layer=ms_layer, actor="mcp")
+            finally:
+                db2.close()
+        except Exception:  # noqa: BLE001
+            logger.exception("recording amend for rollback failed")
+    return result
+
+
 def _change_brief(r) -> dict:
     return {"id": r.id, "at": r.created_at.isoformat() if r.created_at else None, "by": r.created_by,
             "server": r.server_name, "layer": r.layer, "action": r.action, "outcome": r.outcome,

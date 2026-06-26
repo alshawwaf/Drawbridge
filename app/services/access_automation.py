@@ -3072,9 +3072,118 @@ def remove_execute(server, secret, req: AccessRequest, layer: str, *, package: O
 
 
 # --------------------------------------------------------------------------- #
+# AMEND  (edit an existing rule's METADATA — name / comment / tags — never its match columns)
+# --------------------------------------------------------------------------- #
+# Request-key -> web_api set-access-rule WRITE field. METADATA ONLY: a change to source / destination /
+# service / action alters what the rule MATCHES (a security decision) and must go through apply/remove with
+# full reasoning + placement — it is deliberately NOT amendable here, so this tool can only relabel a rule.
+# NOTE: set-access-rule renames via "new-name" (there is NO "name" write field; show-access-rule READS it
+# back as "name") — mirror the existing layer editor (mgmt_api.set_access_rule).
+_AMEND_API_FIELD = {"name": "new-name", "comment": "comments", "tags": "tags"}
+
+
+def _rule_tag_names(cur: dict) -> list:
+    """The existing rule's tag NAMES (set-access-rule takes names; show returns names or {name} objects)."""
+    out = []
+    for t in (cur.get("tags") or []):
+        n = t.get("name") if isinstance(t, dict) else t
+        if n:
+            out.append(n)
+    return out
+
+
+def amend_execute(server, secret, *, uid: str, layer: str, name=None, comment=None, tags=None,
+                  publish: bool = False) -> dict:
+    """Edit the METADATA of one existing access rule — its name, comment, and/or tags — in ONE write session:
+    read the current values (to build the inverse), set the new ones, then publish (commit) or discard
+    (validate-only dry-run). NEVER touches the match columns (source/destination/service/action). Records an
+    inverse that restores the OLD metadata, so the edit is itself rollback-able. Discards on any error."""
+    if not uid or not layer:
+        return {"ok": False, "error": "uid and layer are required to identify the rule to edit"}
+    fields: dict = {}
+    if name is not None:
+        if not str(name).strip():
+            return {"ok": False, "error": "a rule name can't be empty"}
+        fields["name"] = str(name)
+    if comment is not None:
+        fields["comment"] = str(comment)
+    if tags is not None:
+        fields["tags"] = [str(t) for t in (tags if isinstance(tags, (list, tuple)) else [tags]) if str(t).strip()]
+    if not fields:
+        return {"ok": False, "error": "nothing to change — provide a name, comment, and/or tags"}
+    try:
+        with MgmtSession(server, secret, session_timeout=write_session_timeout(),
+                         session_description="DC-Sim access automation (amend)") as s:
+            try:
+                cur = s.call("show-access-rule", {"uid": uid, "layer": layer})  # VERIFY
+            except MgmtError as exc:
+                if _is_not_found_error(str(exc)):
+                    return {"ok": False, "error": f"no rule {uid} in layer “{layer}” (it may have been "
+                            f"deleted) — nothing to edit", "trace": s.trace}
+                raise
+            payload: dict = {"uid": uid, "layer": layer}
+            inverse_set: dict = {}
+            ops: list = []
+            changed: dict = {}
+            for key, val in fields.items():
+                api = _AMEND_API_FIELD[key]                   # WRITE field (name -> new-name)
+                if key == "tags":
+                    payload["tags"] = val                    # set-access-rule REPLACES the tag list
+                    inverse_set["tags"] = _rule_tag_names(cur)
+                elif key == "name":
+                    payload["new-name"] = val                 # rename via new-name; show READS it back as "name"
+                    old = str(cur.get("name") or "")
+                    if old:                                   # never restore an EMPTY name (the SMS rejects a
+                        inverse_set["new-name"] = old         # blank name) — mirror mgmt_api.set_access_rule
+                else:                                         # comment
+                    payload["comments"] = val
+                    inverse_set["comments"] = cur.get("comments", "")
+                changed[key] = val
+                ops.append(f"set-access-rule {uid} {api}")
+            try:
+                s.call("set-access-rule", payload)            # VERIFY
+                if publish:
+                    s.publish()
+                    invalidate_cache(server)
+                else:
+                    s.discard()
+            except Exception as exc:  # noqa: BLE001 — release the write session's pending changes + locks
+                try:
+                    s.discard()
+                except Exception:  # noqa: BLE001 — a discard that ALSO fails (e.g. a dropped connection) must
+                    sessions = []  # still surface the structured lock result, not escape to the opaque handler
+                    try:
+                        sessions = locking_sessions(server, secret)
+                    except Exception:  # noqa: BLE001
+                        pass
+                    return {"ok": False, "lock_conflict": True, "sessions": sessions, "trace": s.trace,
+                            "error": f"the edit could not be discarded after a failure: {exc}"}
+                if isinstance(exc, MgmtError):
+                    raise
+                return {"ok": False, "error": f"edit failed: {exc}", "trace": s.trace}
+            # An amend that only ADDED a name to a previously-nameless rule has no metadata to restore -> empty
+            # inverse (recorded non-revertable) rather than an op that would blank the name on revert.
+            inverse = [{"op": "set-access-rule", "uid": uid, "layer": layer, "set": inverse_set}] if inverse_set else []
+            return {"ok": True, "action": "amend", "outcome": "amend", "applied": True,
+                    "published": publish, "validated": not publish, "uid": uid, "layer": layer,
+                    "changed": changed, "ops": ops, "inverse": inverse, "trace": s.trace}
+    except MgmtError as exc:
+        msg = str(exc)
+        out = {"ok": False, "error": msg}
+        if _is_lock_error(msg):
+            out["lock_conflict"] = True
+            out["sessions"] = locking_sessions(server, secret)
+        return out
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("access amend failed (uid=%s, layer=%r, publish=%s)", uid, layer, publish)
+        return {"ok": False, "error": f"edit failed: {type(exc).__name__}: {exc}"}
+
+
+# --------------------------------------------------------------------------- #
 # ROLLBACK / undo  (replay an AppliedChange's recorded inverse op-list)
 # --------------------------------------------------------------------------- #
 _REVERT_FIELDS = {"source", "destination", "service"}
+_AMEND_REVERT_FIELDS = {"new-name", "comments", "tags"}   # metadata an amend-revert may restore (write fields)
 
 
 def _is_not_found_error(msg: str) -> bool:
@@ -3115,6 +3224,17 @@ def _apply_inverse_op(session, op: dict) -> str:
             return _revert_call(session, "set-access-rule",
                                 {"uid": uid, "layer": layer, "enabled": bool(op["enabled"])},
                                 f"set-access-rule {uid} enabled={bool(op['enabled'])}")
+        # Metadata restore (undo an amend): set the OLD name / comments / tags back. STRICTLY limited to
+        # those three fields — never a match column — so reverting an edit can only relabel, never re-open
+        # or alter what the rule matches.
+        if isinstance(op.get("set"), dict):
+            # Restore only whitelisted metadata; never replay a BLANK new-name (the SMS rejects an empty
+            # rule name — and a recorded empty one would otherwise strand the rollback as a failure).
+            meta = {k: v for k, v in op["set"].items()
+                    if k in _AMEND_REVERT_FIELDS and not (k == "new-name" and not str(v).strip())}
+            if meta:
+                return _revert_call(session, "set-access-rule", {"uid": uid, "layer": layer, **meta},
+                                    f"set-access-rule {uid} " + ",".join(sorted(meta)))
         field, obj = op.get("field"), op.get("remove")
         if field in _REVERT_FIELDS and obj:
             return _revert_call(session, "set-access-rule", {"uid": uid, "layer": layer, field: {"remove": obj}},
