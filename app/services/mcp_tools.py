@@ -285,16 +285,17 @@ def _amend_target_from_change(change) -> tuple:
 def amend_access_rule(server_id: str | None = None, layer: str | None = None,
                       change_id: int | None = None, rule_uid: str | None = None,
                       name: str | None = None, comment: str | None = None,
-                      tags: list[str] | None = None, publish: bool = False) -> dict:
-    """EDIT an existing access rule's METADATA — its name, comment, and/or tags (e.g. to add the rule name
-    you forgot on a rule you just created). Identify the rule EITHER by `change_id` (from list_changes — must
-    be a change that CREATED a rule, i.e. an apply→create or a remove→deny Drop; it also supplies the layer)
-    OR by `rule_uid` + `layer` + `server_id`. A widen/disable change_id is refused (its rule pre-existed —
-    edit it by rule_uid so you don't relabel the wrong rule). This NEVER changes the rule's match columns
-    (source / destination / service / action) — use apply_access / remove_access for those. With publish=false
-    it DRY-RUNS (validate then discard); publish=true COMMITS, allowed ONLY when an admin enabled
-    'mcp_allow_publish'. The edit is itself recorded + rollback-able (revert_change restores the prior
-    name/comment/tags)."""
+                      tags: list[str] | None = None, track: str | None = None,
+                      publish: bool = False) -> dict:
+    """EDIT an existing access rule's METADATA — its name, comment, tags, and/or track/logging (e.g. to add
+    the rule name you forgot, or turn logging on). `track` is a track-type name: "Log" / "None" / "Detailed
+    Log" / "Extended Log". Identify the rule EITHER by `change_id` (from list_changes — must be a change that
+    CREATED a rule, i.e. an apply→create or a remove→deny Drop; it also supplies the layer) OR by `rule_uid` +
+    `layer` + `server_id`. A widen/disable change_id is refused (its rule pre-existed — edit it by rule_uid so
+    you don't relabel the wrong rule). This NEVER changes the rule's match columns (source / destination /
+    service / action) — use apply_access / remove_access for those. With publish=false it DRY-RUNS (validate
+    then discard); publish=true COMMITS, allowed ONLY when an admin enabled 'mcp_allow_publish'. The edit is
+    itself recorded + rollback-able (revert_change restores the prior name/comment/tags/track)."""
     if publish:
         from . import app_settings
         try:
@@ -305,8 +306,8 @@ def amend_access_rule(server_id: str | None = None, layer: str | None = None,
             return {"ok": False, "outcome": "review", "applied": False, "published": False,
                     "error": "publishing is disabled for the MCP agent — an admin must enable 'Let the MCP "
                              "agent publish to live policy' in Settings. Re-run with publish=false to dry-run."}
-    if name is None and comment is None and tags is None:
-        return {"ok": False, "error": "nothing to change — provide a name, comment, and/or tags"}
+    if name is None and comment is None and tags is None and track is None:
+        return {"ok": False, "error": "nothing to change — provide a name, comment, tags, and/or track"}
     db = SessionLocal()
     try:
         if change_id is not None:
@@ -352,7 +353,7 @@ def amend_access_rule(server_id: str | None = None, layer: str | None = None,
     from . import access_automation as aa
     try:
         result = aa.amend_execute(ms_id, secret, uid=uid, layer=ms_layer, name=name, comment=comment,
-                                  tags=tags, publish=publish)
+                                  tags=tags, track=track, publish=publish)
     except Exception as exc:  # noqa: BLE001
         logger.exception("amend_access_rule failed (uid=%s, layer=%r)", uid, ms_layer)
         return {"ok": False, "applied": False, "published": False, "error": f"{type(exc).__name__}: {exc}"}

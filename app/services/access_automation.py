@@ -3079,7 +3079,7 @@ def remove_execute(server, secret, req: AccessRequest, layer: str, *, package: O
 # full reasoning + placement — it is deliberately NOT amendable here, so this tool can only relabel a rule.
 # NOTE: set-access-rule renames via "new-name" (there is NO "name" write field; show-access-rule READS it
 # back as "name") — mirror the existing layer editor (mgmt_api.set_access_rule).
-_AMEND_API_FIELD = {"name": "new-name", "comment": "comments", "tags": "tags"}
+_AMEND_API_FIELD = {"name": "new-name", "comment": "comments", "tags": "tags", "track": "track"}
 
 
 def _rule_tag_names(cur: dict) -> list:
@@ -3092,12 +3092,23 @@ def _rule_tag_names(cur: dict) -> list:
     return out
 
 
+def _rule_track_type(cur: dict) -> str:
+    """The rule's current track-type NAME ("Log" / "None" / "Detailed Log" / ...). show-access-rule returns
+    track.type as a {name,uid} object (details-level full), a bare name, or a uid — handle all three so the
+    inverse restores the prior track. set-access-rule WRITES track as {"type": "<name>"} (mirrors mgmt_api)."""
+    t = (cur.get("track") or {}).get("type")
+    if isinstance(t, dict):
+        return t.get("name") or t.get("uid") or ""
+    return str(t or "")
+
+
 def amend_execute(server, secret, *, uid: str, layer: str, name=None, comment=None, tags=None,
-                  publish: bool = False) -> dict:
-    """Edit the METADATA of one existing access rule — its name, comment, and/or tags — in ONE write session:
-    read the current values (to build the inverse), set the new ones, then publish (commit) or discard
-    (validate-only dry-run). NEVER touches the match columns (source/destination/service/action). Records an
-    inverse that restores the OLD metadata, so the edit is itself rollback-able. Discards on any error."""
+                  track=None, publish: bool = False) -> dict:
+    """Edit the METADATA of one existing access rule — its name, comment, tags, and/or track (logging) — in
+    ONE write session: read the current values (to build the inverse), set the new ones, then publish (commit)
+    or discard (validate-only dry-run). NEVER touches the match columns (source/destination/service/action).
+    Records an inverse that restores the OLD metadata, so the edit is itself rollback-able. Discards on any
+    error. ``track`` is a track-type name, e.g. "Log" / "None" / "Detailed Log" / "Extended Log"."""
     if not uid or not layer:
         return {"ok": False, "error": "uid and layer are required to identify the rule to edit"}
     fields: dict = {}
@@ -3109,13 +3120,17 @@ def amend_execute(server, secret, *, uid: str, layer: str, name=None, comment=No
         fields["comment"] = str(comment)
     if tags is not None:
         fields["tags"] = [str(t) for t in (tags if isinstance(tags, (list, tuple)) else [tags]) if str(t).strip()]
+    if track is not None:
+        if not str(track).strip():
+            return {"ok": False, "error": "a track type can't be empty (use \"None\" to turn logging off)"}
+        fields["track"] = str(track).strip()
     if not fields:
-        return {"ok": False, "error": "nothing to change — provide a name, comment, and/or tags"}
+        return {"ok": False, "error": "nothing to change — provide a name, comment, tags, and/or track"}
     try:
         with MgmtSession(server, secret, session_timeout=write_session_timeout(),
                          session_description="DC-Sim access automation (amend)") as s:
-            try:
-                cur = s.call("show-access-rule", {"uid": uid, "layer": layer})  # VERIFY
+            try:                                              # details-level full -> track.type / tags resolve to names
+                cur = s.call("show-access-rule", {"uid": uid, "layer": layer, "details-level": "full"})  # VERIFY
             except MgmtError as exc:
                 if _is_not_found_error(str(exc)):
                     return {"ok": False, "error": f"no rule {uid} in layer “{layer}” (it may have been "
@@ -3130,6 +3145,11 @@ def amend_execute(server, secret, *, uid: str, layer: str, name=None, comment=No
                 if key == "tags":
                     payload["tags"] = val                    # set-access-rule REPLACES the tag list
                     inverse_set["tags"] = _rule_tag_names(cur)
+                elif key == "track":
+                    payload["track"] = {"type": val}         # Track Settings object — {"type":"Log"} etc.
+                    old = _rule_track_type(cur)
+                    if old:                                   # restore the prior track type on revert
+                        inverse_set["track"] = {"type": old}
                 elif key == "name":
                     payload["new-name"] = val                 # rename via new-name; show READS it back as "name"
                     old = str(cur.get("name") or "")
@@ -3183,7 +3203,19 @@ def amend_execute(server, secret, *, uid: str, layer: str, name=None, comment=No
 # ROLLBACK / undo  (replay an AppliedChange's recorded inverse op-list)
 # --------------------------------------------------------------------------- #
 _REVERT_FIELDS = {"source", "destination", "service"}
-_AMEND_REVERT_FIELDS = {"new-name", "comments", "tags"}   # metadata an amend-revert may restore (write fields)
+_AMEND_REVERT_FIELDS = {"new-name", "comments", "tags", "track"}   # metadata an amend-revert may restore (write fields)
+
+
+def _amend_meta_ok(k, v) -> bool:
+    """A recorded amend-revert metadata field is replayable iff it's whitelisted AND non-blank for the
+    fields the SMS rejects empty (a rule name, a track type) — so a stranded blank can never fail a rollback."""
+    if k not in _AMEND_REVERT_FIELDS:
+        return False
+    if k == "new-name":
+        return bool(str(v).strip())
+    if k == "track":
+        return isinstance(v, dict) and bool(str(v.get("type") or "").strip())
+    return True
 
 
 def _is_not_found_error(msg: str) -> bool:
@@ -3228,10 +3260,9 @@ def _apply_inverse_op(session, op: dict) -> str:
         # those three fields — never a match column — so reverting an edit can only relabel, never re-open
         # or alter what the rule matches.
         if isinstance(op.get("set"), dict):
-            # Restore only whitelisted metadata; never replay a BLANK new-name (the SMS rejects an empty
-            # rule name — and a recorded empty one would otherwise strand the rollback as a failure).
-            meta = {k: v for k, v in op["set"].items()
-                    if k in _AMEND_REVERT_FIELDS and not (k == "new-name" and not str(v).strip())}
+            # Restore only whitelisted metadata (new-name / comments / tags / track), never a match column,
+            # and never a blank name/track (the SMS rejects those — a stranded blank can't fail the rollback).
+            meta = {k: v for k, v in op["set"].items() if _amend_meta_ok(k, v)}
             if meta:
                 return _revert_call(session, "set-access-rule", {"uid": uid, "layer": layer, **meta},
                                     f"set-access-rule {uid} " + ",".join(sorted(meta)))

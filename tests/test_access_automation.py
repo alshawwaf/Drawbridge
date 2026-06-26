@@ -3414,6 +3414,20 @@ def test_amend_naming_a_nameless_rule_records_no_blank_inverse(monkeypatch):
     assert res["inverse"] == []                          # nothing safe to restore -> no blank-name revert op
 
 
+def test_amend_execute_sets_track_and_records_inverse(monkeypatch):
+    # track (logging) is written as the Track Settings object {"type": "<name>"}; the inverse restores the
+    # prior track type read back from show-access-rule's track.type {name} object.
+    calls = []
+    rule = {"uid": "R1", "name": "r", "track": {"type": {"name": "None", "uid": "t-none"}}}
+    monkeypatch.setattr(aa, "MgmtSession", _fake_session_factory(calls, rule=rule))
+    monkeypatch.setattr(aa, "invalidate_cache", lambda *a, **k: None)
+    res = aa.amend_execute(object(), "secret", uid="R1", layer="Network", track="Log", publish=True)
+    assert res["ok"] and res["changed"] == {"track": "Log"}
+    setc = next(p for c, p in calls if c == "set-access-rule")
+    assert setc["track"] == {"type": "Log"}
+    assert res["inverse"][0]["set"]["track"] == {"type": "None"}     # restores the prior track type
+
+
 def test_amend_execute_dry_run_discards(monkeypatch):
     calls = []
     monkeypatch.setattr(aa, "MgmtSession", _fake_session_factory(calls, rule={"uid": "R1", "name": "x"}))
@@ -3442,20 +3456,22 @@ def test_amend_revert_restores_metadata_only(monkeypatch):
     calls = []
     sess = _fake_session_factory(calls, rule={"uid": "R1"})(object(), "s")
     note = aa._apply_inverse_op(sess, {"op": "set-access-rule", "uid": "R1", "layer": "Network",
-                                       "set": {"new-name": "old name", "comments": "c", "tags": ["t-old"]}})
+                                       "set": {"new-name": "old name", "comments": "c", "tags": ["t-old"],
+                                               "track": {"type": "None"}}})
     setc = next(p for c, p in calls if c == "set-access-rule")
     assert setc["new-name"] == "old name" and setc["comments"] == "c" and setc["tags"] == ["t-old"]
+    assert setc["track"] == {"type": "None"}
     assert "R1" in note
     # ... NEVER a match column: a 'set' that smuggles a source is rejected, not executed.
     with pytest.raises(aa.MgmtError):
         aa._apply_inverse_op(sess, {"op": "set-access-rule", "uid": "R1", "layer": "Network",
                                     "set": {"source": "Any"}})
-    # ... and NEVER replays a blank new-name (an empty value is screened out; here only comments survive).
+    # ... and NEVER replays a blank name/track (empty values screened; here only comments survive).
     calls.clear()
     aa._apply_inverse_op(sess, {"op": "set-access-rule", "uid": "R1", "layer": "Network",
-                                "set": {"new-name": "", "comments": "keep"}})
+                                "set": {"new-name": "", "track": {"type": ""}, "comments": "keep"}})
     setc2 = next(p for c, p in calls if c == "set-access-rule")
-    assert "new-name" not in setc2 and setc2["comments"] == "keep"
+    assert "new-name" not in setc2 and "track" not in setc2 and setc2["comments"] == "keep"
 
 
 def test_amend_target_from_change_only_resolves_a_CREATED_rule():
