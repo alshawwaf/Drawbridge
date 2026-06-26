@@ -2087,6 +2087,38 @@ def lookup_host(session, ip: str) -> Optional[str]:
     return None
 
 
+def lookup_address_object(session, ip: str) -> Optional[str]:
+    """An existing NON-host object that owns this exact IP — a gateway / cluster / cluster-member / Check
+    Point host (any single-address infra object), or None. A /32 request to a gateway's IP must REUSE that
+    object, not fabricate a duplicate ``h-<ip>`` host: the rule-parsing side already resolves gateways (it
+    reads the Stealth rule's GW cell), so the request side has to match by IP too. Read-only. Matched on the
+    exact ipv4/ipv6-address; ``host`` results are skipped (an exact host is handled by lookup_host first,
+    which wins), and network/group/range objects carry no single address so they never match here."""
+    try:
+        want = ipaddress.ip_address(ip)
+    except ValueError:
+        want = None
+    # ip-only returns everything whose scope CONTAINS the ip (a covering range / group / network too), and
+    # only details-level=full echoes the single-address fields — so we ask for full and keep ONLY an object
+    # whose own ipv4/ipv6-address EXACTLY equals the ip. That precise match excludes the broad containers
+    # (a range/group/network carries no single ipv4-address) and a host (handled by lookup_host).
+    found = session.call("show-objects",
+                         {"filter": ip, "ip-only": True, "details-level": "full", "limit": 25})  # VERIFY
+    for o in found.get("objects", []):
+        if (o.get("type") or "").lower() == "host":
+            continue
+        for v in (o.get("ipv4-address"), o.get("ipv6-address")):
+            if not v:
+                continue
+            try:
+                if want is not None and ipaddress.ip_address(v) == want:
+                    return o["name"]
+            except ValueError:
+                if v == ip:
+                    return o["name"]
+    return None
+
+
 def resolve_host(session, ip: str, name_hint: Optional[str] = None) -> str:
     """Reuse an existing host by exact IP, else create one."""
     existing = lookup_host(session, ip)
@@ -2125,7 +2157,9 @@ def lookup_endpoint(session, cidr: str) -> Optional[str]:
         return "Any"
     net = ipaddress.ip_network(cidr, strict=False)
     if net.prefixlen == net.max_prefixlen:
-        return lookup_host(session, str(net.network_address))
+        ip = str(net.network_address)
+        # host wins (most specific); else a gateway/cluster/CP-host that owns this exact IP.
+        return lookup_host(session, ip) or lookup_address_object(session, ip)
     return lookup_network(session, net)
 
 
@@ -2137,11 +2171,13 @@ def resolve_endpoint(session, cidr: str) -> str:
     if _is_any(cidr):
         return "Any"
     net = ipaddress.ip_network(cidr, strict=False)
-    if net.prefixlen == net.max_prefixlen:
-        return resolve_host(session, str(net.network_address), name_hint=_endpoint_name(net))
-    existing = lookup_network(session, net)
+    # Reuse before create, with the SAME precedence the preview reported (host > gateway/cluster/CP-host >
+    # network) — so what decide() showed as "exists" is exactly what apply references, no duplicate h-<ip>.
+    existing = lookup_endpoint(session, cidr)
     if existing:
         return existing
+    if net.prefixlen == net.max_prefixlen:
+        return resolve_host(session, str(net.network_address), name_hint=_endpoint_name(net))
     name = _endpoint_name(net)
     addr = str(net.network_address)
     if net.version == 6:
