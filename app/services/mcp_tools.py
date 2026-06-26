@@ -130,6 +130,11 @@ def decide_access(server_id: str, source: str, destination: str, layer: str, ser
     (no_op / widen / create / review), the reasoning, and — for an unknown service/app — `suggestions`.
     Writes nothing. This is the primary tool for an agent to reason about a change.
 
+    To answer "can X reach Y / does X already have access?", read **`currently_allowed`** (true / false /
+    null) and **`answer`** (a ready-to-relay sentence) — NOT `ok`. `ok: true` only means the check ran;
+    `currently_allowed` is whether the access exists today: no_op→true (allowed), create/widen→false (a
+    change would be required), review→null (can't be sure). Never report "yes, allowed" for a create/widen.
+
     Source/destination default to IP/CIDR/Any; set ``source_kind``/``destination_kind`` to a typed kind
     (domain / access-role / dynamic-object / updatable-object / security-zone) to reason in that identity
     space — e.g. does a host have access to the domain ``alshawwaf.ca`` (source_kind stays ip,
