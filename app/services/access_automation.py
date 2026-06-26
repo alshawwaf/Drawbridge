@@ -494,6 +494,26 @@ class AccessRequest:
     inline_layer: str = ""                     # required iff action == "Apply Layer"
     action_settings_limit: str = ""            # a QoS/bandwidth "limit" object name (Accept/Ask/Inform)
     action_settings_captive_portal: bool = False  # enable-identity-captive-portal (Ask/Inform)
+    # MATCH-GATING columns (full-column support, all REUSE-ONLY object refs). A request that carries any of
+    # these is "restricted" -> the engine forces CREATE (never a false NO_OP/widen against an unrestricted
+    # rule). Apply writes each via the shared validate-by-name resolver.
+    content: Optional[list] = None             # Content Awareness data-type NAMES (OR-matched)
+    content_direction: str = "any"             # any | up | down
+    content_negate: bool = False
+    time_objects: list = field(default_factory=list)   # time / time-group NAMES (union)
+    install_on: list = field(default_factory=list)     # gateway/cluster/group NAMES ([] = Policy Targets/Any)
+    vpn: Optional[list] = None                 # VPN community NAMES + Any/All_GwToGw (None = don't touch)
+
+    @property
+    def has_content(self) -> bool:
+        return bool(self.content) or self.content_negate
+
+    @property
+    def is_restricted(self) -> bool:
+        """True when the request carries a match-gating column (content/time/install-on/vpn) the engine does
+        not fully model — force CREATE rather than risk a false NO_OP/widen against a rule lacking it."""
+        return bool(self.has_content or self.time_objects or self.install_on
+                    or (self.vpn is not None and self.vpn != []))
 
     def src_iv(self):
         return _cidrs_to_iv(self.src_cidrs)
@@ -1647,8 +1667,10 @@ def _decide(req: AccessRequest, rules: list[ParsedRule], options: "DecideOptions
 
         # (1) already permitted? first covering ACCEPT before any covering DROP wins. The verdict is scoped
         # to THIS access layer — Check Point Ordered Layers chain (an Accept here only advances evaluation to
-        # the next layer), so a downstream layer could still restrict the flow.
-        if fully_covers and r.is_accept and covering_drop is None:
+        # the next layer), so a downstream layer could still restrict the flow. A RESTRICTED request (it
+        # carries a content/time/install-on/vpn match-gating column we don't fully model) is NEVER a NO_OP
+        # against a rule that may lack that restriction -> fall through to CREATE.
+        if fully_covers and r.is_accept and covering_drop is None and not req.is_restricted:
             return Decision(
                 Outcome.NO_OP,
                 f"already permitted by rule {r.number} ({r.name}) within this access layer",
@@ -1734,7 +1756,8 @@ def _decide(req: AccessRequest, rules: list[ParsedRule], options: "DecideOptions
         # widening its destination would also grant win_client -> over-grant. Requiring equality (and
         # adding to the cell, never to a shared group) means we grant precisely src x dst x svc.
         if (options.prefer_widen and widen_target is None and r.is_accept and not complex_eff
-                and not svc_indeterminate and not r.conditional and covering_drop is None):
+                and not svc_indeterminate and not r.conditional and covering_drop is None
+                and not req.is_restricted):   # a restricted request carries a column the rule may lack -> CREATE, don't widen
             # A non-differing dimension may serve as the "must be EQUAL" guard ONLY if it is a real,
             # exact extent. An approx cell (an infra object resolved to its main IP — true reach may be
             # wider) that reads EQUAL is an UNDER-approximation: widening the third dimension would grant
@@ -2650,6 +2673,67 @@ def _validate_inline_layer(session, name: str) -> str:
     raise MgmtError(f"no access layer named “{want}” to divert into (Apply Layer) — available: {avail}")
 
 
+# Object types eligible per match-gating column (REUSE-ONLY — validated by exact name, never created).
+_INSTALL_ON_TYPES = {"simple-gateway", "simple-cluster", "CpmiGatewayCluster", "CpmiClusterMember",
+                     "CpmiVsClusterNetobj", "CpmiVsxClusterNetobj", "CpmiHostCkp", "CpmiGatewayPlain",
+                     "CpmiVsClusterMember", "CpmiVsxNetobj", "group"}
+_VPN_COMMUNITY_TYPES = {"vpn-community-star", "vpn-community-meshed", "vpn-community-remote-access"}
+
+
+def _resolve_named_objects(session, names, label, *, allow_types=(), allow_prefix=None, literals=()) -> list:
+    """Validate each NAME exists as an allowed object type (REUSE-ONLY — never creates) and return the
+    confirmed names. A whitelisted literal (e.g. "Policy Targets", "Any") passes through. A miss raises a
+    clear MgmtError. Atomic pre-flight: call BEFORE any write so a bad name fails the whole apply, not a
+    partial one. (install-on note: if a future R82.10 hides gateways from a no-type show-objects, this is the
+    one place to add a show-gateways-and-servers fallback — see the plan's [LIVE] check.)"""
+    lits = {l.lower() for l in literals}
+    out: list = []
+    for raw in names:
+        nm = str(raw).strip()
+        if not nm:
+            continue
+        if nm.lower() in lits:
+            out.append(nm)
+            continue
+        try:
+            res = session.call("show-objects", {"filter": nm, "limit": 50})  # VERIFY
+        except MgmtError:
+            res = {}
+        match = None
+        for o in res.get("objects", []):
+            if (o.get("name") or "") != nm:
+                continue
+            t = str(o.get("type") or "")
+            if (allow_types and t in allow_types) or (allow_prefix and t.startswith(allow_prefix)):
+                match = o["name"]
+                break
+        if not match:
+            raise MgmtError(f"no {label} named “{nm}” found (reuse-only — create it first, or fix the name)")
+        out.append(match)
+    return out
+
+
+def _write_gating_columns(session, payload: dict, req: AccessRequest) -> None:
+    """Write the match-gating columns (content / time / install-on / vpn) onto an add-access-rule payload —
+    each behind a non-default guard so a request that sets none yields a byte-identical payload. Every object
+    reference is validated reuse-only (atomic pre-flight). The CREATE delete-rule inverse already covers all."""
+    if req.content:
+        payload["content"] = _resolve_named_objects(session, req.content, "data type", allow_prefix="data-type")
+        payload["content-direction"] = req.content_direction or "any"
+        if req.content_negate:
+            payload["content-negate"] = True
+    if req.time_objects:
+        payload["time"] = _resolve_named_objects(session, req.time_objects, "time object",
+                                                 allow_types={"time", "time-group"})
+    if req.install_on:
+        payload["install-on"] = _resolve_named_objects(session, req.install_on, "gateway/target",
+                                                       allow_types=_INSTALL_ON_TYPES, literals=("Policy Targets",))
+    if req.vpn is not None:
+        payload["vpn"] = (_resolve_named_objects(session, req.vpn, "VPN community",
+                                                 allow_types=_VPN_COMMUNITY_TYPES, literals=("Any", "All_GwToGw"))
+                          if req.vpn else [])   # [] = explicit Any
+
+
 def _action_settings_payload(action: str, req: AccessRequest) -> Optional[dict]:
     """The action-settings object for an ALLOWING action (Accept/Ask/Inform) when the request set a limit or
     captive portal — else None (omit, so a no-settings rule's payload is unchanged). Stripped from a Drop/
@@ -2734,6 +2818,7 @@ def _apply(session, decision: Decision, req: AccessRequest, layer: str,
     asettings = _action_settings_payload(action, req)        # UserCheck limit / captive-portal, allowing actions only
     if asettings:
         payload["action-settings"] = asettings
+    _write_gating_columns(session, payload, req)             # content / time / install-on / vpn (reuse-only)
     tags = naming.rule_tags()
     if tags:
         payload["tags"] = tags

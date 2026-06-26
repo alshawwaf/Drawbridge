@@ -146,9 +146,29 @@ def _resolve_endpoint(value, kind, label) -> tuple[list, str, str]:
     return [], kind, val
 
 
+def _to_name_list(v) -> list:
+    """Normalise a string ('A, B' / 'A;B') or list into a clean, de-duped, order-preserving NAME list with
+    the same length/control-char guard the endpoints use. Blank -> []."""
+    if v is None:
+        return []
+    parts = v if isinstance(v, (list, tuple)) else re.split(r"[,;]", str(v))
+    out: list = []
+    for p in parts:
+        nm = str(p).strip()
+        if not nm:
+            continue
+        if len(nm) > 256 or any(ord(c) < 32 for c in nm):
+            raise ValueError(f"invalid object name: {nm[:40]!r}")
+        if nm not in out:
+            out.append(nm)
+    return out
+
+
 def build_request(source, destination, protocol, port, application=None, service=None,
                   source_kind="ip", destination_kind="ip", action="Accept", inline_layer="",
-                  action_settings_limit="", action_settings_captive_portal=False) -> AccessRequest:
+                  action_settings_limit="", action_settings_captive_portal=False,
+                  content=None, content_direction="any", content_negate=False,
+                  time_objects=None, install_on=None, vpn=None) -> AccessRequest:
     """Validate + normalise a raw tuple into an AccessRequest. Shared by the UI and the webhook.
     Precedence: `application` (e.g. "Facebook") > `service` (a named non-port service, e.g. "icmp" /
     "GRE") > protocol+port. Source/destination may be an IP, a CIDR, 'Any', OR a typed (non-IP) object
@@ -170,6 +190,25 @@ def build_request(source, destination, protocol, port, application=None, service
         raise ValueError("action 'Apply Layer' requires an inline_layer (the layer name to divert into).")
     if canon != "Apply Layer" and inline_layer:
         raise ValueError(f"inline_layer is only valid with action 'Apply Layer', not '{canon}'.")
+    # MATCH-GATING columns (full-column support). Normalize string-or-list -> clean NAME list; validate the
+    # content direction enum; collapse an Any/Policy-Targets install-on to [] (omit). All object refs are
+    # reuse-only — existence is validated at apply time, not here.
+    content_l = _to_name_list(content)
+    content_negate = bool(content_negate)
+    if content_negate and not content_l:
+        raise ValueError("content_negate requires at least one content (data-type) name.")
+    cdir = str(content_direction or "any").strip().lower()
+    if cdir not in ("any", "up", "down"):
+        raise ValueError("content_direction must be 'any', 'up', or 'down'.")
+    time_l = _to_name_list(time_objects)
+    install_l = [n for n in _to_name_list(install_on)
+                 if n.lower() not in ("any", "all", "*", "policy targets")]   # default token -> omit
+    vpn_l = None if vpn is None else _to_name_list(vpn)
+    if vpn_l is not None:
+        # directional pairs ({from,to}) are unverified in the spec -> reject, never guess.
+        if isinstance(vpn, dict) or any(isinstance(x, dict) for x in (vpn if isinstance(vpn, (list, tuple)) else [])):
+            raise ValueError("directional VPN ({from, to}) is not supported — assign a VPN community by name.")
+        vpn_l = [n for n in vpn_l if n.lower() != "any"]   # "Any" / [] -> [] (explicit Any); keep All_GwToGw + communities
     s_cidrs, s_kind, s_val = _resolve_endpoint(source, source_kind, "source")
     d_cidrs, d_kind, d_val = _resolve_endpoint(destination, destination_kind, "destination")
     application = str(application).strip() if application else ""
@@ -185,7 +224,9 @@ def build_request(source, destination, protocol, port, application=None, service
                   src_kind=s_kind, src_value=s_val, dst_kind=d_kind, dst_value=d_val,
                   action=canon, inline_layer=inline_layer,
                   action_settings_limit=str(action_settings_limit or "").strip(),
-                  action_settings_captive_portal=bool(action_settings_captive_portal))
+                  action_settings_captive_portal=bool(action_settings_captive_portal),
+                  content=(content_l or None), content_direction=cdir, content_negate=content_negate,
+                  time_objects=time_l, install_on=install_l, vpn=vpn_l)
     if application:
         return AccessRequest(**common, application=application)
     service = str(service).strip() if service else ""
@@ -233,6 +274,15 @@ def parse_payload(data: dict) -> TicketRequest:
         action_settings_limit=_first(data, "action_limit", "limit", "u_action_limit", default=""),
         action_settings_captive_portal=str(_first(data, "captive_portal", "enable_captive_portal",
                                                   "u_captive_portal", default="")).strip().lower() in _TRUE,
+        content=_first(data, "content", "data_type", "data_types", "content_type", "u_content"),
+        content_direction=_first(data, "content_direction", "data_direction", "u_content_direction",
+                                 default="any"),
+        content_negate=str(_first(data, "content_negate", "data_negate", "u_content_negate",
+                                  default="")).strip().lower() in _TRUE,
+        time_objects=_first(data, "time", "time_objects", "time_object", "window", "u_time"),
+        install_on=_first(data, "install_on", "install-on", "targets", "gateways", "gateway",
+                          "u_install_on", "u_targets"),
+        vpn=_first(data, "vpn", "vpn_community", "vpn_communities", "u_vpn"),
     )
     apply_flag = str(_first(data, "apply", "commit", "u_apply", default="")).strip().lower() in _TRUE
     return TicketRequest(
