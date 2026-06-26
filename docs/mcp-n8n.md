@@ -88,7 +88,7 @@ n8n discovers the tools automatically (`tools/list`). The agent can then call th
 | `coverage_lookup(api, name?, version?)` | object/field support across API / Terraform / Ansible | no |
 | `apply_access(server_id, …, publish)` | `publish=false` **dry-run** (validate + discard); `publish=true` **commit** | gated |
 | `remove_access(server_id, …, publish)` | revoke an access — disable an exact-grant rule, or drop-above a broader one | gated |
-| `amend_access_rule(change_id \| rule_uid+layer, name?/comment?/tags?, publish)` | edit a rule's **metadata only** (name/comment/tags) — never its match columns | gated |
+| `amend_access_rule(change_id \| rule_uid+layer, name?/comment?/tags?/track?, publish)` | edit a rule's **metadata only** (name/comment/tags/track-logging) — never its match columns | gated |
 | `list_changes(limit?)` | recent **published** changes (id/what/when/reverted?) for audit + undo | no |
 | `revert_change(change_id, publish, disable_instead_of_delete?)` | surgically undo one published change (delete/re-enable/restore) | gated |
 
