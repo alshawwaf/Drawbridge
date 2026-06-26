@@ -21,6 +21,10 @@ from ..models import AppliedChange
 
 def _summary(action: str, outcome: str, req: dict) -> str:
     """A human one-liner for the history list, e.g. 'create: allow 10.1.2.250 -> Facebook'."""
+    if outcome == "amend":                                   # a metadata edit (name/comment/tags)
+        changed = req.get("_amend") or {}
+        parts = [(f"name=“{v}”" if k == "name" else f"{k}={v}") for k, v in changed.items()]
+        return "edit rule (" + ", ".join(parts) + ")" if parts else "edit rule"
     src = req.get("source") or "?"
     app = req.get("application")
     svc = req.get("service") or (f"{req.get('protocol', 'tcp')}/{req.get('port')}" if req.get("port") else None)

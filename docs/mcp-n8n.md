@@ -87,6 +87,10 @@ n8n discovers the tools automatically (`tools/list`). The agent can then call th
 | `analyze_policy(server_id, layer)` | summary + shadowed rules (covered by an earlier broader Accept/Drop) + overly-permissive Accepts | no |
 | `coverage_lookup(api, name?, version?)` | object/field support across API / Terraform / Ansible | no |
 | `apply_access(server_id, …, publish)` | `publish=false` **dry-run** (validate + discard); `publish=true` **commit** | gated |
+| `remove_access(server_id, …, publish)` | revoke an access — disable an exact-grant rule, or drop-above a broader one | gated |
+| `amend_access_rule(change_id \| rule_uid+layer, name?/comment?/tags?, publish)` | edit a rule's **metadata only** (name/comment/tags) — never its match columns | gated |
+| `list_changes(limit?)` | recent **published** changes (id/what/when/reverted?) for audit + undo | no |
+| `revert_change(change_id, publish, disable_instead_of_delete?)` | surgically undo one published change (delete/re-enable/restore) | gated |
 
 `summarize_layer` / `analyze_policy` are read-only and **provably conservative** — `analyze_policy` only
 flags a rule as shadowed when it can prove an earlier rule fully covers it under first-match (it abstains
@@ -122,7 +126,7 @@ whole dimension. Good for an agent to *understand* a policy before proposing a c
 ## 6. Status — validated live
 
 Validated end-to-end against `mcp` SDK 1.28.0 (Streamable-HTTP): a request with no / wrong bearer → 401;
-`initialize` → 200 (serverInfo "Drawbridge"); `tools/list` → all 9 tools; `tools/call coverage_lookup`
+`initialize` → 200 (serverInfo "Drawbridge"); `tools/list` → all tools; `tools/call coverage_lookup`
 returns real data; `decide_access` with a bad server id returns its error inside the tool result (no
 crash). The endpoint serves at **`/mcp`** (a bare `/mcp` 307-redirects to `/mcp/`; MCP clients, incl.
 n8n, follow it preserving the POST). The mounted app's session-manager lifespan is run from the portal's
