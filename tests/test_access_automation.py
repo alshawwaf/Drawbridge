@@ -2799,24 +2799,37 @@ class _AddrSession:
         return {}
 
 
-def test_endpoint_reuses_gateway_object_not_duplicate_host():
-    # A /32 request to a gateway's IP must REUSE the gateway object (preview shows exists:true), and apply
-    # must NOT fabricate a duplicate h-<ip> host. Regression: lookup only knew 'host' objects.
+def test_endpoint_reuses_any_address_object_by_exact_scope():
+    # Endpoint reuse must identify ALL supported address-bearing object types by EXACT scope — not just
+    # host. A /32 to a gateway/cluster/CP-host reuses that object; a CIDR reuses a matching network OR an
+    # equivalent address-range; and a BROADER container is never reused (would over-grant) -> create instead.
     gw = {"name": "GW", "type": "simple-gateway", "ipv4-address": "10.1.1.111"}
+    cph = {"name": "SMS", "type": "checkpoint-host", "ipv4-address": "10.1.1.100"}
+    net = {"name": "net24", "type": "network", "subnet4": "10.1.5.0", "mask-length4": 24}
+    rng = {"name": "rng", "type": "address-range", "ipv4-address-first": "10.1.6.0", "ipv4-address-last": "10.1.6.255"}
 
-    assert aa.lookup_endpoint(_AddrSession([gw]), "10.1.1.111/32") == "GW"     # preview reuses it
+    # /32 -> gateway, and a Check Point host, each by exact IP
+    assert aa.lookup_endpoint(_AddrSession([gw]), "10.1.1.111/32") == "GW"
+    assert aa.lookup_endpoint(_AddrSession([cph]), "10.1.1.100/32") == "SMS"
+    # CIDR -> a network, OR an address-range spanning exactly the same /24
+    assert aa.lookup_endpoint(_AddrSession([net]), "10.1.5.0/24") == "net24"
+    assert aa.lookup_endpoint(_AddrSession([rng]), "10.1.6.0/24") == "rng"
+
+    # apply reuses the gateway and never fabricates a duplicate host
     sap = _AddrSession([gw])
-    assert aa.resolve_endpoint(sap, "10.1.1.111/32") == "GW"                   # apply reuses it...
-    assert not any(c == "add-host" for c, _ in sap.calls)                      # ...never adds a host
+    assert aa.resolve_endpoint(sap, "10.1.1.111/32") == "GW"
+    assert not any(c == "add-host" for c, _ in sap.calls)
 
-    # an exact HOST with the same IP still wins over the gateway (most specific)
+    # an exact HOST wins a tie over a same-IP gateway (most specific / canonical)
     both = [{"name": "h-x", "type": "host", "ipv4-address": "10.1.1.111"}, gw]
     assert aa.lookup_endpoint(_AddrSession(both), "10.1.1.111/32") == "h-x"
 
-    # an IP nobody owns -> a host is created (unchanged behavior)
-    snew = _AddrSession([])
-    aa.resolve_endpoint(snew, "10.9.9.9/32")
-    assert any(c == "add-host" for c, _ in snew.calls)
+    # SAFETY: a BROADER container is never reused for a narrower request -> None (caller creates exact obj)
+    assert aa.lookup_endpoint(_AddrSession([net]), "10.1.5.42/32") is None         # /32 inside the /24
+    assert aa.lookup_endpoint(_AddrSession([rng]), "10.1.6.10/32") is None         # /32 inside the range
+    snew = _AddrSession([net])
+    aa.resolve_endpoint(snew, "10.1.5.42/32")
+    assert any(c == "add-host" for c, _ in snew.calls)                             # creates the /32 host
     s2 = _DomSession([])
     aa.resolve_typed_object(s2, "domain", ".example.com")
     assert next(p for c, p in s2.calls if c == "add-dns-domain")["is-sub-domain"] is True
