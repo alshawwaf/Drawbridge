@@ -719,7 +719,7 @@ def test_parse_rule_negate_marks_complex():
 
 
 # --- I/O entry points against a fake session --------------------------------------------------
-def _fake_session_factory(calls, hosts=None, services=None, fail_on=None, rule=None):
+def _fake_session_factory(calls, hosts=None, services=None, fail_on=None, rule=None, layers=None):
     hosts = hosts or {}
     services = services or {}
 
@@ -761,6 +761,8 @@ def _fake_session_factory(calls, hosts=None, services=None, fail_on=None, rule=N
                 if "name" in (payload or {}):
                     raise aa.MgmtError("set-access-rule: unrecognized parameter [name] (rename uses new-name)")
                 return {"uid": (payload or {}).get("uid")}
+            if command == "show-access-layers":        # Apply-Layer validation reads the layer list
+                return {"access-layers": layers or []}
             return {}
 
         def publish(self):
@@ -3582,3 +3584,92 @@ def test_remove_inverse_whitelist_allows_source_add_only_for_real_fields():
     with pytest.raises(aa.MgmtError):          # a non-whitelisted field can't be smuggled via 'add'
         aa._apply_inverse_op(sess, {"op": "set-access-rule", "uid": "fb", "layer": "Network",
                                     "field": "action", "add": "Accept"})
+
+
+# --- full-column support: ACTION (Drop/Reject/Ask/Inform/Apply Layer) -----------------------------
+def _act_req(action, src="10.1.1.50/32", dst="10.1.2.250/32", port="3389", **kw):
+    return AccessRequest([src], [dst], protocol="tcp", ports=port, action=action, **kw)
+
+
+def test_canonical_action_and_build_request_validation():
+    assert aa.canonical_action("drop") == "Drop" and aa.canonical_action("APPLY  LAYER") == "Apply Layer"
+    assert aa.canonical_action("") == "Accept" and aa.canonical_action("bogus") == ""
+    from app.services import ticketing
+    assert ticketing.build_request("10.1.1.5", "10.1.2.5", "tcp", "443", action="reject").canon_action == "Reject"
+    with pytest.raises(ValueError):                              # garbage/legacy never silently Accepts
+        ticketing.build_request("10.1.1.5", "10.1.2.5", "tcp", "443", action="User Auth")
+    with pytest.raises(ValueError):                              # Apply Layer needs an inline layer
+        ticketing.build_request("10.1.1.5", "10.1.2.5", "tcp", "443", action="Apply Layer")
+    with pytest.raises(ValueError):                              # inline layer only valid with Apply Layer
+        ticketing.build_request("10.1.1.5", "10.1.2.5", "tcp", "443", action="Accept", inline_layer="X")
+
+
+def test_decide_action_drop_above_covering_accept():
+    a = _rule("a", 1, "Accept", _host("10.1.1.50"), _host("10.1.2.250"), _tcp(3389))
+    d = aa.decide(_act_req("Drop"), [a, CLEANUP])
+    assert d.outcome is Outcome.CREATE and d.position == {"above": "a"} and d.target_rule.uid == "a"
+
+
+def test_decide_action_reject_like_drop():
+    a = _rule("a", 1, "Accept", _host("10.1.1.50"), _host("10.1.2.250"), _tcp(3389))
+    assert aa.decide(_act_req("Reject"), [a, CLEANUP]).outcome is Outcome.CREATE
+
+
+def test_decide_action_drop_already_denied_noop():
+    dny = _rule("d", 1, "Drop", _host("10.1.1.50"), _host("10.1.2.250"), _tcp(3389))
+    assert aa.decide(_act_req("Drop"), [dny, CLEANUP]).outcome is Outcome.NO_OP
+
+
+def test_decide_action_drop_nothing_grants_noop():
+    # only the Any/Any/Any cleanup drop covers it -> already denied -> NO_OP (nothing to add)
+    assert aa.decide(_act_req("Drop", src="10.9.9.9/32", dst="10.8.8.8/32", port="9"), [CLEANUP]).outcome is Outcome.NO_OP
+
+
+def test_decide_action_ask_always_creates_above():
+    a = _rule("a", 1, "Accept", _host("10.1.1.50"), _host("10.1.2.250"), _tcp(3389))
+    d = aa.decide(_act_req("Ask"), [a, CLEANUP])
+    assert d.outcome is Outcome.CREATE and d.position == {"above": "a"}    # Ask takes effect over the accept
+
+
+def test_decide_action_apply_layer_creates():
+    d = aa.decide(_act_req("Apply Layer", inline_layer="DNS_Layer"), [CLEANUP])
+    assert d.outcome is Outcome.CREATE
+
+
+def test_execute_action_drop_writes_drop_rule(monkeypatch):
+    calls = []
+    monkeypatch.setattr(aa, "MgmtSession", _fake_session_factory(calls, hosts={"10.1.1.50": "h1", "10.1.2.250": "h2"}))
+    monkeypatch.setattr(aa, "load_layer", lambda s, layer, package=None: [
+        _rule("a", 1, "Accept", _host("10.1.1.50"), _host("10.1.2.250"), _tcp(3389)), CLEANUP])
+    monkeypatch.setattr(aa, "invalidate_cache", lambda *a, **k: None)
+    res = aa.execute(object(), "s", _act_req("Drop"), "Network", publish=True)
+    assert res["ok"] and res["outcome"] == "create"
+    addc = next(p for c, p in calls if c == "add-access-rule")
+    assert addc["action"] == "Drop" and "action-settings" not in addc
+
+
+def test_execute_action_ask_with_captive_portal_writes_action_settings(monkeypatch):
+    calls = []
+    monkeypatch.setattr(aa, "MgmtSession", _fake_session_factory(calls, hosts={"10.1.1.50": "h1", "10.1.2.250": "h2"}))
+    monkeypatch.setattr(aa, "load_layer", lambda s, layer, package=None: [CLEANUP])
+    monkeypatch.setattr(aa, "invalidate_cache", lambda *a, **k: None)
+    res = aa.execute(object(), "s", _act_req("Ask", action_settings_captive_portal=True), "Network", publish=True)
+    addc = next(p for c, p in calls if c == "add-access-rule")
+    assert addc["action"] == "Ask" and addc["action-settings"] == {"enable-identity-captive-portal": True}
+
+
+def test_execute_apply_layer_validates_and_writes_inline_layer(monkeypatch):
+    calls = []
+    monkeypatch.setattr(aa, "MgmtSession", _fake_session_factory(
+        calls, hosts={"10.1.1.50": "h1", "10.1.2.250": "h2"}, layers=[{"name": "DNS_Layer", "uid": "l1"}]))
+    monkeypatch.setattr(aa, "load_layer", lambda s, layer, package=None: [CLEANUP])
+    monkeypatch.setattr(aa, "invalidate_cache", lambda *a, **k: None)
+    ok = aa.execute(object(), "s", _act_req("Apply Layer", inline_layer="DNS_Layer"), "Network", publish=True)
+    addc = next(p for c, p in calls if c == "add-access-rule")
+    assert addc["action"] == "Apply Layer" and addc["inline-layer"] == "DNS_Layer"
+    # a non-existent inline layer fails loud (no dangling divert), session discards -> ok False
+    calls2 = []
+    monkeypatch.setattr(aa, "MgmtSession", _fake_session_factory(
+        calls2, hosts={"10.1.1.50": "h1", "10.1.2.250": "h2"}, layers=[{"name": "DNS_Layer", "uid": "l1"}]))
+    bad = aa.execute(object(), "s", _act_req("Apply Layer", inline_layer="Nope"), "Network", publish=True)
+    assert not bad["ok"] and "no access layer" in bad["error"].lower()

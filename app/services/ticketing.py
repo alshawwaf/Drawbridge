@@ -147,15 +147,29 @@ def _resolve_endpoint(value, kind, label) -> tuple[list, str, str]:
 
 
 def build_request(source, destination, protocol, port, application=None, service=None,
-                  source_kind="ip", destination_kind="ip") -> AccessRequest:
+                  source_kind="ip", destination_kind="ip", action="Accept", inline_layer="",
+                  action_settings_limit="", action_settings_captive_portal=False) -> AccessRequest:
     """Validate + normalise a raw tuple into an AccessRequest. Shared by the UI and the webhook.
     Precedence: `application` (e.g. "Facebook") > `service` (a named non-port service, e.g. "icmp" /
     "GRE") > protocol+port. Source/destination may be an IP, a CIDR, 'Any', OR a typed (non-IP) object
     when ``source_kind``/``destination_kind`` is one of the typed kinds (domain / access-role /
     dynamic-object / updatable-object / security-zone) — then the value is the object's identity (an
-    FQDN for a domain, the object name otherwise). Raises ValueError on anything malformed."""
+    FQDN for a domain, the object name otherwise). ``action`` (full-column support) is Accept / Drop /
+    Reject / Ask / Inform / Apply Layer; Apply Layer requires ``inline_layer``. Raises ValueError on
+    anything malformed."""
     if source in (None, "") or destination in (None, ""):
         raise ValueError("source and destination are required.")
+    # ACTION — canonicalize + validate up front (never a silent Accept on garbage/legacy).
+    from .access_automation import canonical_action
+    canon = canonical_action(action)
+    if not canon:
+        raise ValueError(f"unsupported action “{action}” — use one of Accept, Drop, Reject, Ask, Inform, "
+                         f"Apply Layer.")
+    inline_layer = str(inline_layer or "").strip()
+    if canon == "Apply Layer" and not inline_layer:
+        raise ValueError("action 'Apply Layer' requires an inline_layer (the layer name to divert into).")
+    if canon != "Apply Layer" and inline_layer:
+        raise ValueError(f"inline_layer is only valid with action 'Apply Layer', not '{canon}'.")
     s_cidrs, s_kind, s_val = _resolve_endpoint(source, source_kind, "source")
     d_cidrs, d_kind, d_val = _resolve_endpoint(destination, destination_kind, "destination")
     application = str(application).strip() if application else ""
@@ -168,7 +182,10 @@ def build_request(source, destination, protocol, port, application=None, service
     if application and d_kind == "ip" and d_cidrs == ["Any"]:
         d_cidrs, d_kind, d_val = [], "internet", "Internet"
     common = dict(src_cidrs=s_cidrs, dst_cidrs=d_cidrs,
-                  src_kind=s_kind, src_value=s_val, dst_kind=d_kind, dst_value=d_val)
+                  src_kind=s_kind, src_value=s_val, dst_kind=d_kind, dst_value=d_val,
+                  action=canon, inline_layer=inline_layer,
+                  action_settings_limit=str(action_settings_limit or "").strip(),
+                  action_settings_captive_portal=bool(action_settings_captive_portal))
     if application:
         return AccessRequest(**common, application=application)
     service = str(service).strip() if service else ""
@@ -211,6 +228,11 @@ def parse_payload(data: dict) -> TicketRequest:
         source_kind=_first(data, "source_kind", "src_kind", "u_source_kind", default="ip"),
         destination_kind=_first(data, "destination_kind", "dst_kind", "dest_kind",
                                 "u_destination_kind", default="ip"),
+        action=_first(data, "action", "verdict", "u_action", default="Accept"),
+        inline_layer=_first(data, "inline_layer", "inline-layer", "apply_layer", "u_inline_layer", default=""),
+        action_settings_limit=_first(data, "action_limit", "limit", "u_action_limit", default=""),
+        action_settings_captive_portal=str(_first(data, "captive_portal", "enable_captive_portal",
+                                                  "u_captive_portal", default="")).strip().lower() in _TRUE,
     )
     apply_flag = str(_first(data, "apply", "commit", "u_apply", default="")).strip().lower() in _TRUE
     return TicketRequest(
