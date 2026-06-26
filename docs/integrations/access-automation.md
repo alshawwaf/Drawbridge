@@ -136,3 +136,33 @@ access request and get back the decision — and, optionally, have it applied an
 - A truncated rulebase pull **fails loud** rather than deciding on a partial view (which could step over
   a covering drop it never loaded). New objects materialize at the full requested scope — a CIDR wider
   than one address becomes a **network** object, never silently narrowed to a `/32` host.
+
+## QA — the regression battery
+
+The decision engine is the crown jewel, so it ships with a **declarative, manually-runnable QA battery**
+that covers every supported object / site / port / protocol against the Check-Point-correct outcome.
+
+- **Where:** [`app/services/aa_qa.py`](../../app/services/aa_qa.py). Each scenario is *data* — a small
+  lab-shaped rulebase (objects + rules), one access request, and the expected verdict — fed through the
+  **real** engine (`_parse_rule` + `decide` / `decide_removal`, the same path `web_api` uses). It
+  exercises actual object resolution, the layer where the Internet-object, Dynamic-Layer and
+  disabled-rule bugs hid.
+- **Run it standalone (no pytest):**
+
+  ```
+  python -m app.services.aa_qa                 # full report, exits non-zero on any failure
+  python -m app.services.aa_qa --list          # list every scenario id + description
+  python -m app.services.aa_qa --category placement   # run one category
+  python -m app.services.aa_qa --verbose       # show the engine's reason for each
+  ```
+
+- **Run it in the suite:** `pytest tests/test_aa_scenarios.py` parametrizes over the *same*
+  `SCENARIOS` table, so the CLI, the docs, and CI never drift — a regression turns both red.
+- **Categories:** `ip` · `typed` (domain / access-role / security-zone / dynamic / updatable / Internet) ·
+  `services-l4` (tcp/udp/sctp ports + ranges, service-groups) · `services-named` (icmp / icmp6, GRE,
+  opaque) · `apps` (application-site / category / app-group, app-vs-L4 carve-out) · `placement`
+  (floor / provisioned-section / above-deny / partial / shadowed-deny anomaly / Stealth / Dynamic-Layer /
+  disabled / conditional) · `removal` (disable / deny / no_op / review).
+
+Adding a scenario is one entry in the `SCENARIOS` list — derive the `expect` from first-match semantics
+**independently** of the code, so the battery stays an oracle and not an echo of the implementation.

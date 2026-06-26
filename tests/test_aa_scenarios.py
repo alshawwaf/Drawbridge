@@ -183,3 +183,17 @@ SCENARIOS = [
 def test_aa_scenario(sid, op, rules, req, opts, check):
     d = decide(req, rules, opts) if op == "add" else decide_removal(req, rules, opts)
     assert check(d), f"{sid}: unexpected {d.outcome.value} — {d.reason}"
+
+
+# ---------------------------------------------------------------------------------------------------
+# The DECLARATIVE QA battery (app/services/aa_qa.py) — same scenarios that ship as the standalone,
+# manually-runnable `python -m app.services.aa_qa` tool. Running them here too keeps the CLI and the
+# test suite a single source of truth: if a scenario regresses, both go red.
+# ---------------------------------------------------------------------------------------------------
+from app.services import aa_qa  # noqa: E402
+
+
+@pytest.mark.parametrize("sc", aa_qa.SCENARIOS, ids=[s.id for s in aa_qa.SCENARIOS])
+def test_aa_qa_battery(sc):
+    ok, actual, detail = aa_qa.evaluate(sc)
+    assert ok, f"{sc.id} [{sc.category}]: {detail} (actual={actual})"
