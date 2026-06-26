@@ -99,7 +99,8 @@ def list_access_layers(server_id: str) -> dict:
 
 def _build(source, destination, service, port, protocol, application,
            source_kind="ip", destination_kind="ip", action="Accept", inline_layer="",
-           action_limit="", captive_portal=False):
+           action_limit="", captive_portal=False, content=None, content_direction="any",
+           content_negate=False, time_objects=None, install_on=None, vpn=None):
     from . import ticketing
     return ticketing.build_request(source, destination, protocol or "tcp", port or "",
                                    application=application, service=service,
@@ -107,7 +108,10 @@ def _build(source, destination, service, port, protocol, application,
                                    destination_kind=destination_kind or "ip",
                                    action=action or "Accept", inline_layer=inline_layer or "",
                                    action_settings_limit=action_limit or "",
-                                   action_settings_captive_portal=bool(captive_portal))
+                                   action_settings_captive_portal=bool(captive_portal),
+                                   content=content, content_direction=content_direction or "any",
+                                   content_negate=bool(content_negate), time_objects=time_objects,
+                                   install_on=install_on, vpn=vpn)
 
 
 def _autopilot(server=None, layer=None) -> bool:
@@ -131,7 +135,10 @@ def decide_access(server_id: str, source: str, destination: str, layer: str, ser
                   package: str | None = None,
                   source_kind: str = "ip", destination_kind: str = "ip",
                   action: str = "Accept", inline_layer: str | None = None,
-                  action_limit: str | None = None, captive_portal: bool = False) -> dict:
+                  action_limit: str | None = None, captive_portal: bool = False,
+                  content: list[str] | None = None, content_direction: str = "any",
+                  content_negate: bool = False, time_objects: list[str] | None = None,
+                  install_on: list[str] | None = None, vpn: list[str] | None = None) -> dict:
     """PREVIEW (read-only) what Drawbridge would do for an access request: returns the outcome
     (no_op / widen / create / review), the reasoning, and — for an unknown service/app — `suggestions`.
     Writes nothing. This is the primary tool for an agent to reason about a change.
@@ -162,7 +169,9 @@ def decide_access(server_id: str, source: str, destination: str, layer: str, ser
     try:
         req = _build(source, destination, service, port, protocol, application,
                      source_kind, destination_kind, action=action, inline_layer=inline_layer,
-                     action_limit=action_limit, captive_portal=captive_portal)
+                     action_limit=action_limit, captive_portal=captive_portal,
+                     content=content, content_direction=content_direction, content_negate=content_negate,
+                     time_objects=time_objects, install_on=install_on, vpn=vpn)
     except ValueError as exc:
         return {"ok": False, "error": str(exc)}
     try:
@@ -196,9 +205,15 @@ def apply_access(server_id: str, source: str, destination: str, layer: str, serv
                  package: str | None = None, publish: bool = False, ticket_id: str = "",
                  source_kind: str = "ip", destination_kind: str = "ip",
                  action: str = "Accept", inline_layer: str | None = None,
-                 action_limit: str | None = None, captive_portal: bool = False) -> dict:
+                 action_limit: str | None = None, captive_portal: bool = False,
+                 content: list[str] | None = None, content_direction: str = "any",
+                 content_negate: bool = False, time_objects: list[str] | None = None,
+                 install_on: list[str] | None = None, vpn: list[str] | None = None) -> dict:
     """APPLY an access request. ``action`` = the rule verdict: Accept (default) / Drop / Reject / Ask /
-    Inform / Apply Layer (Apply Layer needs ``inline_layer``). With publish=false it DRY-RUNS (applies inside a session, then discards —
+    Inform / Apply Layer (Apply Layer needs ``inline_layer``). Optional match-gating columns (all REUSE-ONLY
+    object names): ``content`` (data-types) + ``content_direction`` (any/up/down) + ``content_negate``;
+    ``time_objects`` (time / time-group); ``install_on`` (gateways/targets); ``vpn`` (communities; []=Any).
+    With publish=false it DRY-RUNS (applies inside a session, then discards —
     nothing is committed) — always allowed. With publish=true it COMMITS to the live server — allowed ONLY
     when an admin has enabled the 'mcp_allow_publish' setting; otherwise it's refused (dry-run instead).
 
@@ -225,7 +240,9 @@ def apply_access(server_id: str, source: str, destination: str, layer: str, serv
     try:
         req = _build(source, destination, service, port, protocol, application,
                      source_kind, destination_kind, action=action, inline_layer=inline_layer,
-                     action_limit=action_limit, captive_portal=captive_portal)
+                     action_limit=action_limit, captive_portal=captive_portal,
+                     content=content, content_direction=content_direction, content_negate=content_negate,
+                     time_objects=time_objects, install_on=install_on, vpn=vpn)
     except ValueError as exc:
         return {"ok": False, "error": str(exc)}
     try:

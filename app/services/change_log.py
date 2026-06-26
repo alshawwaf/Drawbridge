@@ -44,7 +44,13 @@ def snapshot_request(req) -> dict:
     return {"source": src or "?", "destination": dst or "Any",
             "protocol": getattr(req, "protocol", "tcp"), "port": getattr(req, "ports", ""),
             "service": getattr(req, "service", None), "application": getattr(req, "application", None),
-            "source_kind": getattr(req, "src_kind", "ip"), "destination_kind": getattr(req, "dst_kind", "ip")}
+            "source_kind": getattr(req, "src_kind", "ip"), "destination_kind": getattr(req, "dst_kind", "ip"),
+            # full-column support: preserve the verdict + match-gating columns so re-apply reconstructs the rule
+            "action": getattr(req, "action", "Accept"), "inline_layer": getattr(req, "inline_layer", ""),
+            "content": getattr(req, "content", None), "content_direction": getattr(req, "content_direction", "any"),
+            "content_negate": getattr(req, "content_negate", False),
+            "time_objects": getattr(req, "time_objects", []), "install_on": getattr(req, "install_on", []),
+            "vpn": getattr(req, "vpn", None)}
 
 
 def record(db: Session, *, server, result: dict, request: dict, layer: str,

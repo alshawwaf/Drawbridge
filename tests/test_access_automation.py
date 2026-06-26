@@ -3673,3 +3673,70 @@ def test_execute_apply_layer_validates_and_writes_inline_layer(monkeypatch):
         calls2, hosts={"10.1.1.50": "h1", "10.1.2.250": "h2"}, layers=[{"name": "DNS_Layer", "uid": "l1"}]))
     bad = aa.execute(object(), "s", _act_req("Apply Layer", inline_layer="Nope"), "Network", publish=True)
     assert not bad["ok"] and "no access layer" in bad["error"].lower()
+
+
+# --- full-column support: CONTENT / TIME / INSTALL-ON / VPN (write + request + engine guard) --------
+class _GateSession:
+    """show-objects returns the fixed objects whose name matches the filter (for reuse-only validation)."""
+    def __init__(self, objs):
+        self.objs, self.calls = objs, []
+
+    def call(self, cmd, payload=None, **k):
+        self.calls.append((cmd, payload or {}))
+        if cmd == "show-objects":
+            f = (payload or {}).get("filter")
+            return {"objects": [o for o in self.objs if o.get("name") == f]}
+        return {}
+
+
+def test_build_request_gating_normalization():
+    from app.services import ticketing as t
+    r = t.build_request("10.1.1.5", "Any", "tcp", "443", content="A; B, A", content_direction="UP",
+                        time_objects=["X", "X"], install_on="GW1, any, GW2", vpn=["Any"])
+    assert r.content == ["A", "B"] and r.content_direction == "up"
+    assert r.time_objects == ["X"] and r.install_on == ["GW1", "GW2"] and r.vpn == []   # Any->[], dupes/default dropped
+    assert t.build_request("10.1.1.5", "Any", "tcp", "443").vpn is None                 # untouched when omitted
+
+
+def test_restricted_request_forces_create_not_noop():
+    a = _rule("a", 1, "Accept", _host("10.1.1.50"), ANY, _tcp(443))
+    plain = AccessRequest(["10.1.1.50/32"], ["Any"], protocol="tcp", ports="443")
+    assert aa.decide(plain, [a, CLEANUP]).outcome is Outcome.NO_OP                       # control: plain -> reuse
+    for kw in ({"install_on": ["GW"]}, {"time_objects": ["X"]}, {"vpn": ["C"]},
+               {"content": ["PCI"]}):
+        req = AccessRequest(["10.1.1.50/32"], ["Any"], protocol="tcp", ports="443", **kw)
+        assert aa.decide(req, [a, CLEANUP]).outcome is Outcome.CREATE, kw                # restricted -> never false NO_OP
+
+
+def test_write_gating_columns_all_four(monkeypatch):
+    objs = [{"name": "PCI", "type": "data-type-patterns"}, {"name": "Off-Work", "type": "time"},
+            {"name": "GW", "type": "simple-gateway"}, {"name": "MyComm", "type": "vpn-community-star"}]
+    s = _GateSession(objs)
+    req = AccessRequest(["10.1.1.50/32"], ["Any"], protocol="tcp", ports="443",
+                        content=["PCI"], content_direction="up", content_negate=True,
+                        time_objects=["Off-Work"], install_on=["GW"], vpn=["MyComm"])
+    p = {}
+    aa._write_gating_columns(s, p, req)
+    assert p["content"] == ["PCI"] and p["content-direction"] == "up" and p["content-negate"] is True
+    assert p["time"] == ["Off-Work"] and p["install-on"] == ["GW"] and p["vpn"] == ["MyComm"]
+
+
+def test_write_gating_vpn_any_literals_and_unknown_errors():
+    aa._write_gating_columns(_GateSession([]), p := {}, AccessRequest(["10.1.1.50/32"], ["Any"], protocol="tcp",
+                             ports="443", vpn=[]))
+    assert p["vpn"] == []                                                                # explicit Any
+    # All_GwToGw is a whitelisted literal (no object lookup needed)
+    aa._write_gating_columns(_GateSession([]), q := {}, AccessRequest(["10.1.1.50/32"], ["Any"], protocol="tcp",
+                             ports="443", vpn=["All_GwToGw"]))
+    assert q["vpn"] == ["All_GwToGw"]
+    with pytest.raises(aa.MgmtError):                                                    # unknown gateway -> loud
+        aa._write_gating_columns(_GateSession([]), {}, AccessRequest(["10.1.1.50/32"], ["Any"], protocol="tcp",
+                                 ports="443", install_on=["NopeGW"]))
+
+
+def test_write_gating_content_type_prefix_gate():
+    # an exact-name object whose type does NOT start with "data-type" is NOT accepted as content
+    s = _GateSession([{"name": "X", "type": "host"}])
+    with pytest.raises(aa.MgmtError):
+        aa._write_gating_columns(s, {}, AccessRequest(["10.1.1.50/32"], ["Any"], protocol="tcp", ports="443",
+                                 content=["X"]))
