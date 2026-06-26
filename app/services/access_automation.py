@@ -2335,10 +2335,33 @@ def _position_human(hint: Optional[dict], rules: list[ParsedRule]) -> str:
     return f"below rule {r.number} ({r.name})" if r else "below the more-specific rule"
 
 
+def _allowed_summary(outcome: str, target_rule: Optional[dict]) -> tuple[Optional[bool], str]:
+    """A framing-independent answer to the question behind every preview — "is this access permitted as the
+    policy stands RIGHT NOW?" — so a caller (esp. an LLM agent) reports a faithful yes/no instead of
+    mistaking ``ok: true`` (the CHECK ran successfully) for "access is allowed". Returns
+    (currently_allowed, one-line answer):
+      * NO_OP  -> True  ("already permitted by rule N")           — answer a "can X reach Y?" as YES
+      * CREATE -> False (a brand-new rule would be needed)        — answer NO; state the change
+      * WIDEN  -> False (an existing rule would need to be widened)— answer NO; state the change
+      * REVIEW -> None  (opaque/unresolved -> can't be sure)      — answer "needs review", never YES."""
+    if outcome == Outcome.NO_OP.value:
+        via = f" by rule {target_rule['number']} ({target_rule['name']})" if target_rule else ""
+        return True, f"Yes — already permitted{via}. No change is needed."
+    if outcome == Outcome.CREATE.value:
+        return False, "No — not currently permitted. A new least-privilege rule would have to be created."
+    if outcome == Outcome.WIDEN.value:
+        via = (f"rule {target_rule['number']} ({target_rule['name']})" if target_rule else "an existing rule")
+        return False, f"No — not currently permitted. {via} would have to be widened to cover it."
+    return None, "Can't confirm automatically — this needs manual review (see reason)."
+
+
 def build_preview(session, decision: Decision, req: AccessRequest, rules: list[ParsedRule]) -> dict:
     """Read-only: report exactly what execute() would do, without writing anything."""
     out: dict = {"outcome": decision.outcome.value, "reason": decision.reason,
                  "target_rule": _brief(decision.target_rule)}
+    # An explicit yes/no the caller can trust: ``ok`` means the check RAN; ``currently_allowed`` means the
+    # access EXISTS. Conflating the two is the classic agent error ("ok:true" -> wrongly answers "yes").
+    out["currently_allowed"], out["answer"] = _allowed_summary(out["outcome"], out["target_rule"])
     if decision.notes:                       # advisory 'possible match — review later' warnings
         out["notes"] = list(decision.notes)
     if decision.layer:                       # the change lands inside an inline layer, not the top layer
@@ -2712,6 +2735,9 @@ def _obj_review(res: dict, unresolved: dict, kind: str, base: dict) -> dict:
     else:
         hint = f"no close Check Point {kind} matched — check the exact object name"
     return {"ok": True, "outcome": "review", "target_rule": None, "unresolved": kind,
+            "currently_allowed": None,
+            "answer": f"Can't confirm — “{unresolved['term']}” isn't a recognized {kind}; correct the name "
+                      "and re-check.",
             "reason": f"“{unresolved['term']}” did not match a single Check Point {kind} — {hint}",
             "suggestions": names, **res, **base}
 

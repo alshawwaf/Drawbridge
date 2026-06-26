@@ -3271,3 +3271,16 @@ def test_exact_covering_deny_override_flags_shadowed_deny_below():
     d = aa.decide(req, [A, B, CLEANUP])
     assert d.outcome is Outcome.CREATE and d.position == {"above": "rA", "_anomaly": True}
     assert any("rB" in n for n in (d.notes or []))
+
+
+def test_allowed_summary_separates_ok_from_currently_allowed():
+    # The agent-facing yes/no: ok (the check ran) must never be confused with currently_allowed (access
+    # exists). no_op -> True; create/widen -> False (a change is required); review/unknown -> None.
+    ok_yes, ans = aa._allowed_summary("no_op", {"number": 2, "name": "Public DNS Servers"})
+    assert ok_yes is True and ans.lower().startswith("yes") and "rule 2" in ans
+    no_create, ans = aa._allowed_summary("create", None)
+    assert no_create is False and ans.lower().startswith("no")
+    no_widen, ans = aa._allowed_summary("widen", {"number": 10, "name": "Mail"})
+    assert no_widen is False and "widen" in ans.lower() and "Mail" in ans
+    unk, ans = aa._allowed_summary("review", None)
+    assert unk is None and "review" in ans.lower()
