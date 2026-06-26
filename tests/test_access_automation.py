@@ -719,7 +719,7 @@ def test_parse_rule_negate_marks_complex():
 
 
 # --- I/O entry points against a fake session --------------------------------------------------
-def _fake_session_factory(calls, hosts=None, services=None, fail_on=None):
+def _fake_session_factory(calls, hosts=None, services=None, fail_on=None, rule=None):
     hosts = hosts or {}
     services = services or {}
 
@@ -751,6 +751,16 @@ def _fake_session_factory(calls, hosts=None, services=None, fail_on=None):
                 return {"objects": [{"name": name, "port": port}]} if name else {"objects": []}
             if command == "add-access-rule":          # the SMS returns the created rule incl. its uid
                 return {"uid": f"new-rule-{sum(1 for c, _ in calls if c == 'add-access-rule')}"}
+            if command == "show-access-rule":          # amend reads current values to build the inverse
+                if rule is None:
+                    raise aa.MgmtError("Requested object [r1] not found")
+                return dict(rule)
+            if command == "set-access-rule":
+                # The real web_api has NO "name" write field (rename is "new-name") — reject it so the
+                # name->new-name mapping can't silently regress in a test that only echoes the payload.
+                if "name" in (payload or {}):
+                    raise aa.MgmtError("set-access-rule: unrecognized parameter [name] (rename uses new-name)")
+                return {"uid": (payload or {}).get("uid")}
             return {}
 
         def publish(self):
@@ -3370,3 +3380,99 @@ def test_allow_to_gateway_carves_above_stealth_not_below():
     d2 = aa.decide(overlap, [stealth, cleanup])
     assert d2.outcome is Outcome.CREATE and d2.position != {"above": "r6"}
     assert any("Stealth" in n for n in (d2.notes or []))
+
+
+# --- amend_access_rule: edit an existing rule's METADATA (name / comment / tags) -----------------
+def test_amend_execute_renames_rule_via_new_name_and_records_inverse(monkeypatch):
+    calls = []
+    rule = {"uid": "R1", "name": "old name", "comments": "", "tags": [{"name": "t-old"}]}
+    monkeypatch.setattr(aa, "MgmtSession", _fake_session_factory(calls, rule=rule))
+    monkeypatch.setattr(aa, "invalidate_cache", lambda *a, **k: None)
+    res = aa.amend_execute(object(), "secret", uid="R1", layer="Network",
+                           name="Allow win_client -> Facebook", publish=True)
+    assert res["ok"] and res["applied"] and res["published"] and res["outcome"] == "amend"
+    # rename is sent via web_api 'new-name' (NOT 'name', which set-access-rule rejects), and ONLY metadata
+    setc = next(p for c, p in calls if c == "set-access-rule")
+    assert setc["uid"] == "R1" and setc["layer"] == "Network"
+    assert setc["new-name"] == "Allow win_client -> Facebook" and "name" not in setc
+    assert "source" not in setc and "destination" not in setc and "service" not in setc and "action" not in setc
+    assert ("publish", {}) in calls
+    # the recorded inverse restores the OLD name (read back as 'name', written as 'new-name') -> reversible
+    inv = res["inverse"][0]
+    assert inv["op"] == "set-access-rule" and inv["uid"] == "R1" and inv["set"]["new-name"] == "old name"
+    assert res["changed"] == {"name": "Allow win_client -> Facebook"}
+
+
+def test_amend_naming_a_nameless_rule_records_no_blank_inverse(monkeypatch):
+    # HIGH: adding a name to a rule that had none must NOT record an inverse that would BLANK the name on
+    # revert (the SMS rejects an empty name) — the name leg yields an empty inverse (recorded non-revertable).
+    calls = []
+    monkeypatch.setattr(aa, "MgmtSession", _fake_session_factory(calls, rule={"uid": "R1"}))  # no 'name'
+    monkeypatch.setattr(aa, "invalidate_cache", lambda *a, **k: None)
+    res = aa.amend_execute(object(), "secret", uid="R1", layer="Network", name="Now Named", publish=True)
+    assert res["ok"] and next(p for c, p in calls if c == "set-access-rule")["new-name"] == "Now Named"
+    assert res["inverse"] == []                          # nothing safe to restore -> no blank-name revert op
+
+
+def test_amend_execute_dry_run_discards(monkeypatch):
+    calls = []
+    monkeypatch.setattr(aa, "MgmtSession", _fake_session_factory(calls, rule={"uid": "R1", "name": "x"}))
+    res = aa.amend_execute(object(), "secret", uid="R1", layer="Network", comment="set during PoV", publish=False)
+    assert res["ok"] and res["applied"] and not res["published"] and res["validated"]
+    assert ("discard", {}) in calls and ("publish", {}) not in calls
+    setc = next(p for c, p in calls if c == "set-access-rule")
+    assert setc["comments"] == "set during PoV"          # request 'comment' maps to web_api 'comments'
+
+
+def test_amend_execute_missing_rule_is_clean_error(monkeypatch):
+    calls = []
+    monkeypatch.setattr(aa, "MgmtSession", _fake_session_factory(calls, rule=None))   # show-access-rule 404s
+    res = aa.amend_execute(object(), "secret", uid="gone", layer="Network", name="x", publish=True)
+    assert not res["ok"] and "nothing to edit" in res["error"]
+    assert not any(c == "set-access-rule" for c, _ in calls)   # never wrote anything
+
+
+def test_amend_execute_rejects_empty_and_no_fields():
+    assert not aa.amend_execute(object(), "s", uid="R1", layer="L")["ok"]            # nothing to change
+    assert not aa.amend_execute(object(), "s", uid="R1", layer="L", name="  ")["ok"]  # empty name
+
+
+def test_amend_revert_restores_metadata_only(monkeypatch):
+    # _apply_inverse_op must accept a metadata 'set' inverse (new-name/comments/tags) ...
+    calls = []
+    sess = _fake_session_factory(calls, rule={"uid": "R1"})(object(), "s")
+    note = aa._apply_inverse_op(sess, {"op": "set-access-rule", "uid": "R1", "layer": "Network",
+                                       "set": {"new-name": "old name", "comments": "c", "tags": ["t-old"]}})
+    setc = next(p for c, p in calls if c == "set-access-rule")
+    assert setc["new-name"] == "old name" and setc["comments"] == "c" and setc["tags"] == ["t-old"]
+    assert "R1" in note
+    # ... NEVER a match column: a 'set' that smuggles a source is rejected, not executed.
+    with pytest.raises(aa.MgmtError):
+        aa._apply_inverse_op(sess, {"op": "set-access-rule", "uid": "R1", "layer": "Network",
+                                    "set": {"source": "Any"}})
+    # ... and NEVER replays a blank new-name (an empty value is screened out; here only comments survive).
+    calls.clear()
+    aa._apply_inverse_op(sess, {"op": "set-access-rule", "uid": "R1", "layer": "Network",
+                                "set": {"new-name": "", "comments": "keep"}})
+    setc2 = next(p for c, p in calls if c == "set-access-rule")
+    assert "new-name" not in setc2 and setc2["comments"] == "keep"
+
+
+def test_amend_target_from_change_only_resolves_a_CREATED_rule():
+    from app.services import mcp_tools as mt
+
+    class _Create:                                       # create/deny inverse DELETES the rule it added
+        layer = "Network"
+        inverse_json = [{"op": "delete-access-rule", "uid": "rule-561", "layer": "Network"}]
+    assert mt._amend_target_from_change(_Create()) == ("rule-561", "Network")
+
+    class _Widen:                                        # widen/disable inverse set-access-rule's a PRE-EXISTING rule
+        layer = "DNS_Layer"
+        inverse_json = [{"op": "set-access-rule", "uid": "prod-rule-9", "layer": "DNS_Layer",
+                         "source": {"remove": "h-x"}}]
+    assert mt._amend_target_from_change(_Widen()) == (None, "DNS_Layer")   # refused -> won't relabel prod rule
+
+    class _Empty:
+        layer = "X"
+        inverse_json = []
+    assert mt._amend_target_from_change(_Empty()) == (None, "X")

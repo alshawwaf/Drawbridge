@@ -27,8 +27,8 @@ _INNER = None
 
 # The tools an agent can call (logic in services.mcp_tools; registered by name + docstring + type hints).
 _TOOLS = ("list_management_servers", "list_access_layers", "decide_access", "apply_access",
-          "remove_access", "list_changes", "revert_change", "correlate_service", "correlate_application",
-          "summarize_layer", "analyze_policy", "coverage_lookup")
+          "remove_access", "amend_access_rule", "list_changes", "revert_change", "correlate_service",
+          "correlate_application", "summarize_layer", "analyze_policy", "coverage_lookup")
 
 
 def have_mcp() -> bool:
