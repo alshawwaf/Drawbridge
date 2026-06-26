@@ -2782,6 +2782,41 @@ def test_resolve_domain_creates_with_correct_is_sub_domain():
     s = _DomSession([])
     assert aa.resolve_typed_object(s, "domain", "example.com") == ".example.com"
     assert next(p for c, p in s.calls if c == "add-dns-domain") == {"name": ".example.com", "is-sub-domain": False}
+
+
+class _AddrSession:
+    """show-objects honoring the payload's ``type`` filter (like the real API) — so a gateway is found
+    only by the no-type infra lookup, never by the type=host query. Records add-* calls."""
+    def __init__(self, objs):
+        self.objs, self.calls = objs, []
+
+    def call(self, cmd, payload=None, **k):
+        payload = payload or {}
+        self.calls.append((cmd, payload))
+        if cmd == "show-objects":
+            t = payload.get("type")
+            return {"objects": [o for o in self.objs if not t or (o.get("type") == t)]}
+        return {}
+
+
+def test_endpoint_reuses_gateway_object_not_duplicate_host():
+    # A /32 request to a gateway's IP must REUSE the gateway object (preview shows exists:true), and apply
+    # must NOT fabricate a duplicate h-<ip> host. Regression: lookup only knew 'host' objects.
+    gw = {"name": "GW", "type": "simple-gateway", "ipv4-address": "10.1.1.111"}
+
+    assert aa.lookup_endpoint(_AddrSession([gw]), "10.1.1.111/32") == "GW"     # preview reuses it
+    sap = _AddrSession([gw])
+    assert aa.resolve_endpoint(sap, "10.1.1.111/32") == "GW"                   # apply reuses it...
+    assert not any(c == "add-host" for c, _ in sap.calls)                      # ...never adds a host
+
+    # an exact HOST with the same IP still wins over the gateway (most specific)
+    both = [{"name": "h-x", "type": "host", "ipv4-address": "10.1.1.111"}, gw]
+    assert aa.lookup_endpoint(_AddrSession(both), "10.1.1.111/32") == "h-x"
+
+    # an IP nobody owns -> a host is created (unchanged behavior)
+    snew = _AddrSession([])
+    aa.resolve_endpoint(snew, "10.9.9.9/32")
+    assert any(c == "add-host" for c, _ in snew.calls)
     s2 = _DomSession([])
     aa.resolve_typed_object(s2, "domain", ".example.com")
     assert next(p for c, p in s2.calls if c == "add-dns-domain")["is-sub-domain"] is True
