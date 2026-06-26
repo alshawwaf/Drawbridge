@@ -488,12 +488,23 @@ class AccessRequest:
     # compares against rule cells (which dereference groups to ports) instead of reading DISJOINT. None ->
     # fall back to the coarse representation below. (Apply still writes req.service — the group's name.)
     svc_set: Optional[ServiceSet] = None
+    # ACTION companions (full-column support). action is canonicalized via canonical_action(). Apply Layer
+    # requires inline_layer (the layer name to divert into); action-settings carries the optional UserCheck
+    # limit / captive-portal for an allowing action.
+    inline_layer: str = ""                     # required iff action == "Apply Layer"
+    action_settings_limit: str = ""            # a QoS/bandwidth "limit" object name (Accept/Ask/Inform)
+    action_settings_captive_portal: bool = False  # enable-identity-captive-portal (Ask/Inform)
 
     def src_iv(self):
         return _cidrs_to_iv(self.src_cidrs)
 
     def dst_iv(self):
         return _cidrs_to_iv(self.dst_cidrs)
+
+    @property
+    def canon_action(self) -> str:
+        """The request's action in exact Check Point casing (Accept/Drop/Reject/Ask/Inform/Apply Layer)."""
+        return canonical_action(self.action)
 
     def svc(self) -> ServiceSet:
         if self.svc_set is not None:
@@ -505,6 +516,29 @@ class AccessRequest:
         if self.service:                # (family, name): family-less (unresolved) fails safe — it won't
             return ServiceSet(named={(self.service_kind or "", self.service)})  # alias a real family object
         return ServiceSet(by_proto={self.protocol.lower(): _ports_to_iv(self.ports)})
+
+
+# Canonical Check Point access-rule actions (exact casing the web_api expects). User Auth / Client Auth are
+# legacy/read-only — a request may never ask for them. "Apply Layer" diverts into an inline layer.
+_CANON_ACTIONS = {
+    "accept": "Accept", "allow": "Accept", "permit": "Accept",
+    "drop": "Drop", "deny": "Drop", "block": "Drop",
+    "reject": "Reject",
+    "ask": "Ask", "inform": "Inform",
+    "apply layer": "Apply Layer", "apply-layer": "Apply Layer", "applylayer": "Apply Layer",
+    "layer": "Apply Layer",
+}
+WRITABLE_ACTIONS = ("Accept", "Drop", "Reject", "Ask", "Inform", "Apply Layer")
+
+
+def canonical_action(s) -> str:
+    """Normalise a requested action to exact CP casing, collapsing internal whitespace ('Apply  Layer'); '' ->
+    'Accept' (the default verdict). Unknown/legacy -> '' so the caller (build_request) rejects it loudly —
+    never a silent Accept."""
+    key = " ".join(str(s or "Accept").strip().lower().split())
+    if not key:
+        return "Accept"
+    return _CANON_ACTIONS.get(key, "")
 
 
 @dataclass
@@ -1205,6 +1239,53 @@ def decide(req: AccessRequest, rules: list[ParsedRule], options: "DecideOptions"
     return decision
 
 
+def _decide_nonaccept(req: AccessRequest, rules: list[ParsedRule], options: "DecideOptions", notes: list,
+                      req_src, req_dst, req_svc) -> Decision:
+    """Decide a NON-Accept request (Drop / Reject / Ask / Inform / Apply Layer). The Accept reuse/widen
+    logic does not apply — it answers "is this already granted?", which is meaningless for a block / a
+    conditional verdict / a divert. Here we place a rule with the REQUESTED verdict for first-match
+    correctness and NEVER reuse or widen:
+
+      * DROP / REJECT (block): if the FIRST rule in this request's path is a fully-resolved covering DROP, the
+        flow is already denied -> NO_OP. Otherwise place the block ABOVE the first in-path rule (whatever
+        could match this flow first) so first-match denies exactly this request; the existing rule still
+        serves everyone else. Nothing in the path -> already denied by the cleanup -> NO_OP.
+      * ASK / INFORM (conditional allow) / APPLY LAYER (divert): always CREATE. Placed ABOVE the first in-path
+        rule so the requested verdict takes effect for this flow; nothing in path -> at the section floor.
+        Flagged for review (the engine doesn't model UserCheck/divert matching).
+    """
+    act = req.canon_action
+    is_block = act in ("Drop", "Reject")
+    conditional = act in ("Ask", "Inform", "Apply Layer")
+    cnote = ([f"“{act}” is a conditional / divert verdict the engine does not model for matching — review "
+              f"the new rule's placement and settings after creation"] if conditional else [])
+    for r in rules:
+        if not r.enabled or r.dynamic_layer:
+            continue
+        rel_src, src_unknown, _sa = _dim_relation(req.src_kind, req.src_value, req_src, r, "source")
+        rel_dst, dst_unknown, _da = _dim_relation(req.dst_kind, req.dst_value, req_dst, r, "destination")
+        rel_svc = svc_relation(req_svc, r.svc)
+        svc_ind = _svc_indeterminate(req_svc, r.svc)
+        if _out_of_path(rel_src, src_unknown, rel_dst, dst_unknown, rel_svc, r.svc_unknown, svc_ind):
+            continue
+        all_ip = req.src_kind == "ip" and req.dst_kind == "ip"
+        complex_eff = bool(src_unknown or dst_unknown or r.svc_unknown or (all_ip and r.complex))
+        covers = (not complex_eff and r.is_resolved_action and not r.conditional and not svc_ind
+                  and r.inline_rules is None and _is_subset(rel_src, rel_dst, rel_svc))
+        if is_block and r.is_drop and covers:
+            return Decision(Outcome.NO_OP,
+                            f"already denied by rule {r.number} ({r.name}) — nothing to add", target_rule=r)
+        # the first in-path rule would match this flow first; place the requested verdict ABOVE it so
+        # first-match applies OUR verdict to exactly this request (it still serves its other traffic).
+        return Decision(Outcome.CREATE,
+                        f"creating a {act} rule ABOVE rule {r.number} ({r.name}) so first-match applies it "
+                        f"to this flow", target_rule=r, position={"above": r.uid}, notes=cnote)
+    if is_block:
+        return Decision(Outcome.NO_OP,
+                        "no rule permits this flow — it is already denied by the cleanup; nothing to add")
+    return Decision(Outcome.CREATE, f"no rule covers this request; creating the {act} rule", notes=cnote)
+
+
 def _decide(req: AccessRequest, rules: list[ParsedRule], options: "DecideOptions", notes: list) -> Decision:
     """The walk itself. Appends advisory warnings to ``notes`` (shared with ``decide``); returns the
     single chosen Decision. Recurses through ``decide`` (the wrapper) for inline layers, so a sub-layer's
@@ -1244,6 +1325,12 @@ def _decide(req: AccessRequest, rules: list[ParsedRule], options: "DecideOptions
                 f"the {label} resolves to no concrete IP extent -- the request is incomplete, so there "
                 f"is nothing to evaluate or create",
             )
+
+    # NON-ACCEPT verdicts (Drop / Reject / Ask / Inform / Apply Layer) are routed to their own branch — the
+    # reuse/widen logic below is ALLOW-semantics (it answers "is this access already granted?") and must NOT
+    # run for a block / conditional / divert request. The Accept path stays exactly as it was.
+    if req.canon_action != "Accept":
+        return _decide_nonaccept(req, rules, options, notes, req_src, req_dst, req_svc)
 
     covering_drop: Optional[ParsedRule] = None   # the catch-all cleanup that floors placement
     widen_target: Optional[ParsedRule] = None    # reachable accept EQUAL in 2 dims, differing in the 3rd
@@ -2544,6 +2631,39 @@ def _naming_ctx(req: AccessRequest, ticket_id: str, src_name: str, dst_name: str
             "proto": (req.protocol or "").lower(), "port": req.ports or ""}
 
 
+def _validate_inline_layer(session, name: str) -> str:
+    """Resolve an Apply-Layer rule's inline-layer NAME against the real access layers and return it. The layer
+    must exist (ordered OR dynamic — per directive we create the divert either way); a missing/blank name fails
+    loud so we never write a dangling divert. Reuse-only — never creates a layer."""
+    want = (name or "").strip()
+    if not want:
+        raise MgmtError("an Apply Layer rule needs an inline-layer name (the layer to divert into)")
+    try:
+        res = session.call("show-access-layers", {"limit": 500, "details-level": "standard"})  # VERIFY
+    except MgmtError:
+        res = {}
+    layers = res.get("access-layers") or res.get("layers") or []
+    for lyr in layers:
+        if (lyr.get("name") or "") == want or (lyr.get("uid") or "") == want:
+            return lyr.get("name") or want
+    avail = ", ".join(sorted({l.get("name") for l in layers if l.get("name")})[:12]) or "none found"
+    raise MgmtError(f"no access layer named “{want}” to divert into (Apply Layer) — available: {avail}")
+
+
+def _action_settings_payload(action: str, req: AccessRequest) -> Optional[dict]:
+    """The action-settings object for an ALLOWING action (Accept/Ask/Inform) when the request set a limit or
+    captive portal — else None (omit, so a no-settings rule's payload is unchanged). Stripped from a Drop/
+    Reject/Apply-Layer (settings are meaningless there). UserCheck interaction is deferred (v1) — default used."""
+    if action not in ("Accept", "Ask", "Inform"):
+        return None
+    out: dict = {}
+    if req.action_settings_limit:
+        out["limit"] = req.action_settings_limit
+    if req.action_settings_captive_portal:
+        out["enable-identity-captive-portal"] = True
+    return out or None
+
+
 def _apply(session, decision: Decision, req: AccessRequest, layer: str,
            rules: list[ParsedRule], ticket_id: str, package: Optional[str] = None) -> dict:
     out: dict = {"ops": []}
@@ -2585,7 +2705,11 @@ def _apply(session, decision: Decision, req: AccessRequest, layer: str,
     from . import naming
     # Customer naming/track/tag conventions (Settings → "Access automation"; data-driven templates). The
     # PLACEMENT (position) is NOT a convention — the engine computes it for first-match correctness.
-    nctx = _naming_ctx(req, ticket_id, src_name, dst_name, target_layer, "Accept")
+    # The requested verdict (full-column support): grant defaults to Accept; a ticket may ask for any of
+    # Drop / Reject / Ask / Inform / Apply Layer. The decision engine already routed non-Accept through its
+    # own branch — here we just WRITE exactly what was asked.
+    action = req.canon_action or "Accept"
+    nctx = _naming_ctx(req, ticket_id, src_name, dst_name, target_layer, action)
     # An anchored placement ({above/below: rule uid}) is first-match-critical — keep it exactly. A FLOOR
     # placement (above the cleanup) is instead routed into the configured 'provisioned' section so the new
     # rule doesn't land INSIDE the cleanup section; same height, tidier grouping (may create the section).
@@ -2599,10 +2723,17 @@ def _apply(session, decision: Decision, req: AccessRequest, layer: str,
         "source": src_name,
         "destination": dst_name,
         "service": svc_name,
-        "action": "Accept",
+        "action": action,
         "track": naming.rule_track(),
         "comments": naming.rule_comment(nctx),
     }
+    if action == "Apply Layer":
+        # divert into an inline layer — the layer must exist (ordered OR dynamic; per directive we create the
+        # divert either way). Resolve the name to a real layer; a missing layer fails loud, not a bad write.
+        payload["inline-layer"] = _validate_inline_layer(session, req.inline_layer)
+    asettings = _action_settings_payload(action, req)        # UserCheck limit / captive-portal, allowing actions only
+    if asettings:
+        payload["action-settings"] = asettings
     tags = naming.rule_tags()
     if tags:
         payload["tags"] = tags

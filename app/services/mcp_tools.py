@@ -98,12 +98,16 @@ def list_access_layers(server_id: str) -> dict:
 
 
 def _build(source, destination, service, port, protocol, application,
-           source_kind="ip", destination_kind="ip"):
+           source_kind="ip", destination_kind="ip", action="Accept", inline_layer="",
+           action_limit="", captive_portal=False):
     from . import ticketing
     return ticketing.build_request(source, destination, protocol or "tcp", port or "",
                                    application=application, service=service,
                                    source_kind=source_kind or "ip",
-                                   destination_kind=destination_kind or "ip")
+                                   destination_kind=destination_kind or "ip",
+                                   action=action or "Accept", inline_layer=inline_layer or "",
+                                   action_settings_limit=action_limit or "",
+                                   action_settings_captive_portal=bool(captive_portal))
 
 
 def _autopilot(server=None, layer=None) -> bool:
@@ -125,10 +129,16 @@ def _autopilot(server=None, layer=None) -> bool:
 def decide_access(server_id: str, source: str, destination: str, layer: str, service: str | None = None,
                   port: str | None = None, protocol: str = "tcp", application: str | None = None,
                   package: str | None = None,
-                  source_kind: str = "ip", destination_kind: str = "ip") -> dict:
+                  source_kind: str = "ip", destination_kind: str = "ip",
+                  action: str = "Accept", inline_layer: str | None = None,
+                  action_limit: str | None = None, captive_portal: bool = False) -> dict:
     """PREVIEW (read-only) what Drawbridge would do for an access request: returns the outcome
     (no_op / widen / create / review), the reasoning, and — for an unknown service/app — `suggestions`.
     Writes nothing. This is the primary tool for an agent to reason about a change.
+
+    ``action`` is the rule verdict: **Accept** (default) / **Drop** / **Reject** / **Ask** / **Inform** /
+    **Apply Layer** (Apply Layer needs ``inline_layer`` = the layer to divert into). Drop/Reject create a
+    least-privilege block above what would allow the flow; Ask/Inform/Apply-Layer always create (flagged).
 
     To answer "can X reach Y / does X already have access?", read **`currently_allowed`** (true / false /
     null) and **`answer`** (a ready-to-relay sentence) — NOT `ok`. `ok: true` only means the check ran;
@@ -151,7 +161,8 @@ def decide_access(server_id: str, source: str, destination: str, layer: str, ser
     from . import access_automation as aa
     try:
         req = _build(source, destination, service, port, protocol, application,
-                     source_kind, destination_kind)
+                     source_kind, destination_kind, action=action, inline_layer=inline_layer,
+                     action_limit=action_limit, captive_portal=captive_portal)
     except ValueError as exc:
         return {"ok": False, "error": str(exc)}
     try:
@@ -183,8 +194,11 @@ def _record_applied(ms, result: dict, req, layer: str, package, ticket_id: str) 
 def apply_access(server_id: str, source: str, destination: str, layer: str, service: str | None = None,
                  port: str | None = None, protocol: str = "tcp", application: str | None = None,
                  package: str | None = None, publish: bool = False, ticket_id: str = "",
-                 source_kind: str = "ip", destination_kind: str = "ip") -> dict:
-    """APPLY an access request. With publish=false it DRY-RUNS (applies inside a session, then discards —
+                 source_kind: str = "ip", destination_kind: str = "ip",
+                 action: str = "Accept", inline_layer: str | None = None,
+                 action_limit: str | None = None, captive_portal: bool = False) -> dict:
+    """APPLY an access request. ``action`` = the rule verdict: Accept (default) / Drop / Reject / Ask /
+    Inform / Apply Layer (Apply Layer needs ``inline_layer``). With publish=false it DRY-RUNS (applies inside a session, then discards —
     nothing is committed) — always allowed. With publish=true it COMMITS to the live server — allowed ONLY
     when an admin has enabled the 'mcp_allow_publish' setting; otherwise it's refused (dry-run instead).
 
@@ -210,7 +224,8 @@ def apply_access(server_id: str, source: str, destination: str, layer: str, serv
     from . import access_automation as aa
     try:
         req = _build(source, destination, service, port, protocol, application,
-                     source_kind, destination_kind)
+                     source_kind, destination_kind, action=action, inline_layer=inline_layer,
+                     action_limit=action_limit, captive_portal=captive_portal)
     except ValueError as exc:
         return {"ok": False, "error": str(exc)}
     try:
