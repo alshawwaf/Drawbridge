@@ -3530,3 +3530,55 @@ def test_remove_port_request_vs_app_rule_still_reviews():
     appr = _rule("ar", 9, "Accept", _net("10.1.1.0/24"), ANY, _app({"Facebook"}))
     d = aa.decide_removal(_req("10.1.1.222/32", "172.16.5.10/32"), [appr, CLEANUP])
     assert d.outcome is aa.RemovalOutcome.REVIEW
+
+
+# --- auto-narrow: remove the blocked host from the explicit grant's source (apply-time proof) --------
+def _deny_with_narrow():
+    enabler = _rule("web", 9, "Accept", _net("10.1.1.0/24"), ANY, _tcp("80,443"))
+    fb = _rule("fb", 13, "Accept", _host("10.1.1.222") + _host("10.1.2.250"), ANY, _app({"Facebook"}))
+    return aa.RemovalDecision(aa.RemovalOutcome.DENY, "block above enabler", target_rule=enabler,
+                              position={"above": "web"}, narrow_rule=fb)
+
+
+def test_apply_removal_narrows_explicit_grant_and_records_source_add_inverse(monkeypatch):
+    calls = []
+    # the explicit grant has TWO direct host members; the request host is one of them -> narrowable
+    rule = {"uid": "fb", "source": [{"name": "win_client", "ipv4-address": "10.1.1.222"},
+                                     {"name": "win_server", "ipv4-address": "10.1.2.250"}]}
+    sess = _fake_session_factory(calls, hosts={"10.1.1.222": "win_client"}, rule=rule)(object(), "s")
+    req = AccessRequest(src_cidrs=["10.1.1.222/32"], dst_cidrs=["Any"], application="Facebook")
+    out = aa._apply_removal(sess, _deny_with_narrow(), req, "Network", "")
+    # the Drop was added AND the explicit grant's source was narrowed (remove the blocked host)
+    setc = next(p for c, p in calls if c == "set-access-rule")
+    assert setc["uid"] == "fb" and setc["source"] == {"remove": "win_client"}
+    assert out["narrowed"] == {"rule_uid": "fb", "member": "win_client"}
+    # compound inverse: delete the Drop AND re-add the member (source.add) -> full rollback
+    ops = out["inverse"]
+    assert ops[0]["op"] == "delete-access-rule"
+    assert ops[1] == {"op": "set-access-rule", "uid": "fb", "layer": "Network", "field": "source", "add": "win_client"}
+
+
+def test_narrow_member_name_guards(monkeypatch):
+    req = AccessRequest(src_cidrs=["10.1.1.222/32"], dst_cidrs=["Any"], application="Facebook")
+    # (a) sole member -> never empties the cell -> None
+    s1 = _fake_session_factory([], rule={"uid": "r", "source": [{"name": "win_client", "ipv4-address": "10.1.1.222"}]})(object(), "s")
+    assert aa._narrow_member_name(s1, "r", "L", req) is None
+    # (b) host only INSIDE a group (no direct member matches the /32) -> None
+    s2 = _fake_session_factory([], rule={"uid": "r", "source": [{"name": "g", "type": "group"},
+                                                                {"name": "other", "ipv4-address": "10.9.9.9"}]})(object(), "s")
+    assert aa._narrow_member_name(s2, "r", "L", req) is None
+    # (c) exactly one direct match among >=2 members -> the member name
+    s3 = _fake_session_factory([], rule={"uid": "r", "source": [{"name": "win_client", "ipv4-address": "10.1.1.222"},
+                                                                {"name": "win_server", "ipv4-address": "10.1.2.250"}]})(object(), "s")
+    assert aa._narrow_member_name(s3, "r", "L", req) == "win_client"
+
+
+def test_remove_inverse_whitelist_allows_source_add_only_for_real_fields():
+    calls = []
+    sess = _fake_session_factory(calls)(object(), "s")
+    note = aa._apply_inverse_op(sess, {"op": "set-access-rule", "uid": "fb", "layer": "Network",
+                                       "field": "source", "add": "win_client"})
+    assert next(p for c, p in calls if c == "set-access-rule")["source"] == {"add": "win_client"} and "fb" in note
+    with pytest.raises(aa.MgmtError):          # a non-whitelisted field can't be smuggled via 'add'
+        aa._apply_inverse_op(sess, {"op": "set-access-rule", "uid": "fb", "layer": "Network",
+                                    "field": "action", "add": "Accept"})
