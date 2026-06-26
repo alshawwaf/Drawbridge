@@ -1282,10 +1282,16 @@ def test_approx_drop_stepped_over_only_when_resolved_disjoint():
     d1 = aa.decide(AccessRequest(src_cidrs=["10.7.7.7/32"], dst_cidrs=["Any"], application="Facebook"),
                    [drop_gw, cleanup])
     assert d1.outcome is Outcome.CREATE and not any("rule 1" in n for n in d1.notes)
-    # (b) request for the gateway's OWN main IP -> resolved-overlap -> kept in path, NOTED + placed below
-    d2 = aa.decide(AccessRequest(src_cidrs=["10.1.1.1/32"], dst_cidrs=["Any"], application="Facebook"),
+    # (b) request BROADER than the gw main IP (a /24 that only partially overlaps the approx drop) -> kept
+    #     IN the path, NOTED + placed below (carving the whole /24 above would over-grant the gw-IP part).
+    d2 = aa.decide(AccessRequest(src_cidrs=["10.1.1.0/24"], dst_cidrs=["Any"], application="Facebook"),
                    [drop_gw, cleanup])
-    assert d2.outcome is Outcome.CREATE and any("rule 1" in n for n in d2.notes)
+    assert d2.outcome is Outcome.CREATE and d2.position != {"above": "r1"} and any("rule 1" in n for n in d2.notes)
+    # (c) request for the gateway's OWN main IP -> the drop PROVABLY covers it (request == resolved extent;
+    #     approx only widens the drop) -> below would be a dead/shadowed rule, so the allow is carved ABOVE it.
+    d3 = aa.decide(AccessRequest(src_cidrs=["10.1.1.1/32"], dst_cidrs=["Any"], application="Facebook"),
+                   [drop_gw, cleanup])
+    assert d3.outcome is Outcome.CREATE and d3.position == {"above": "r1"}
 
 
 def test_malformed_port_reviews_not_crashes():
@@ -3284,3 +3290,35 @@ def test_allowed_summary_separates_ok_from_currently_allowed():
     assert no_widen is False and "widen" in ans.lower() and "Mail" in ans
     unk, ans = aa._allowed_summary("review", None)
     assert unk is None and "review" in ans.lower()
+
+
+def test_allow_to_gateway_carves_above_stealth_not_below():
+    # A Stealth rule (Any -> Gateway, Drop) resolves the gateway as an APPROX infra IP. A request TO the
+    # gateway is provably covered by that drop, so an allow placed BELOW it would be shadowed (dead). It
+    # MUST be carved ABOVE the Stealth rule (CP best practice). Regression for the live bug where the
+    # approx-infra drop wrongly floored the allow below itself.
+    gw = {"uid": "gw1", "type": "simple-gateway", "name": "GW", "ipv4-address": "10.1.1.111"}
+    ANY_C = [{"uid": "any", "type": "CpmiAnyObject", "name": "Any"}]
+    objs = {gw["uid"]: gw}
+
+    def raw(uid, n, name, act, src, dst, svc):
+        return {"uid": uid, "name": name, "rule-number": n, "action": act, "enabled": True,
+                "source": src, "destination": dst, "service": svc}
+
+    stealth = aa._parse_rule(raw("r6", 6, "Stealth Rule", "Drop", ANY_C, [gw], ANY_C), objs)
+    cleanup = aa._parse_rule(raw("r13", 13, "Cleanup rule", "Drop", ANY_C, ANY_C, ANY_C), objs)
+
+    # TO the gateway -> carve ABOVE the Stealth rule
+    to_gw = AccessRequest(["10.1.1.50/32"], ["10.1.1.111/32"], "tcp", "8081")
+    d = aa.decide(to_gw, [stealth, cleanup])
+    assert d.outcome is Outcome.CREATE and d.position == {"above": "r6"}, (d.outcome, d.position)
+
+    # the same request with override_blocking_deny OFF -> honestly placed below + flagged (won't take effect)
+    d_off = aa.decide(to_gw, [stealth, cleanup], aa.DecideOptions(override_blocking_deny=False))
+    assert d_off.outcome is Outcome.CREATE and d_off.position == {"below": "r6"}
+
+    # a /24 that only OVERLAPS the gateway (not fully covered) -> stay conservative, floored below the drop
+    overlap = AccessRequest(["10.1.1.50/32"], ["10.1.1.0/24"], "tcp", "8081")
+    d2 = aa.decide(overlap, [stealth, cleanup])
+    assert d2.outcome is Outcome.CREATE and d2.position != {"above": "r6"}
+    assert any("Stealth" in n for n in (d2.notes or []))
