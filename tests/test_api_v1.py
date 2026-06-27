@@ -43,6 +43,38 @@ def test_apply_passes_publish_flag(monkeypatch):
     assert r.status_code == 200 and r.json()["published"] is True and seen["publish"] is True
 
 
+def test_apply_forwards_all_columns(monkeypatch):
+    # REST parity: every access-rule column the MCP tool / webhook accept must also reach apply_access via
+    # the REST body (else decide/apply silently ignore the very column the caller requested).
+    c = _client(monkeypatch)
+    seen = {}
+    monkeypatch.setattr(api_v1.mcp_tools, "apply_access",
+                        lambda **kw: seen.update(kw) or {"outcome": "create", "published": False})
+    r = c.post("/dbapi/v1/access/apply", headers={"Authorization": "Bearer good"},
+               json={"server_id": 1, "source": "10.1.1.5", "destination": "Any", "port": "3389",
+                     "action": "Ask", "captive_portal": True, "action_limit": "L1",
+                     "content": ["Source Code"], "content_direction": "down", "content_negate": True,
+                     "time_objects": ["Off_Work"], "install_on": ["GW1"], "vpn": ["MyComm"],
+                     "source_kind": "ip", "destination_kind": "ip", "publish": False})
+    assert r.status_code == 200
+    assert seen["action"] == "Ask" and seen["captive_portal"] is True and seen["action_limit"] == "L1"
+    assert seen["content"] == ["Source Code"] and seen["content_direction"] == "down"
+    assert seen["content_negate"] is True and seen["time_objects"] == ["Off_Work"]
+    assert seen["install_on"] == ["GW1"] and seen["vpn"] == ["MyComm"]
+
+
+def test_decide_forwards_columns(monkeypatch):
+    c = _client(monkeypatch)
+    seen = {}
+    monkeypatch.setattr(api_v1.mcp_tools, "decide_access",
+                        lambda **kw: seen.update(kw) or {"outcome": "create"})
+    c.post("/dbapi/v1/access/decide", headers={"Authorization": "Bearer good"},
+           json={"server_id": 1, "source": "10.1.1.5", "destination": "Any", "port": "443",
+                 "action": "Drop", "install_on": ["GW1"]})
+    assert seen["action"] == "Drop" and seen["install_on"] == ["GW1"]
+    assert "publish" not in seen and "ticket_id" not in seen   # decide must not receive apply-only fields
+
+
 def test_error_maps_to_status(monkeypatch):
     c = _client(monkeypatch)
     monkeypatch.setattr(api_v1.mcp_tools, "list_access_layers",
