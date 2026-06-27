@@ -2784,14 +2784,21 @@ _TIME_TYPES = ("time", "time-group")
 # resolver degrades to best-effort pass-through (the SMS validates at write, atomically discarded on failure)
 # rather than falsely rejecting a legitimate object.
 _LIST_CMDS_INSTALL_ON = ("show-gateways-and-servers",)
-_LIST_CMDS_VPN = ("show-vpn-communities-meshed", "show-vpn-communities-star")
+# install-on may also name a GROUP of gateways — show-gateways-and-servers does NOT enumerate groups, so a
+# group target is validated via a typed show-objects fallback (a group object IS in the generic index).
+_INSTALL_ON_FALLBACK_TYPES = ("group",)
+_LIST_CMDS_VPN = ("show-vpn-communities-meshed", "show-vpn-communities-star", "show-vpn-communities-remote-access")
 _LIST_CMDS_LIMIT = ("show-limits",)
 
 
 def _known_object_names(session, commands, *, keys=("objects",), page=200):
     """Page through one or more dedicated list commands and return the UNION set of object NAMES they know.
-    Returns None when EVERY command is unavailable on this version (the first call errors) — the caller then
-    falls back to best-effort pass-through instead of a false 'not found'."""
+    Returns None to signal "could not build a COMPLETE set — fall back to best-effort pass-through" in two
+    cases: (a) EVERY command is unavailable on this version (the very first call errors), or (b) a TRANSIENT
+    error strikes AFTER progress (a later page of a command, or a sibling command once another already
+    succeeded). Only case (b)'s distinction prevents a transient SMS hiccup from finalizing a TRUNCATED set
+    that would false-reject a legitimate object and discard the atomic session. A complete enumeration (every
+    command fully paged with no errors) returns the full name set, which the caller may match strictly."""
     names: set = set()
     any_ok = False
     for command in commands:
@@ -2800,7 +2807,13 @@ def _known_object_names(session, commands, *, keys=("objects",), page=200):
             try:
                 res = session.call(command, {"limit": page, "offset": offset, "details-level": "standard"})
             except MgmtError:
-                break                                    # this command unavailable -> try the next one
+                # A failure on the FIRST page of the FIRST command = "command unavailable on this version" ->
+                # skip to the next command (best-effort). A failure AFTER progress (mid-paging, offset>0, OR a
+                # later command once one already succeeded) is TRANSIENT — we cannot prove the object absent,
+                # so degrade the WHOLE column to pass-through rather than returning a truncated set.
+                if offset > 0 or any_ok:
+                    return None
+                break
             any_ok = True
             objs = None
             for k in keys:
@@ -2818,21 +2831,42 @@ def _known_object_names(session, commands, *, keys=("objects",), page=200):
     return names if any_ok else None
 
 
-def _resolve_named_objects(session, names, label, *, commands=(), allow_types=(), literals=()) -> list:
+def _typed_lookup(session, nm, types):
+    """Look up an exact NAME across one or more show-objects ``type`` classes. Returns True if found, False if
+    every query SUCCEEDED but none contained it (a real miss), or None if the class could not be queried at
+    all (every typed query errored — caller treats as best-effort pass-through). 200 keeps an exact name from
+    being lost behind a crowded substring page (the name is a high-relevance hit for its own filter)."""
+    any_query_ok = False
+    for t in types:
+        try:
+            res = session.call("show-objects", {"filter": nm, "type": t, "limit": 200})
+        except MgmtError:
+            continue
+        any_query_ok = True
+        if any((o.get("name") or "") == nm for o in res.get("objects", [])):
+            return True
+    return False if any_query_ok else None
+
+
+def _resolve_named_objects(session, names, label, *, commands=(), allow_types=(),
+                           fallback_types=(), literals=()) -> list:
     """Validate each NAME exists (REUSE-ONLY — never creates) and return the confirmed names. A whitelisted
     literal (e.g. "Policy Targets", "All_GwToGw") passes through.
 
     Two resolution strategies, chosen by the column:
       * ``commands`` — enumerate the class via its dedicated list command(s) and exact-name match. Used for
         gateways/clusters (install-on), VPN communities and limit objects, which show-objects does not index
-        reliably (CPMI type filters are invalid; communities/limits have their own show commands).
+        reliably (CPMI type filters are invalid; communities/limits have their own show commands). When a name
+        is NOT in the enumerated set, ``fallback_types`` (if given) is probed via show-objects before rejecting
+        — e.g. a GROUP of gateways for install-on, which the gateways list command cannot enumerate.
       * ``allow_types`` — query show-objects with each TYPE and exact-name match. Used for data-types
         (content) and time objects, which ARE part of the generic object index.
 
-    BEST-EFFORT, never a false reject: if the class is not queryable on this version (every list command
-    or every typed query errors), the name passes through and the SMS validates it at write time — the apply
-    is an atomic pre-flight, so a genuinely bad name still discards the whole session (no partial rule). A
-    name that the class CAN enumerate but does not contain is a clear MgmtError (a real typo/missing object)."""
+    BEST-EFFORT, never a false reject: if the class is not queryable on this version (the list enumeration is
+    incomplete, or every typed query errors), the name passes through and the SMS validates it at write time —
+    the apply is an atomic pre-flight, so a genuinely bad name still discards the whole session (no partial
+    rule). A name a fully-enumerable class does not contain (and no fallback class confirms) is a clear
+    MgmtError (a real typo/missing object)."""
     lits = {l.lower() for l in literals}
     out: list = []
     known = _known_object_names(session, commands) if commands else None
@@ -2844,29 +2878,17 @@ def _resolve_named_objects(session, names, label, *, commands=(), allow_types=()
             out.append(nm)
             continue
         if commands:
-            if known is None:                            # class not enumerable here -> trust + let SMS validate
+            if known is None or nm in known:             # incomplete enumeration -> trust; or an exact hit
                 out.append(nm)
-            elif nm in known:
+                continue
+            fb = _typed_lookup(session, nm, fallback_types) if fallback_types else False
+            if fb is None or fb:                         # confirmed via a fallback class, or class not queryable
                 out.append(nm)
             else:
                 raise MgmtError(f"no {label} named “{nm}” found (reuse-only — create it first, or fix the name)")
             continue
-        match = None
-        any_query_ok = False
-        for t in allow_types:
-            try:
-                # filter+type narrows hard (a data-type/time class); 200 keeps an exact name from being lost
-                # behind a crowded substring page (the exact name is a high-relevance hit for its own filter).
-                res = session.call("show-objects", {"filter": nm, "type": t, "limit": 200})
-            except MgmtError:
-                continue
-            any_query_ok = True
-            if any((o.get("name") or "") == nm for o in res.get("objects", [])):
-                match = nm
-                break
-        if match:
-            out.append(match)
-        elif not any_query_ok:                           # every typed query errored -> class not queryable here
+        res = _typed_lookup(session, nm, allow_types)
+        if res is None or res:                           # confirmed, or class not queryable here -> pass through
             out.append(nm)
         else:
             raise MgmtError(f"no {label} named “{nm}” found (reuse-only — create it first, or fix the name)")
@@ -2892,7 +2914,9 @@ def _write_gating_columns(session, payload: dict, req: AccessRequest) -> None:
         payload["time"] = _resolve_named_objects(session, req.time_objects, "time object", allow_types=_TIME_TYPES)
     if req.install_on:
         payload["install-on"] = _resolve_named_objects(session, req.install_on, "gateway/target",
-                                                       commands=_LIST_CMDS_INSTALL_ON, literals=("Policy Targets",))
+                                                       commands=_LIST_CMDS_INSTALL_ON,
+                                                       fallback_types=_INSTALL_ON_FALLBACK_TYPES,
+                                                       literals=("Policy Targets",))
     if req.vpn:
         payload["vpn"] = _resolve_named_objects(session, req.vpn, "VPN community",
                                                 commands=_LIST_CMDS_VPN, literals=("All_GwToGw",))

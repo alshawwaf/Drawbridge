@@ -273,3 +273,34 @@ Ran the 5-lens adversarial validation a SECOND time over the round-1-fixed code.
 - **#21 — mgmt_export does not re-render action-settings.** A rule created with a UserCheck limit / captive-portal exports (TF/Ansible/CLI/API) without the `action-settings` column → fidelity loss on export round-trip. Needs the `show-access-rulebase` action-settings field shape (a `[LIVE]` check) before rendering; LOW (export completeness, not AA correctness).
 - The `[LIVE]` lab pass for every column (one real apply→show→verify→rollback each) remains the highest-value next step — especially confirming the dedicated list-command names exist on R82.10 (`show-vpn-communities-meshed`/`-star`, `show-limits`, `show-gateways-and-servers`) so the best-effort pass-through is rarely exercised.
 - Deeper per-column decision reasoning (time in/out-of-window NO_OP, install-on coverage matching, vpn exact-match on removal), vpn-in-amend, remove-path target-narrowing, and the mgmt_export time-as-list render — all unchanged from the round-1 deferral list.
+
+---
+
+## Round 4 — re-validation of the round-3 resolver (2026-06-26)
+
+Focused 4-lens pass over the round-3 diff (3 votes/finding). Raised 7 / confirmed 5 — all in the NEW round-3
+resolver, deduping to 3 real fixes (the 2 dismissed were a non-issue webhook `u_action` "regression" and an
+object literally named "Any", both correctly rejected by the panel). **887 tests + aa_qa 40/40.**
+
+- **HIGH — transient-after-progress paging false-rejected a legitimate object.** `_known_object_names` used a
+  single `any_ok` flag, so a transient error on page 2 (or on a sibling union command after one succeeded)
+  finalized a TRUNCATED known-set → a real gateway/community on a later page was hard-rejected, discarding
+  the atomic session. **Fix:** a failure on the FIRST page of the FIRST command = "command unavailable" (skip
+  to next); a failure AFTER progress (offset>0, or a later command once one succeeded) = transient → degrade
+  the WHOLE column to pass-through (`return None`). Only a fully-paged, error-free enumeration returns a set
+  the caller matches strictly.
+- **MEDIUM — install-on gateway-GROUP false-rejected.** `show-gateways-and-servers` enumerates only
+  gateways/servers, never groups, but a group-of-gateways is a legitimate install-on target. **Fix:** added a
+  typed `group` fallback (`_INSTALL_ON_FALLBACK_TYPES`) via the new shared `_typed_lookup` — a name absent
+  from the gateways list is confirmed as a group before rejecting (a genuine typo still rejects; a fallback
+  class that can't be queried passes through). (Supersedes round-2 #3's "reject groups" — a gateway-group is
+  valid; the SMS is the final arbiter of group MEMBER eligibility.)
+- **MEDIUM — remote-access VPN community false-rejected.** `_LIST_CMDS_VPN` was missing
+  `show-vpn-communities-remote-access` (the local v1.9.1 spec exposes it). One-line union addition.
+
+Refactor: extracted `_typed_lookup` (True/False/None = found / real-miss / not-queryable) shared by the
+content/time typed path and the install-on group fallback.
+
+The convergence (22 → 22 → 5 confirmed, all in the just-changed code) indicates the engine logic is stable;
+the remaining risk is genuinely the **`[LIVE]`** lab confirmation of the dedicated command names + field
+shapes on R82.10 — the highest-value next step.

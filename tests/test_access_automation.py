@@ -3684,6 +3684,7 @@ _GW_LIST_TYPES = {"simple-gateway", "simple-cluster", "CpmiGatewayCluster", "Cpm
 _LIST_CMD_TYPES = {
     "show-vpn-communities-meshed": {"vpn-community-meshed"},
     "show-vpn-communities-star": {"vpn-community-star"},
+    "show-vpn-communities-remote-access": {"vpn-community-remote-access"},
     "show-limits": {"limit"},
 }
 
@@ -3847,15 +3848,19 @@ def test_content_negate_over_only_any_is_dropped():
 
 def test_install_on_resolves_via_gateways_command_not_show_objects():
     # HIGH #6: a gateway is resolved via show-gateways-and-servers (CPMI types are invalid show-objects
-    # filters) — and a network group is NOT a valid install-on target (it never appears in that command).
-    s = _GateSession([{"name": "GW", "type": "CpmiGatewayCluster"}, {"name": "NetGrp", "type": "group"}])
+    # filters), and a gateway GROUP — which that command does NOT enumerate — is confirmed via the typed
+    # `group` fallback (an install-on group target is legitimate); a genuine typo is rejected.
+    s = _GateSession([{"name": "GW", "type": "CpmiGatewayCluster"}, {"name": "GwGrp", "type": "group"}])
     aa._write_gating_columns(s, p := {}, AccessRequest(["10.1.1.50/32"], ["Any"], protocol="tcp", ports="443",
                              install_on=["GW"]))
     assert p["install-on"] == ["GW"]
-    assert not any(c == "show-objects" for c, _ in s.calls)           # used the dedicated command, not show-objects
-    with pytest.raises(aa.MgmtError):                                 # a network group is rejected
+    assert not any(c == "show-objects" for c, _ in s.calls)           # a gateway hit needs no show-objects probe
+    aa._write_gating_columns(s, q := {}, AccessRequest(["10.1.1.50/32"], ["Any"], protocol="tcp", ports="443",
+                             install_on=["GwGrp"]))
+    assert q["install-on"] == ["GwGrp"]                               # a group of gateways: valid via fallback
+    with pytest.raises(aa.MgmtError):                                 # a genuine typo (not a gw/server/group)
         aa._write_gating_columns(s, {}, AccessRequest(["10.1.1.50/32"], ["Any"], protocol="tcp", ports="443",
-                                 install_on=["NetGrp"]))
+                                 install_on=["NopeTypo"]))
 
 
 def test_reuse_validation_best_effort_when_class_not_enumerable():
@@ -3863,8 +3868,8 @@ def test_reuse_validation_best_effort_when_class_not_enumerable():
     # legitimate object — pass it through (the SMS validates at write; the apply discards atomically on failure).
     class _NoCmd:
         def call(self, cmd, payload=None, **k):
-            if cmd in ("show-vpn-communities-meshed", "show-vpn-communities-star", "show-limits",
-                       "show-gateways-and-servers"):
+            if cmd in ("show-vpn-communities-meshed", "show-vpn-communities-star",
+                       "show-vpn-communities-remote-access", "show-limits", "show-gateways-and-servers"):
                 raise aa.MgmtError("command not found on this version")
             return {}
     aa._write_gating_columns(_NoCmd(), p := {}, AccessRequest(["10.1.1.50/32"], ["Any"], protocol="tcp",
@@ -3913,6 +3918,43 @@ def test_build_request_rejects_action_settings_on_block():
         t.build_request("10.1.1.5", "10.1.2.2", "tcp", "3389", action="Drop", action_settings_captive_portal=True)
     with pytest.raises(ValueError):
         t.build_request("10.1.1.5", "10.1.2.2", "tcp", "3389", action="Reject", action_settings_limit="L1")
+
+
+def test_resolver_transient_paging_failure_passes_through_not_false_reject():
+    # round-4 HIGH: a transient error AFTER progress (a later page / a sibling command) must degrade the
+    # whole column to best-effort pass-through, NEVER finalize a truncated set that false-rejects a real object.
+    class _FlakyPager:
+        def __init__(self):
+            self.calls = 0
+        def call(self, cmd, payload=None, **k):
+            if cmd == "show-gateways-and-servers":
+                self.calls += 1
+                if (payload or {}).get("offset", 0) == 0:
+                    return {"objects": [{"name": f"gw{i}"} for i in range(200)], "total": 500}  # page 1 of 3
+                raise aa.MgmtError("connection reset")                # transient on page 2 (offset 200)
+            return {}
+    aa._write_gating_columns(_FlakyPager(), p := {}, AccessRequest(["10.1.1.50/32"], ["Any"], protocol="tcp",
+                             ports="443", install_on=["gw300"]))      # on page 3 — would be lost in a truncated set
+    assert p["install-on"] == ["gw300"]                              # passed through, not false-rejected
+    # a UNION partial (one community command errors after another succeeded) also degrades to pass-through
+    class _FlakyUnion:
+        def call(self, cmd, payload=None, **k):
+            if cmd == "show-vpn-communities-meshed":
+                return {"objects": [{"name": "MeshA"}], "total": 1}
+            if cmd in ("show-vpn-communities-star", "show-vpn-communities-remote-access"):
+                raise aa.MgmtError("timeout")
+            return {}
+    aa._write_gating_columns(_FlakyUnion(), q := {}, AccessRequest(["10.1.1.50/32"], ["Any"], protocol="tcp",
+                             ports="443", vpn=["StarComm"]))
+    assert q["vpn"] == ["StarComm"]
+
+
+def test_vpn_remote_access_community_resolves():
+    # round-4 MEDIUM: a remote-access community must validate (show-vpn-communities-remote-access is in the union).
+    s = _GateSession([{"name": "RA_Comm", "type": "vpn-community-remote-access"}])
+    aa._write_gating_columns(s, p := {}, AccessRequest(["10.1.1.50/32"], ["Any"], protocol="tcp", ports="443",
+                             vpn=["RA_Comm"]))
+    assert p["vpn"] == ["RA_Comm"]
 
 
 def test_webhook_bare_action_is_lenient_dedicated_field_strict():
