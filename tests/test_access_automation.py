@@ -3682,10 +3682,11 @@ class _GateSession:
         self.objs, self.calls = objs, []
 
     def call(self, cmd, payload=None, **k):
-        self.calls.append((cmd, payload or {}))
+        p = payload or {}
+        self.calls.append((cmd, p))
         if cmd == "show-objects":
-            f = (payload or {}).get("filter")
-            return {"objects": [o for o in self.objs if o.get("name") == f]}
+            f, t = p.get("filter"), p.get("type")            # honor the type filter (the real API does)
+            return {"objects": [o for o in self.objs if o.get("name") == f and (not t or o.get("type") == t)]}
         return {}
 
 
@@ -3724,7 +3725,7 @@ def test_write_gating_columns_all_four(monkeypatch):
 def test_write_gating_vpn_any_literals_and_unknown_errors():
     aa._write_gating_columns(_GateSession([]), p := {}, AccessRequest(["10.1.1.50/32"], ["Any"], protocol="tcp",
                              ports="443", vpn=[]))
-    assert p["vpn"] == []                                                                # explicit Any
+    assert "vpn" not in p                                                                # Any -> omit the key
     # All_GwToGw is a whitelisted literal (no object lookup needed)
     aa._write_gating_columns(_GateSession([]), q := {}, AccessRequest(["10.1.1.50/32"], ["Any"], protocol="tcp",
                              ports="443", vpn=["All_GwToGw"]))
@@ -3740,3 +3741,64 @@ def test_write_gating_content_type_prefix_gate():
     with pytest.raises(aa.MgmtError):
         aa._write_gating_columns(s, {}, AccessRequest(["10.1.1.50/32"], ["Any"], protocol="tcp", ports="443",
                                  content=["X"]))
+
+
+# --- full-column validation fixes (round 2) -------------------------------------------------------
+def test_restricted_accept_anchored_above_covering_accept():
+    # HIGH #19: a restricted Accept must be placed ABOVE the broad covering Accept (or it's a dead rule).
+    a = _rule("a", 1, "Accept", _host("10.1.1.50"), ANY, _tcp(443))
+    req = AccessRequest(["10.1.1.50/32"], ["Any"], protocol="tcp", ports="443", time_objects=["Off-Work"])
+    d = aa.decide(req, [a, CLEANUP])
+    assert d.outcome is Outcome.CREATE and d.position == {"above": "a"}
+
+
+def test_action_settings_force_create_above_covering_accept():
+    # HIGH #5: an Accept asking for captive-portal/limit must not NO_OP a plain covering Accept (control lost).
+    a = _rule("a", 1, "Accept", _host("10.1.1.50"), ANY, _tcp(443))
+    req = AccessRequest(["10.1.1.50/32"], ["Any"], protocol="tcp", ports="443", action_settings_captive_portal=True)
+    d = aa.decide(req, [a, CLEANUP])
+    assert d.outcome is Outcome.CREATE and d.position == {"above": "a"}
+
+
+def test_decide_unknown_action_reviews():
+    # #17: a directly-built request with a bad/legacy action -> REVIEW (engine self-defends; never writes Accept)
+    req = AccessRequest(["10.1.1.50/32"], ["10.1.2.250/32"], protocol="tcp", ports="443", action="User Auth")
+    assert aa.decide(req, [CLEANUP]).outcome is Outcome.REVIEW
+
+
+def test_conditional_above_covering_drop_respects_override():
+    # #6/#11: Ask above a covering DROP loosens an admin deny -> with override off, place BELOW + flag.
+    d = _rule("d", 1, "Drop", _host("10.1.1.50"), _host("10.1.2.250"), _tcp(3389))
+    req = AccessRequest(["10.1.1.50/32"], ["10.1.2.250/32"], protocol="tcp", ports="3389", action="Ask")
+    dec = aa.decide(req, [d, CLEANUP], aa.DecideOptions(override_blocking_deny=False))
+    assert dec.outcome is Outcome.CREATE and dec.position == {"below": "d"}
+    # with override on, it carves above to take effect
+    dec2 = aa.decide(req, [d, CLEANUP], aa.DecideOptions(override_blocking_deny=True))
+    assert dec2.outcome is Outcome.CREATE and dec2.position == {"above": "d"}
+
+
+def test_block_with_no_cleanup_creates_not_noop():
+    # #16: a Drop request with NOTHING in path (no catch-all) must CREATE the drop (cleanup may be accept).
+    a = _rule("a", 1, "Accept", _host("10.9.9.9"), _host("10.8.8.8"), _tcp(22))   # unrelated, out of path
+    req = AccessRequest(["10.1.1.50/32"], ["10.1.2.250/32"], protocol="tcp", ports="3389", action="Drop")
+    assert aa.decide(req, [a]).outcome is Outcome.CREATE      # no cleanup -> create the drop, not false NO_OP
+
+
+def test_content_any_is_not_a_restriction():
+    # #3: content "Any" == no content restriction -> not written, and not "restricted"
+    s = _GateSession([])
+    aa._write_gating_columns(s, p := {}, AccessRequest(["10.1.1.50/32"], ["Any"], protocol="tcp", ports="443",
+                             content=["Any"]))
+    assert "content" not in p and not any(c == "show-objects" for c, _ in s.calls)
+
+
+def test_action_settings_limit_validated_reuse_only(monkeypatch):
+    # HIGH #1: a bad limit object name fails the atomic pre-flight, not a live add-access-rule rejection
+    calls = []
+    monkeypatch.setattr(aa, "MgmtSession", _fake_session_factory(calls, hosts={"10.1.1.50": "h1", "10.1.2.250": "h2"}))
+    monkeypatch.setattr(aa, "load_layer", lambda s, layer, package=None: [CLEANUP])
+    req = AccessRequest(["10.1.1.50/32"], ["10.1.2.250/32"], protocol="tcp", ports="443",
+                        action_settings_limit="Nope_Limit")
+    res = aa.execute(object(), "s", req, "Network", publish=True)
+    assert not res["ok"] and "limit" in res["error"].lower()
+    assert not any(c == "add-access-rule" for c, _ in calls)   # never reached the write

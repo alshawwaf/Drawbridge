@@ -42,6 +42,17 @@ class AccessReqBody(BaseModel):
     ticket_id: str = ""
     publish: bool = False
     package: str | None = None
+    # full-column support — a UI/API caller can set any column (all optional; defaults reproduce today's request)
+    action: str = "Accept"              # Accept / Drop / Reject / Ask / Inform / Apply Layer
+    inline_layer: str | None = None     # required iff action == "Apply Layer"
+    action_limit: str | None = None     # action-settings QoS/limit object name
+    captive_portal: bool = False        # action-settings enable-identity-captive-portal
+    content: list[str] | None = None    # Content Awareness data-type names
+    content_direction: str = "any"      # any | up | down
+    content_negate: bool = False
+    time_objects: list[str] | None = None   # time / time-group names
+    install_on: list[str] | None = None     # gateway/target names
+    vpn: list[str] | None = None            # VPN community names ([] = Any)
 
 
 def _owned(db: Session, sid: int, user: User) -> ManagementServer:
@@ -147,7 +158,10 @@ def _req_snapshot(body: AccessReqBody) -> dict:
     """The request tuple as plain data — snapshotted on a recorded change for display + audit."""
     return {"source": body.source, "destination": body.destination, "protocol": body.protocol,
             "port": body.port, "service": body.service, "application": body.application,
-            "source_kind": body.source_kind, "destination_kind": body.destination_kind}
+            "source_kind": body.source_kind, "destination_kind": body.destination_kind,
+            "action": body.action, "inline_layer": body.inline_layer, "content": body.content,
+            "content_direction": body.content_direction, "content_negate": body.content_negate,
+            "time_objects": body.time_objects, "install_on": body.install_on, "vpn": body.vpn}
 
 
 def _record_change_safe(db, **kw) -> None:
@@ -168,7 +182,13 @@ def _run(db: Session, sid: int, user: User, body: AccessReqBody, *, do_apply: bo
     try:
         req = ticketing.build_request(body.source, body.destination, body.protocol, body.port,
                                       body.application, body.service,
-                                      source_kind=body.source_kind, destination_kind=body.destination_kind)
+                                      source_kind=body.source_kind, destination_kind=body.destination_kind,
+                                      action=body.action, inline_layer=body.inline_layer or "",
+                                      action_settings_limit=body.action_limit or "",
+                                      action_settings_captive_portal=body.captive_portal,
+                                      content=body.content, content_direction=body.content_direction,
+                                      content_negate=body.content_negate, time_objects=body.time_objects,
+                                      install_on=body.install_on, vpn=body.vpn)
     except ValueError as exc:
         return JSONResponse({"error": str(exc)}, status_code=400)
     if not body.layer:
