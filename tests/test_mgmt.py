@@ -434,6 +434,148 @@ def test_write_session_does_not_silently_relogin():
         pass
 
 
+# --- write-session pool (amortise the apply login across a burst; fixes the SMS login throttle) -------
+class _FakeWrite:
+    """A fake read-write MgmtSession for the write-pool tests. ``keepalive`` (the pool's liveness probe)
+    goes through ``call`` like the real session. Records its commands; tracks every instance created."""
+    instances: list = []
+
+    def __init__(self, server, secret, **kw):
+        self.kw = kw
+        self.sid = None
+        self.trace = []
+        self.calls: list = []
+        self._client = types.SimpleNamespace(close=lambda: None)
+        self.fail_keepalive = False
+        _FakeWrite.instances.append(self)
+
+    def login(self):
+        self.calls.append("login")
+        self.sid = "sid"
+
+    def call(self, command, payload=None, **k):
+        self.calls.append(command)
+        if command == "keepalive" and self.fail_keepalive:
+            raise mgmt_api.MgmtError("session expired")
+        return {}
+
+    def discard(self):
+        self.calls.append("discard")
+        return {}
+
+    def logout(self):
+        self.calls.append("logout")
+        self.sid = None
+
+    def __enter__(self):
+        self.login()
+        return self
+
+    def __exit__(self, *a):
+        self.logout()
+        return False
+
+
+def test_write_session_pools_one_login_across_applies(monkeypatch):
+    mgmt_api.close_write_pool()
+    _FakeWrite.instances = []
+    monkeypatch.setattr(app_settings, "get", _settings())
+    monkeypatch.setattr(mgmt_api, "MgmtSession", _FakeWrite)
+    srv = _srv(id=201)
+    for _ in range(3):
+        with mgmt_api.write_session(srv, "s") as s:
+            s.call("add-access-rule")
+            s.call("publish")
+    assert len(_FakeWrite.instances) == 1                          # ONE session reused for all 3 applies
+    inst = _FakeWrite.instances[0]
+    assert inst.calls.count("login") == 1                          # logged in once (throttle-safe)
+    assert inst.calls.count("keepalive") == 2                      # liveness-probed on reuse (applies 2, 3)
+    assert inst.calls.count("discard") == 3                        # defensive clean after each apply
+    mgmt_api.close_write_pool()
+
+
+def test_write_session_reuse_off_logs_in_each_apply(monkeypatch):
+    mgmt_api.close_write_pool()
+    _FakeWrite.instances = []
+    monkeypatch.setattr(app_settings, "get", _settings(mgmt_write_session_reuse=False))
+    monkeypatch.setattr(mgmt_api, "MgmtSession", _FakeWrite)
+    srv = _srv(id=202)
+    for _ in range(2):
+        with mgmt_api.write_session(srv, "s") as s:
+            s.call("publish")
+    assert len(_FakeWrite.instances) == 2                          # reuse off -> a fresh session per apply
+    assert all(i.calls.count("logout") == 1 for i in _FakeWrite.instances)  # and each logs out on exit
+
+
+def test_write_session_evicts_on_error(monkeypatch):
+    mgmt_api.close_write_pool()
+    _FakeWrite.instances = []
+    monkeypatch.setattr(app_settings, "get", _settings())
+    monkeypatch.setattr(mgmt_api, "MgmtSession", _FakeWrite)
+    srv = _srv(id=203)
+    try:
+        with mgmt_api.write_session(srv, "s") as s:
+            s.call("add-access-rule")
+            raise RuntimeError("apply blew up mid-stream")
+    except RuntimeError:
+        pass
+    assert _FakeWrite.instances[0].calls.count("logout") == 1      # errored session was DROPPED (not pooled)
+    with mgmt_api.write_session(srv, "s") as s:                    # next apply gets a fresh login
+        s.call("publish")
+    assert len(_FakeWrite.instances) == 2
+    mgmt_api.close_write_pool()
+
+
+def test_write_session_relogins_when_pooled_session_expired(monkeypatch):
+    mgmt_api.close_write_pool()
+    _FakeWrite.instances = []
+    monkeypatch.setattr(app_settings, "get", _settings())
+
+    class _Expiring(_FakeWrite):
+        def __init__(self, *a, **k):
+            super().__init__(*a, **k)
+            self.fail_keepalive = True                             # every reuse liveness-probe fails -> drop+relogin
+
+    monkeypatch.setattr(mgmt_api, "MgmtSession", _Expiring)
+    srv = _srv(id=204)
+    for _ in range(2):
+        with mgmt_api.write_session(srv, "s") as s:
+            s.call("publish")
+    assert len(_FakeWrite.instances) == 2                          # expired pooled session re-logged in fresh
+    mgmt_api.close_write_pool()
+
+
+def test_login_retries_on_throttle_then_succeeds(monkeypatch):
+    monkeypatch.setattr(app_settings, "get", _settings(mgmt_login_retries=2))
+    sleeps: list = []
+    monkeypatch.setattr(mgmt_api, "_THROTTLE_SLEEP", lambda s: sleeps.append(s))
+    s = mgmt_api.MgmtSession(_srv(), "pw")
+    posts: list = []
+
+    def fake_post(url, json=None, headers=None):
+        posts.append(url)
+        if len([p for p in posts if p.endswith("/login")]) < 2:
+            return _Resp(429, {"message": "too many requests"})    # throttled on the first attempt
+        return _Resp(200, {"sid": "ok"})                           # second attempt succeeds
+
+    s._client = types.SimpleNamespace(post=fake_post, close=lambda: None)
+    s.login()
+    assert s.sid == "ok" and len(sleeps) == 1                      # waited once, then succeeded
+
+
+def test_login_throttle_gives_up_after_retries(monkeypatch):
+    monkeypatch.setattr(app_settings, "get", _settings(mgmt_login_retries=1))
+    monkeypatch.setattr(mgmt_api, "_THROTTLE_SLEEP", lambda s: None)
+    s = mgmt_api.MgmtSession(_srv(), "pw")
+    s._client = types.SimpleNamespace(post=lambda *a, **k: _Resp(429, {"message": "too many"}),
+                                      close=lambda: None)
+    try:
+        s.login()
+        assert False, "expected MgmtError after retries exhausted"
+    except mgmt_api.MgmtError as e:
+        assert "429" in str(e)
+
+
 def test_app_settings_validation_and_clamp():
     timeout = app_settings._BY_KEY["mgmt_session_timeout"]
     assert app_settings._coerce(timeout, "999999") == 3600        # clamp to max

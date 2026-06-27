@@ -55,10 +55,11 @@ logger = logging.getLogger("dcsim.access_automation")
 
 try:  # keep the engine import-safe outside the app runtime (offline smoke test)
     from .mgmt_api import (MgmtError, MgmtSession, _is_lock_error, cached_raw, invalidate_cache,
-                           locking_sessions, read_session, write_session_timeout)
+                           locking_sessions, read_session, write_session, write_session_timeout)
 except Exception:  # pragma: no cover
     MgmtSession = object  # type: ignore
     read_session = cached_raw = invalidate_cache = locking_sessions = None  # type: ignore
+    write_session = None                  # type: ignore
     write_session_timeout = lambda: 300  # type: ignore  # noqa: E731
     _is_lock_error = lambda m: False     # type: ignore  # noqa: E731
 
@@ -3343,8 +3344,7 @@ def execute(server, secret, req: AccessRequest, layer: str, *, package: Optional
         # WRITE path: an isolated read-write session (NOT the shared read pool) that loads the live
         # policy, decides, applies, and publishes/discards in one transaction -> always decided on
         # fresh rules, locks held only for this commit.
-        with MgmtSession(server, secret, session_timeout=write_session_timeout(),
-                         session_description="DC-Sim access automation (apply)") as s:
+        with write_session(server, secret) as s:
             block = _dynamic_layer_block(s, layer)
             if block is not None:             # the chosen layer is a Dynamic Layer (managed out-of-band)
                 return {**block, "applied": False, "published": False, "trace": s.trace}
@@ -3526,8 +3526,7 @@ def remove_execute(server, secret, req: AccessRequest, layer: str, *, package: O
     """Load -> decide_removal -> apply the revoke in ONE write session. publish commits; else discard
     (validate with zero commit). NO_OP / REVIEW change nothing. Discards on any error (mirrors execute())."""
     try:
-        with MgmtSession(server, secret, session_timeout=write_session_timeout(),
-                         session_description="DC-Sim access automation (remove)") as s:
+        with write_session(server, secret) as s:
             block = _dynamic_layer_block(s, layer)
             if block is not None:
                 return {**block, "applied": False, "published": False, "trace": s.trace}
@@ -3634,8 +3633,7 @@ def amend_execute(server, secret, *, uid: str, layer: str, name=None, comment=No
     if not fields:
         return {"ok": False, "error": "nothing to change — provide a name, comment, tags, and/or track"}
     try:
-        with MgmtSession(server, secret, session_timeout=write_session_timeout(),
-                         session_description="DC-Sim access automation (amend)") as s:
+        with write_session(server, secret) as s:
             try:                                              # details-level full -> track.type / tags resolve to names
                 cur = s.call("show-access-rule", {"uid": uid, "layer": layer, "details-level": "full"})  # VERIFY
             except MgmtError as exc:
@@ -3811,8 +3809,7 @@ def revert_execute(server, secret, inverse_ops: list[dict], *, publish: bool = F
         return {"ok": False, "error": "this change has no recorded inverse — it can't be rolled back here"}
     ops = _effective_revert_ops(inverse_ops, disable_added_rules)
     try:
-        with MgmtSession(server, secret, session_timeout=write_session_timeout(),
-                         session_description="DC-Sim access automation (revert)") as s:
+        with write_session(server, secret) as s:
             ops_done: list[str] = []
             try:
                 for op in ops:

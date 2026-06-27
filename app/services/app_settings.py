@@ -86,6 +86,18 @@ SETTINGS: list[Setting] = [
             "Idle timeout for the read-write session used by an apply/publish. An apply runs in seconds, "
             "so a short value means a lock left by an interrupted apply (a 'Locked for editing' error) "
             "clears quickly instead of lingering ~10 minutes. 60–3600.", min=60, max=3600),
+    Setting("mgmt_write_session_reuse", "bool", True,
+            "Reuse a session for applies",
+            "Log in once and reuse a read-write session across back-to-back applies/publishes instead of "
+            "logging in on every change. Check Point throttles remote logins to 3 per minute, so a burst of "
+            "applies (a batch of tickets) otherwise fails with 'too many login requests'. The pooled session "
+            "is always returned with no pending changes (it holds no locks while idle) and is dropped if an "
+            "apply errors, so lock-safety is preserved. Turn off to force a fresh login per apply."),
+    Setting("mgmt_login_retries", "int", 2,
+            "Retry a throttled login",
+            "If a login is rejected by Check Point's rate limit (HTTP 429, 'too many requests'), wait and "
+            "retry this many times before failing. Smooths a burst of apply/publish calls that out-pace the "
+            "3-logins-per-minute throttle. 0 = fail immediately.", min=0, max=5),
 
     # --- Storage & retention -------------------------------------------------------------------------
     # The two high-volume tables (the Activity log and the built-in SIEM receiver) are bounded so a
