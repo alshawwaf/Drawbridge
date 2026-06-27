@@ -190,13 +190,22 @@ def build_request(source, destination, protocol, port, application=None, service
         raise ValueError("action 'Apply Layer' requires an inline_layer (the layer name to divert into).")
     if canon != "Apply Layer" and inline_layer:
         raise ValueError(f"inline_layer is only valid with action 'Apply Layer', not '{canon}'.")
+    # Action-settings (UserCheck limit / captive portal) only exist on an ALLOWING action (Accept/Ask/Inform).
+    # Reject loud rather than silently dropping them on a Drop/Reject/Apply-Layer ticket.
+    if canon not in ("Accept", "Ask", "Inform") and (str(action_settings_limit or "").strip()
+                                                      or bool(action_settings_captive_portal)):
+        raise ValueError(f"action-settings (limit / captive portal) are only valid with an allowing action "
+                         f"(Accept/Ask/Inform), not '{canon}'.")
     # MATCH-GATING columns (full-column support). Normalize string-or-list -> clean NAME list; validate the
     # content direction enum; collapse an Any/Policy-Targets install-on to [] (omit). All object refs are
     # reuse-only — existence is validated at apply time, not here.
-    content_l = _to_name_list(content)
+    # "Any"/"All" data-type == no content restriction — strip it BEFORE validating negate (matching how the
+    # engine normalizes content), so a content=["Any"] ticket is not a phantom restriction and content_negate
+    # over only "Any" raises a clear error instead of silently writing a permissive rule.
+    content_l = [c for c in _to_name_list(content) if c.lower() not in ("any", "all", "*")]
     content_negate = bool(content_negate)
     if content_negate and not content_l:
-        raise ValueError("content_negate requires at least one content (data-type) name.")
+        raise ValueError("content_negate requires a real content (data-type) name, not Any.")
     cdir = str(content_direction or "any").strip().lower()
     if cdir not in ("any", "up", "down"):
         raise ValueError("content_direction must be 'any', 'up', or 'down'.")
@@ -238,6 +247,22 @@ def build_request(source, destination, protocol, port, application=None, service
     return AccessRequest(**common, protocol=protocol, ports=_validate_port(port))
 
 
+def _resolve_webhook_action(data: dict) -> str:
+    """Resolve the requested verdict from a webhook body WITHOUT letting the generic ``action`` field break
+    back-compat. A ServiceNow ticket very often carries its OWN unrelated ``action`` field (the record's
+    workflow action), so a DEDICATED verdict field (``verdict`` / ``u_action`` / ``cp_action``) wins and is
+    taken strictly (a typo there errors — the caller meant a verdict). The bare ``action`` alias is honoured
+    only when it actually names a Check Point verdict; an unrecognized value falls back to the default Accept
+    instead of hard-failing the whole ticket (the pre-full-column behaviour)."""
+    from .access_automation import canonical_action
+    for key in ("verdict", "u_action", "cp_action"):
+        v = str(_first(data, key, default="") or "").strip()
+        if v:
+            return v                                   # explicit verdict field -> strict (build_request validates)
+    a = str(_first(data, "action", default="") or "").strip()
+    return a if (a and canonical_action(a)) else "Accept"
+
+
 def parse_payload(data: dict) -> TicketRequest:
     """Build a TicketRequest from a webhook body, accepting common vendor field aliases (ServiceNow
     ``u_*`` / ``number`` / ``sys_id``, Jira ``key``, plus plain names). Raises ValueError on anything
@@ -269,7 +294,7 @@ def parse_payload(data: dict) -> TicketRequest:
         source_kind=_first(data, "source_kind", "src_kind", "u_source_kind", default="ip"),
         destination_kind=_first(data, "destination_kind", "dst_kind", "dest_kind",
                                 "u_destination_kind", default="ip"),
-        action=_first(data, "action", "verdict", "u_action", default="Accept"),
+        action=_resolve_webhook_action(data),
         inline_layer=_first(data, "inline_layer", "inline-layer", "apply_layer", "u_inline_layer", default=""),
         action_settings_limit=_first(data, "action_limit", "u_action_limit", default=""),
         action_settings_captive_portal=str(_first(data, "captive_portal", "enable_captive_portal",

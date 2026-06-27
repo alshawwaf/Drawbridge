@@ -464,6 +464,20 @@ def typed_relation(kind: str, value: str, is_any: bool, has_ip: bool,
 # --------------------------------------------------------------------------- #
 # Request / rule / decision models
 # --------------------------------------------------------------------------- #
+# Wildcard tokens that mean "no restriction" on a match-gating column — stripped so a content/vpn/install-on
+# list of ONLY these is identical to an unset column (never a phantom restriction / forced CREATE / duplicate).
+_GATING_WILDCARDS = {"any", "all", "*"}
+
+
+def _strip_gating_wildcards(value, extra=()):
+    """Drop blanks + Any/All wildcards (case-insensitive) from a match-gating name list. Keeps None as None
+    (means "column not touched"); a list collapses to the real names ([] when only wildcards were given)."""
+    if value is None:
+        return None
+    drop = _GATING_WILDCARDS | {str(e).strip().lower() for e in extra}
+    return [s for s in (str(x).strip() for x in value) if s and s.lower() not in drop]
+
+
 @dataclass
 class AccessRequest:
     src_cidrs: list[str]      # e.g. ["192.168.9.9/32"] — used only when src_kind == "ip"
@@ -503,6 +517,22 @@ class AccessRequest:
     time_objects: list = field(default_factory=list)   # time / time-group NAMES (union)
     install_on: list = field(default_factory=list)     # gateway/cluster/group NAMES ([] = Policy Targets/Any)
     vpn: Optional[list] = None                 # VPN community NAMES + Any/All_GwToGw (None = don't touch)
+
+    def __post_init__(self):
+        # Normalize the Any/All wildcard out of the match-gating object lists at the ENGINE boundary, so the
+        # decision surface (has_content / is_restricted / forces_create) is identical no matter how the request
+        # was built (webhook, MCP, portal, or direct construction). Without this, content=["Any"] / vpn=["Any"]
+        # / install-on=["Policy Targets"] would read as a restriction the apply layer then strips — a phantom
+        # CREATE whose written rule lacks the very condition that justified it. "All_GwToGw" is a real community
+        # (a restriction) so it is NOT a wildcard; only literal Any/All/* collapse.
+        self.content = _strip_gating_wildcards(self.content)
+        self.vpn = _strip_gating_wildcards(self.vpn)
+        self.install_on = _strip_gating_wildcards(self.install_on, extra=("Policy Targets",)) or []
+        self.time_objects = _strip_gating_wildcards(self.time_objects) or []
+        # A negate with no real data-type left is meaningless (negating "any") — drop it so it can't force a
+        # CREATE the apply layer would then write empty.
+        if self.content_negate and not self.content:
+            self.content_negate = False
 
     @property
     def has_content(self) -> bool:
@@ -1282,14 +1312,21 @@ def _decide_nonaccept(req: AccessRequest, rules: list[ParsedRule], options: "Dec
         could match this flow first) so first-match denies exactly this request; the existing rule still
         serves everyone else. Nothing in the path -> already denied by the cleanup -> NO_OP.
       * ASK / INFORM (conditional allow) / APPLY LAYER (divert): always CREATE. Placed ABOVE the first in-path
-        rule so the requested verdict takes effect for this flow; nothing in path -> at the section floor.
-        Flagged for review (the engine doesn't model UserCheck/divert matching).
+        rule whose deny we can PROVE we are safe to leap — but never ABOVE an opaque/partial possible-deny
+        (first-match would let our conditional silently override an unmodeled block). When such a possible-deny
+        sits in the path, the conditional is floored at the section bottom + flagged, mirroring the Accept
+        path's ``uncertain_deny`` placement floor. Nothing in path -> at the section floor. Always flagged for
+        review (the engine doesn't model UserCheck/divert matching).
     """
     act = req.canon_action
     is_block = act in ("Drop", "Reject")
     conditional = act in ("Ask", "Inform", "Apply Layer")
     cnote = ([f"“{act}” is a conditional / divert verdict the engine does not model for matching — review "
               f"the new rule's placement and settings after creation"] if conditional else [])
+    # uncertain_deny: a conditional walk stepped PAST an opaque/partial rule that COULD block this flow. Like
+    # the Accept path, that forbids anchoring our rule ABOVE a later rule (first-match would leap the possible
+    # deny) -> floor the conditional at the bottom instead.
+    uncertain_deny = False
     for r in rules:
         if not r.enabled or r.dynamic_layer:
             continue
@@ -1303,24 +1340,48 @@ def _decide_nonaccept(req: AccessRequest, rules: list[ParsedRule], options: "Dec
         complex_eff = bool(src_unknown or dst_unknown or r.svc_unknown or (all_ip and r.complex))
         covers = (not complex_eff and r.is_resolved_action and not r.conditional and not svc_ind
                   and r.inline_rules is None and _is_subset(rel_src, rel_dst, rel_svc))
-        if is_block and r.is_drop and covers:
-            return Decision(Outcome.NO_OP,
-                            f"already denied by rule {r.number} ({r.name}) — nothing to add", target_rule=r)
-        # A CONDITIONAL verdict (Ask/Inform/Apply Layer = allow-after-prompt / divert) placed ABOVE a covering
-        # DROP would LOOSEN an admin deny by first-match. Honor override_blocking_deny: if off, place BELOW the
-        # deny + flag (it won't take effect until the deny changes) rather than silently overriding it.
-        if conditional and r.is_drop and covers and not options.override_blocking_deny:
+        if is_block:
+            if r.is_drop and covers:
+                return Decision(Outcome.NO_OP,
+                                f"already denied by rule {r.number} ({r.name}) — nothing to add", target_rule=r)
+            # A block above ANY in-path rule guarantees first-match denies this flow (safe-or-redundant), so
+            # place it above the first in-path rule.
             return Decision(Outcome.CREATE,
-                            f"rule {r.number} ({r.name}) denies this; per policy the deny is NOT overridden — "
-                            f"the {act} rule is placed BELOW it and will not take effect until that rule "
-                            f"changes (review)", target_rule=r, position={"below": r.uid}, notes=cnote)
-        # the first in-path rule would match this flow first; place the requested verdict ABOVE it so
-        # first-match applies OUR verdict to exactly this request (it still serves its other traffic).
+                            f"creating a {act} rule ABOVE rule {r.number} ({r.name}) so first-match applies it "
+                            f"to this flow", target_rule=r, position={"above": r.uid}, notes=cnote)
+        # ---- conditional (Ask / Inform / Apply Layer) ----
+        if r.is_drop and covers:
+            # A covering DROP. Placing the conditional ABOVE it LOOSENS an admin deny by first-match — honor
+            # override_blocking_deny: off -> place BELOW the deny + flag (won't take effect until it changes).
+            if not options.override_blocking_deny:
+                return Decision(Outcome.CREATE,
+                                f"rule {r.number} ({r.name}) denies this; per policy the deny is NOT overridden "
+                                f"— the {act} rule is placed BELOW it and will not take effect until that rule "
+                                f"changes (review)", target_rule=r, position={"below": r.uid}, notes=cnote)
+            return Decision(Outcome.CREATE,
+                            f"rule {r.number} ({r.name}) denies this; per policy the deny IS overridden — "
+                            f"creating the {act} rule ABOVE it (review)",
+                            target_rule=r, position={"above": r.uid}, notes=cnote)
+        # An in-path rule we CANNOT prove is safe to leap with a conditional: a drop we don't fully cover
+        # (partial), or any rule whose extent/action we couldn't resolve (could itself be a deny). Don't
+        # anchor above it — record the uncertainty and continue; the conditional will be floored.
+        if r.is_drop or not r.is_resolved_action:
+            uncertain_deny = True
+            continue
+        # A clean, resolved, non-deny in-path rule (e.g. an Accept). Safe to anchor the conditional ABOVE it —
+        # UNLESS we already stepped past an opaque possible-deny (placing above would leap it) -> floor instead.
+        if uncertain_deny:
+            break
         return Decision(Outcome.CREATE,
                         f"creating a {act} rule ABOVE rule {r.number} ({r.name}) so first-match applies it "
                         f"to this flow", target_rule=r, position={"above": r.uid}, notes=cnote)
-    # Nothing in the request's path. A BLOCK can't be assumed already-denied — the layer's implicit cleanup
-    # may be ACCEPT (configurable), so create the Drop at the floor to guarantee the deny rather than NO_OP.
+    # Fell through. A BLOCK with nothing in path can't be assumed already-denied — the layer's implicit
+    # cleanup may be ACCEPT (configurable), so create the Drop at the floor to guarantee the deny.
+    if conditional and uncertain_deny:
+        return Decision(Outcome.CREATE,
+                        f"an opaque/partial possible-deny in this request's path could not be proven; the "
+                        f"{act} rule is placed at the section floor (NOT above it) so it cannot silently "
+                        f"override an unmodeled deny — review placement", notes=cnote)
     return Decision(Outcome.CREATE,
                     f"no rule covers this request; creating the {act} rule at the section floor", notes=cnote)
 
@@ -2697,8 +2758,11 @@ def _validate_inline_layer(session, name: str) -> str:
         raise MgmtError("an Apply Layer rule needs an inline-layer name (the layer to divert into)")
     try:
         res = session.call("show-access-layers", {"limit": 500, "details-level": "standard"})  # VERIFY
-    except MgmtError:
-        res = {}
+    except MgmtError as e:
+        # A failed listing is NOT proof the layer is absent — re-raise as a transient error so the apply
+        # aborts cleanly (session discarded), rather than asserting "no such layer" and writing nothing.
+        raise MgmtError(f"could not list access layers to validate the Apply Layer divert target “{want}” "
+                        f"({e}); try again") from e
     layers = res.get("access-layers") or res.get("layers") or []
     for lyr in layers:
         if (lyr.get("name") or "") == want or (lyr.get("uid") or "") == want:
@@ -2707,25 +2771,71 @@ def _validate_inline_layer(session, name: str) -> str:
     raise MgmtError(f"no access layer named “{want}” to divert into (Apply Layer) — available: {avail}")
 
 
-# Object types eligible per match-gating column (REUSE-ONLY — validated by exact name, never created).
-_INSTALL_ON_TYPES = ("simple-gateway", "simple-cluster", "CpmiGatewayCluster", "CpmiClusterMember",
-                     "CpmiVsClusterNetobj", "CpmiVsxClusterNetobj", "CpmiHostCkp", "CpmiGatewayPlain",
-                     "CpmiVsClusterMember", "CpmiVsxNetobj", "group")
-_VPN_COMMUNITY_TYPES = ("vpn-community-star", "vpn-community-meshed", "vpn-community-remote-access")
+# Object types eligible per match-gating column resolved via TYPED show-objects (data-types + time objects
+# ARE part of the generic object index). Gateways/clusters, VPN communities and limit objects are NOT
+# reliably returned by show-objects (their CPMI classes are not valid `type` filters, and communities/limits
+# have dedicated show commands) — those use the LISTING path below, not these type tuples.
 _CONTENT_DT_TYPES = ("data-type-patterns", "data-type-keywords", "data-type-file-attributes",
                      "data-type-group", "data-type-compound-group", "data-type-traditional-group",
                      "data-type-weighted-keywords", "data-type-file-group")
+_TIME_TYPES = ("time", "time-group")
+# Dedicated list commands per class (the reliable way to enumerate classes show-objects does not index). A
+# tuple is unioned (e.g. both VPN community kinds). If NONE of a column's commands exist on this version the
+# resolver degrades to best-effort pass-through (the SMS validates at write, atomically discarded on failure)
+# rather than falsely rejecting a legitimate object.
+_LIST_CMDS_INSTALL_ON = ("show-gateways-and-servers",)
+_LIST_CMDS_VPN = ("show-vpn-communities-meshed", "show-vpn-communities-star")
+_LIST_CMDS_LIMIT = ("show-limits",)
 
 
-def _resolve_named_objects(session, names, label, *, allow_types=(), literals=()) -> list:
-    """Validate each NAME exists as one of ``allow_types`` (REUSE-ONLY — never creates) and return the
-    confirmed names. A whitelisted literal (e.g. "Policy Targets", "All_GwToGw") passes through. Queries
-    show-objects WITH each ``type`` (like lookup_application) — a TYPED filter reliably surfaces the exact
-    object instead of being paginated out behind ≤50 fuzzy substring hits, and a typed query is also what
-    reliably returns infra objects (gateways) on R82.10. A miss raises a clear MgmtError. Atomic pre-flight:
-    the caller runs this and any failure discards the whole session (no partial rule)."""
+def _known_object_names(session, commands, *, keys=("objects",), page=200):
+    """Page through one or more dedicated list commands and return the UNION set of object NAMES they know.
+    Returns None when EVERY command is unavailable on this version (the first call errors) — the caller then
+    falls back to best-effort pass-through instead of a false 'not found'."""
+    names: set = set()
+    any_ok = False
+    for command in commands:
+        offset = 0
+        while True:
+            try:
+                res = session.call(command, {"limit": page, "offset": offset, "details-level": "standard"})
+            except MgmtError:
+                break                                    # this command unavailable -> try the next one
+            any_ok = True
+            objs = None
+            for k in keys:
+                objs = res.get(k)
+                if objs:
+                    break
+            objs = objs or []
+            for o in objs:
+                if isinstance(o, dict) and o.get("name"):
+                    names.add(o["name"])
+            total = res.get("total") or 0
+            offset += len(objs)
+            if not objs or offset >= total:
+                break
+    return names if any_ok else None
+
+
+def _resolve_named_objects(session, names, label, *, commands=(), allow_types=(), literals=()) -> list:
+    """Validate each NAME exists (REUSE-ONLY — never creates) and return the confirmed names. A whitelisted
+    literal (e.g. "Policy Targets", "All_GwToGw") passes through.
+
+    Two resolution strategies, chosen by the column:
+      * ``commands`` — enumerate the class via its dedicated list command(s) and exact-name match. Used for
+        gateways/clusters (install-on), VPN communities and limit objects, which show-objects does not index
+        reliably (CPMI type filters are invalid; communities/limits have their own show commands).
+      * ``allow_types`` — query show-objects with each TYPE and exact-name match. Used for data-types
+        (content) and time objects, which ARE part of the generic object index.
+
+    BEST-EFFORT, never a false reject: if the class is not queryable on this version (every list command
+    or every typed query errors), the name passes through and the SMS validates it at write time — the apply
+    is an atomic pre-flight, so a genuinely bad name still discards the whole session (no partial rule). A
+    name that the class CAN enumerate but does not contain is a clear MgmtError (a real typo/missing object)."""
     lits = {l.lower() for l in literals}
     out: list = []
+    known = _known_object_names(session, commands) if commands else None
     for raw in names:
         nm = str(raw).strip()
         if not nm:
@@ -2733,18 +2843,33 @@ def _resolve_named_objects(session, names, label, *, allow_types=(), literals=()
         if nm.lower() in lits:
             out.append(nm)
             continue
+        if commands:
+            if known is None:                            # class not enumerable here -> trust + let SMS validate
+                out.append(nm)
+            elif nm in known:
+                out.append(nm)
+            else:
+                raise MgmtError(f"no {label} named “{nm}” found (reuse-only — create it first, or fix the name)")
+            continue
         match = None
+        any_query_ok = False
         for t in allow_types:
             try:
-                res = session.call("show-objects", {"filter": nm, "type": t, "limit": 50})  # VERIFY
+                # filter+type narrows hard (a data-type/time class); 200 keeps an exact name from being lost
+                # behind a crowded substring page (the exact name is a high-relevance hit for its own filter).
+                res = session.call("show-objects", {"filter": nm, "type": t, "limit": 200})
             except MgmtError:
                 continue
+            any_query_ok = True
             if any((o.get("name") or "") == nm for o in res.get("objects", [])):
                 match = nm
                 break
-        if not match:
+        if match:
+            out.append(match)
+        elif not any_query_ok:                           # every typed query errored -> class not queryable here
+            out.append(nm)
+        else:
             raise MgmtError(f"no {label} named “{nm}” found (reuse-only — create it first, or fix the name)")
-        out.append(match)
     return out
 
 
@@ -2752,21 +2877,25 @@ def _write_gating_columns(session, payload: dict, req: AccessRequest) -> None:
     """Write the match-gating columns (content / time / install-on / vpn) onto an add-access-rule payload —
     each behind a non-default guard so a request that sets none yields a byte-identical payload. Every object
     reference is validated reuse-only. The CREATE delete-rule inverse already covers all."""
-    content = [c for c in (req.content or []) if c.lower() != "any"]   # "Any" data type == no content restriction
-    if content:
-        payload["content"] = _resolve_named_objects(session, content, "data type", allow_types=_CONTENT_DT_TYPES)
+    # req.content is already wildcard-normalized in AccessRequest.__post_init__ ("Any" -> no restriction).
+    if req.content:
+        payload["content"] = _resolve_named_objects(session, req.content, "data type", allow_types=_CONTENT_DT_TYPES)
         payload["content-direction"] = req.content_direction or "any"
         if req.content_negate:
             payload["content-negate"] = True
+    elif req.content_negate:
+        # A negate with no real data-type would write nothing yet the request reads as restricted (forced a
+        # CREATE) — never let the applied rule silently contradict the decision. (Normally unreachable: the
+        # request normalizer drops a negate-only content, and build_request rejects it.)
+        raise MgmtError("content-negate requires at least one content (data-type) name, not Any")
     if req.time_objects:
-        payload["time"] = _resolve_named_objects(session, req.time_objects, "time object",
-                                                 allow_types=("time", "time-group"))
+        payload["time"] = _resolve_named_objects(session, req.time_objects, "time object", allow_types=_TIME_TYPES)
     if req.install_on:
         payload["install-on"] = _resolve_named_objects(session, req.install_on, "gateway/target",
-                                                       allow_types=_INSTALL_ON_TYPES, literals=("Policy Targets",))
+                                                       commands=_LIST_CMDS_INSTALL_ON, literals=("Policy Targets",))
     if req.vpn:
         payload["vpn"] = _resolve_named_objects(session, req.vpn, "VPN community",
-                                                allow_types=_VPN_COMMUNITY_TYPES, literals=("All_GwToGw",))
+                                                commands=_LIST_CMDS_VPN, literals=("All_GwToGw",))
 
 
 def _action_settings_payload(action: str, req: AccessRequest) -> Optional[dict]:
@@ -2801,6 +2930,13 @@ def _apply(session, decision: Decision, req: AccessRequest, layer: str,
         out["layer"] = decision.layer
 
     if decision.outcome == Outcome.WIDEN:
+        # Self-defense (symmetric with the decide() guards): a request carrying a per-rule restriction or
+        # action-setting must NEVER be materialized as a widen — widening adds only an object to one cell and
+        # would silently drop content/time/install-on/vpn/action-settings. decide() already routes these to
+        # CREATE; a directly-built WIDEN that slipped through fails loud rather than under-applying.
+        if req.forces_create:
+            raise MgmtError("a restricted/settinged request cannot be applied as a widen "
+                            "(content/time/install-on/vpn/action-settings would be dropped) — create instead")
         field = decision.widen_field or "source"
         obj_name = (_resolve_svc_object(session, req) if field == "service"
                     else _resolve_endpoint_object(session, req, field))
@@ -2853,7 +2989,7 @@ def _apply(session, decision: Decision, req: AccessRequest, layer: str,
     asettings = _action_settings_payload(action, req)        # UserCheck limit / captive-portal, allowing actions only
     if asettings:
         if asettings.get("limit"):                           # validate the limit object reuse-only (like the other refs)
-            _resolve_named_objects(session, [asettings["limit"]], "QoS/bandwidth limit", allow_types=("limit",))
+            _resolve_named_objects(session, [asettings["limit"]], "QoS/bandwidth limit", commands=_LIST_CMDS_LIMIT)
         payload["action-settings"] = asettings
     _write_gating_columns(session, payload, req)             # content / time / install-on / vpn (reuse-only)
     tags = naming.rule_tags()
