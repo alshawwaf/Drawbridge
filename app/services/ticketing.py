@@ -203,12 +203,12 @@ def build_request(source, destination, protocol, port, application=None, service
     time_l = _to_name_list(time_objects)
     install_l = [n for n in _to_name_list(install_on)
                  if n.lower() not in ("any", "all", "*", "policy targets")]   # default token -> omit
-    vpn_l = None if vpn is None else _to_name_list(vpn)
-    if vpn_l is not None:
-        # directional pairs ({from,to}) are unverified in the spec -> reject, never guess.
+    vpn_l = None
+    if vpn is not None:
+        # directional pairs ({from,to}) are unverified in the spec -> reject BEFORE stringifying, never guess.
         if isinstance(vpn, dict) or any(isinstance(x, dict) for x in (vpn if isinstance(vpn, (list, tuple)) else [])):
             raise ValueError("directional VPN ({from, to}) is not supported — assign a VPN community by name.")
-        vpn_l = [n for n in vpn_l if n.lower() != "any"]   # "Any" / [] -> [] (explicit Any); keep All_GwToGw + communities
+        vpn_l = [n for n in _to_name_list(vpn) if n.lower() != "any"]   # "Any"/[] -> [] (Any, omitted at write); keep communities + All_GwToGw
     s_cidrs, s_kind, s_val = _resolve_endpoint(source, source_kind, "source")
     d_cidrs, d_kind, d_val = _resolve_endpoint(destination, destination_kind, "destination")
     application = str(application).strip() if application else ""
@@ -271,7 +271,7 @@ def parse_payload(data: dict) -> TicketRequest:
                                 "u_destination_kind", default="ip"),
         action=_first(data, "action", "verdict", "u_action", default="Accept"),
         inline_layer=_first(data, "inline_layer", "inline-layer", "apply_layer", "u_inline_layer", default=""),
-        action_settings_limit=_first(data, "action_limit", "limit", "u_action_limit", default=""),
+        action_settings_limit=_first(data, "action_limit", "u_action_limit", default=""),
         action_settings_captive_portal=str(_first(data, "captive_portal", "enable_captive_portal",
                                                   "u_captive_portal", default="")).strip().lower() in _TRUE,
         content=_first(data, "content", "data_type", "data_types", "content_type", "u_content"),
