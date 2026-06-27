@@ -159,7 +159,9 @@ def _req_snapshot(body: AccessReqBody) -> dict:
     return {"source": body.source, "destination": body.destination, "protocol": body.protocol,
             "port": body.port, "service": body.service, "application": body.application,
             "source_kind": body.source_kind, "destination_kind": body.destination_kind,
-            "action": body.action, "inline_layer": body.inline_layer, "content": body.content,
+            "action": body.action, "inline_layer": body.inline_layer,
+            "action_settings_limit": body.action_limit, "action_settings_captive_portal": body.captive_portal,
+            "content": body.content,
             "content_direction": body.content_direction, "content_negate": body.content_negate,
             "time_objects": body.time_objects, "install_on": body.install_on, "vpn": body.vpn}
 

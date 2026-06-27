@@ -3676,8 +3676,21 @@ def test_execute_apply_layer_validates_and_writes_inline_layer(monkeypatch):
 
 
 # --- full-column support: CONTENT / TIME / INSTALL-ON / VPN (write + request + engine guard) --------
+# gateway/server classes the dedicated show-gateways-and-servers command enumerates (a subset, for the fake)
+_GW_LIST_TYPES = {"simple-gateway", "simple-cluster", "CpmiGatewayCluster", "CpmiClusterMember",
+                  "CpmiHostCkp", "CpmiGatewayPlain"}
+# dedicated list command -> the object types it enumerates (mirrors the real API: these classes are NOT
+# reliably returned by show-objects, so the resolver uses these commands instead)
+_LIST_CMD_TYPES = {
+    "show-vpn-communities-meshed": {"vpn-community-meshed"},
+    "show-vpn-communities-star": {"vpn-community-star"},
+    "show-limits": {"limit"},
+}
+
+
 class _GateSession:
-    """show-objects returns the fixed objects whose name matches the filter (for reuse-only validation)."""
+    """Mirrors how the reuse-only resolver looks things up: data-types/time via show-objects (typed), and
+    gateways / VPN communities / limit objects via their DEDICATED list commands."""
     def __init__(self, objs):
         self.objs, self.calls = objs, []
 
@@ -3687,6 +3700,12 @@ class _GateSession:
         if cmd == "show-objects":
             f, t = p.get("filter"), p.get("type")            # honor the type filter (the real API does)
             return {"objects": [o for o in self.objs if o.get("name") == f and (not t or o.get("type") == t)]}
+        if cmd == "show-gateways-and-servers":
+            m = [o for o in self.objs if o.get("type") in _GW_LIST_TYPES]
+            return {"objects": m, "total": len(m)}
+        if cmd in _LIST_CMD_TYPES:
+            m = [o for o in self.objs if o.get("type") in _LIST_CMD_TYPES[cmd]]
+            return {"objects": m, "total": len(m)}
         return {}
 
 
@@ -3802,3 +3821,108 @@ def test_action_settings_limit_validated_reuse_only(monkeypatch):
     res = aa.execute(object(), "s", req, "Network", publish=True)
     assert not res["ok"] and "limit" in res["error"].lower()
     assert not any(c == "add-access-rule" for c, _ in calls)   # never reached the write
+
+
+# --- full-column validation fixes (round 3 — re-validation findings) ------------------------------
+def test_content_any_normalized_at_engine_boundary():
+    # #1/#11/#13/#14/#19: content/vpn ["Any"] (and install-on "Policy Targets") are NOT restrictions, no
+    # matter how the request is built — normalized in AccessRequest.__post_init__, so no phantom CREATE.
+    r = AccessRequest(["10.1.1.50/32"], ["Any"], protocol="tcp", ports="443",
+                      content=["Any"], vpn=["any"], install_on=["Policy Targets"])
+    assert r.content == [] and r.vpn == [] and r.install_on == [] and not r.is_restricted
+    a = _rule("a", 1, "Accept", _host("10.1.1.50"), ANY, _tcp(443))
+    assert aa.decide(r, [a, CLEANUP]).outcome is Outcome.NO_OP        # reuses the covering Accept, no duplicate
+
+
+def test_content_negate_over_only_any_is_dropped():
+    # #1/#20: content_negate over ONLY "Any" is meaningless -> dropped at the engine boundary (never a CREATE
+    # whose written rule lacks the negate that justified it). build_request rejects it loudly.
+    r = AccessRequest(["10.1.1.50/32"], ["Any"], protocol="tcp", ports="443",
+                      content=["Any"], content_negate=True)
+    assert r.content == [] and r.content_negate is False and not r.is_restricted
+    from app.services import ticketing as t
+    with pytest.raises(ValueError):
+        t.build_request("10.1.1.5", "Any", "tcp", "443", content="Any", content_negate=True)
+
+
+def test_install_on_resolves_via_gateways_command_not_show_objects():
+    # HIGH #6: a gateway is resolved via show-gateways-and-servers (CPMI types are invalid show-objects
+    # filters) — and a network group is NOT a valid install-on target (it never appears in that command).
+    s = _GateSession([{"name": "GW", "type": "CpmiGatewayCluster"}, {"name": "NetGrp", "type": "group"}])
+    aa._write_gating_columns(s, p := {}, AccessRequest(["10.1.1.50/32"], ["Any"], protocol="tcp", ports="443",
+                             install_on=["GW"]))
+    assert p["install-on"] == ["GW"]
+    assert not any(c == "show-objects" for c, _ in s.calls)           # used the dedicated command, not show-objects
+    with pytest.raises(aa.MgmtError):                                 # a network group is rejected
+        aa._write_gating_columns(s, {}, AccessRequest(["10.1.1.50/32"], ["Any"], protocol="tcp", ports="443",
+                                 install_on=["NetGrp"]))
+
+
+def test_reuse_validation_best_effort_when_class_not_enumerable():
+    # #2/#6: if the dedicated list command is unavailable on this version (errors), don't FALSE-reject a
+    # legitimate object — pass it through (the SMS validates at write; the apply discards atomically on failure).
+    class _NoCmd:
+        def call(self, cmd, payload=None, **k):
+            if cmd in ("show-vpn-communities-meshed", "show-vpn-communities-star", "show-limits",
+                       "show-gateways-and-servers"):
+                raise aa.MgmtError("command not found on this version")
+            return {}
+    aa._write_gating_columns(_NoCmd(), p := {}, AccessRequest(["10.1.1.50/32"], ["Any"], protocol="tcp",
+                             ports="443", vpn=["RealComm"], install_on=["RealGW"]))
+    assert p["vpn"] == ["RealComm"] and p["install-on"] == ["RealGW"]
+
+
+def test_conditional_floored_below_opaque_possible_deny():
+    # HIGH #10: an Ask/Inform/Apply-Layer verdict must NOT be anchored ABOVE an opaque/partial possible-deny
+    # (first-match would leap it). It is floored at the section bottom + flagged instead.
+    partial_drop = _rule("d", 1, "Drop", _host("10.1.1.50"), _host("10.1.2.250"), _tcp(3389))  # ⊂ request: partial
+    clean_accept = _rule("a", 2, "Accept", ANY, ANY, ServiceSet(any=True))
+    req = AccessRequest(["10.1.1.0/24"], ["10.1.2.250/32"], protocol="tcp", ports="3389", action="Ask")
+    d = aa.decide(req, [partial_drop, clean_accept])
+    assert d.outcome is Outcome.CREATE and not d.position          # floored (no anchor), not above the accept
+    assert any("possible-deny" in n for n in (d.notes or [])) or "possible-deny" in d.reason
+    # control: with NO opaque deny in path, the Ask anchors ABOVE the clean accept
+    d2 = aa.decide(AccessRequest(["10.1.1.50/32"], ["10.1.2.250/32"], protocol="tcp", ports="3389", action="Ask"),
+                   [clean_accept])
+    assert d2.outcome is Outcome.CREATE and d2.position == {"above": "a"}
+
+
+def test_apply_widen_rejects_restricted_request():
+    # #8: a directly-built WIDEN decision carrying a restriction must fail loud (would silently drop the column).
+    tgt = _rule("a", 1, "Accept", _host("10.1.1.50"), ANY, _tcp(443))
+    dec = aa.Decision(Outcome.WIDEN, "widen", target_rule=tgt, widen_field="source")
+    req = AccessRequest(["10.1.1.51/32"], ["Any"], protocol="tcp", ports="443", time_objects=["X"])
+    with pytest.raises(aa.MgmtError):
+        aa._apply(_GateSession([]), dec, req, "Network", [tgt, CLEANUP], "T")
+
+
+def test_validate_inline_layer_transient_error_is_not_not_found():
+    # #4/#12/#22: a FAILED show-access-layers must re-raise as transient, not assert "no such layer".
+    class _Boom:
+        def call(self, cmd, payload=None, **k):
+            raise aa.MgmtError("connection reset")
+    with pytest.raises(aa.MgmtError) as ei:
+        aa._validate_inline_layer(_Boom(), "Web_Layer")
+    assert "could not list" in str(ei.value).lower()
+
+
+def test_build_request_rejects_action_settings_on_block():
+    # #16: action-settings (limit/captive portal) on a Drop/Reject/Apply-Layer is rejected, not silently dropped.
+    from app.services import ticketing as t
+    with pytest.raises(ValueError):
+        t.build_request("10.1.1.5", "10.1.2.2", "tcp", "3389", action="Drop", action_settings_captive_portal=True)
+    with pytest.raises(ValueError):
+        t.build_request("10.1.1.5", "10.1.2.2", "tcp", "3389", action="Reject", action_settings_limit="L1")
+
+
+def test_webhook_bare_action_is_lenient_dedicated_field_strict():
+    # #18: a ServiceNow ticket's unrelated `action` field must NOT hard-fail the request (default Accept);
+    # a DEDICATED verdict field is taken strictly (a bad value errors).
+    from app.services import ticketing as t
+    base = {"server_id": 1, "layer": "Network", "source": "10.1.1.5", "destination": "10.1.2.2", "port": "443"}
+    tr = t.parse_payload({**base, "action": "close_ticket"})          # unrelated workflow action -> ignored
+    assert tr.request.canon_action == "Accept"
+    tr2 = t.parse_payload({**base, "action": "Drop"})                 # a real verdict in `action` -> honoured
+    assert tr2.request.canon_action == "Drop"
+    with pytest.raises(ValueError):                                   # a dedicated verdict field is strict
+        t.parse_payload({**base, "verdict": "NotAVerdict"})

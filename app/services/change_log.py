@@ -47,6 +47,8 @@ def snapshot_request(req) -> dict:
             "source_kind": getattr(req, "src_kind", "ip"), "destination_kind": getattr(req, "dst_kind", "ip"),
             # full-column support: preserve the verdict + match-gating columns so re-apply reconstructs the rule
             "action": getattr(req, "action", "Accept"), "inline_layer": getattr(req, "inline_layer", ""),
+            "action_settings_limit": getattr(req, "action_settings_limit", ""),
+            "action_settings_captive_portal": getattr(req, "action_settings_captive_portal", False),
             "content": getattr(req, "content", None), "content_direction": getattr(req, "content_direction", "any"),
             "content_negate": getattr(req, "content_negate", False),
             "time_objects": getattr(req, "time_objects", []), "install_on": getattr(req, "install_on", []),
