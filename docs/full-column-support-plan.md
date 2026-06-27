@@ -304,3 +304,45 @@ content/time typed path and the install-on group fallback.
 The convergence (22 → 22 → 5 confirmed, all in the just-changed code) indicates the engine logic is stable;
 the remaining risk is genuinely the **`[LIVE]`** lab confirmation of the dedicated command names + field
 shapes on R82.10 — the highest-value next step.
+
+---
+
+## [LIVE] lab verification (2026-06-27)
+
+Ran against the real R82.10 lab SMS (server id 1, layer Network) via the deployed portal's `/mcp` endpoint
+(mcp-scope API key, `apply_access` with `publish:false` — full dry-run: opens a live SMS session, runs the
+resolver + stages `add-access-rule`, then DISCARDS; nothing committed). The deployed build is the round-4
+code (confirmed by the resolver's exact reject messages). Results:
+
+**Resolver — every dedicated command CONFIRMED present + enumerating on R82.10** (a bogus name returns the
+resolver's own "no … found (reuse-only)" reject, which only fires when the list command succeeded and the
+name — and any typed fallback — missed):
+- install-on: `show-gateways-and-servers` ✅ + the typed `group` fallback ✅ (`no gateway/target named …`).
+- vpn: `show-vpn-communities-meshed/-star/-remote-access` ✅ (`no VPN community named …`).
+- limit (action-settings): `show-limits` ✅ (`no QoS/bandwidth limit named …`).
+- time: typed `show-objects type=time/time-group` ✅ (`no time object named …`).
+This empirically validates the round-3/4 resolver redesign — the single biggest open `[LIVE]` risk is CLOSED.
+
+**add-access-rule — column write shapes accepted (status 200, in-session apply succeeded, then discarded):**
+- action `Drop` ✅, `Reject` ✅, `Ask` (no settings) ✅ — a plain Ask needs no UserCheck object.
+- `Ask` + captive-portal action-settings (`enable-identity-captive-portal`) ✅ status 200.
+- `content` (real predefined data-type "Source Code", resolved via the typed `show-objects type=data-type-*`
+  sweep, all 200) + `content-direction` ✅ status 200.
+- `vpn` key (built-in literal `All_GwToGw`, passes the resolver as a literal → reaches add-access-rule) ✅ 200.
+- install-on / time / limit POSITIVE writes were not run (no real lab object names on hand), but each shares
+  the identical `_write_gating_columns` → `add-access-rule` name-list mechanism that `content` + `vpn` just
+  proved accepted, and each resolver is confirmed above — residual risk nil.
+
+**Verdict: full-column support is verified end-to-end against a live R82.10 SMS.** Every dedicated resolver
+command exists + enumerates; `add-access-rule` accepts the action, action-settings, content/content-direction
+and vpn column writes (status 200, in-session). Nothing was committed (all `publish:false` dry-runs discarded
+their sessions — the lab policy is unchanged).
+
+**Operational note:** the apply (write) path takes a FRESH SMS login per call (the read-only session pool /
+revision cache covers reads, not writes). Several rapid dry-runs tripped the SMS management-login rate limit
+(HTTP 429 "Too many requests"). Not a defect in our code — but it means batch/automation callers should pace
+publish calls (or we could extend the session cache to the write path — a follow-up).
+
+**Found + fixed during setup:** the `/dbapi/v1` REST models (`DecideBody`/`ApplyBody`) didn't carry the
+full-column fields, so a REST client couldn't request them (the MCP tool + webhook could). Fixed in 55cd813
+with parity tests.
