@@ -393,14 +393,33 @@ def read_session(server, secret: str):
             yield s
         return
 
+    key = _pool_key(server)
     with _POOL_LOCK:
-        entry = _POOL.get(_pool_key(server))
-        if entry is None:
-            sess = MgmtSession(server, secret, read_only=True, auto_relogin=True,
-                               session_timeout=app_settings.get("mgmt_session_timeout"))
+        entry = _POOL.get(key)
+    if entry is None:
+        # Build + login OUTSIDE _POOL_LOCK: login() can now BLOCK (it retries a throttled HTTP 429 with
+        # backoff), and _POOL_LOCK is process-global — holding it through a slow login would stall every
+        # server's reads. Double-check on re-insert and close the loser if another thread won the race.
+        sess = MgmtSession(server, secret, read_only=True, auto_relogin=True,
+                           session_timeout=app_settings.get("mgmt_session_timeout"))
+        try:
             sess.login()
-            entry = _PooledRead(sess)
-            _POOL[_pool_key(server)] = entry
+        except Exception:
+            with contextlib.suppress(Exception):
+                sess._client.close()
+            raise
+        with _POOL_LOCK:
+            existing = _POOL.get(key)
+            if existing is None:
+                entry = _PooledRead(sess)
+                _POOL[key] = entry
+            else:
+                entry = existing                   # lost the race -> use the winner, drop our extra session
+        if entry.session is not sess:
+            with contextlib.suppress(Exception):
+                sess.logout()
+            with contextlib.suppress(Exception):
+                sess._client.close()
 
     with entry.call_lock:
         if app_settings.get("mgmt_keepalive") and (time.monotonic() - entry.last_used) > 60:
@@ -466,14 +485,17 @@ def _drop_write(key, s: "MgmtSession") -> None:
 
 
 def _write_session_alive(s: "MgmtSession") -> bool:
-    """Is a pooled write session still usable? A cheap keepalive doubles as a liveness probe; a failure
-    means it idle-expired (or the box bounced) -> the caller re-logs in."""
+    """Is a pooled write session still usable? A cheap keepalive doubles as a liveness probe; ANY failure —
+    an API error OR a transport error (call() does not wrap httpx/ssl/OS errors the way login() does) — means
+    it idle-expired or the box bounced, so report not-alive and let write_session drop it + re-login. A
+    narrow ``except MgmtError`` would let a raw ConnectError/ReadTimeout escape and leave the dead session
+    pooled (every later apply would then re-probe and re-crash)."""
     if not s.sid:
         return False
     try:
         s.call("keepalive")
         return True
-    except MgmtError:
+    except (MgmtError, httpx.HTTPError, ssl.SSLError, OSError):
         return False
 
 
@@ -531,19 +553,32 @@ def write_session(server, secret: str):
 
 
 def close_write_pool() -> None:
-    """Discard (release locks) + log out + close every pooled write session. Wired into app shutdown."""
+    """Discard (release locks) + log out + close every pooled write session. Wired into app shutdown. Each
+    session is torn down UNDER its per-key lock (best-effort, short wait) so an in-flight apply on another
+    thread finishes first — never close an httpx client mid-call from two threads."""
     with _WRITE_META_LOCK:
-        sessions = list(_WRITE_POOL.values())
-        _WRITE_POOL.clear()
-    for s in sessions:
-        with contextlib.suppress(Exception):
-            s.discard()
+        items = list(_WRITE_POOL.items())
+        locks = dict(_WRITE_LOCKS)
+    for key, s in items:
+        lk = locks.get(key)
+        acquired = lk.acquire(timeout=10) if lk is not None else False
         try:
-            s.logout()
-        except Exception:  # noqa: BLE001
-            pass
-        with contextlib.suppress(Exception):
-            s._client.close()
+            with _WRITE_META_LOCK:
+                if _WRITE_POOL.get(key) is s:   # a racing apply may have already evicted/replaced it
+                    del _WRITE_POOL[key]
+                else:
+                    continue
+            with contextlib.suppress(Exception):
+                s.discard()
+            try:
+                s.logout()
+            except Exception:  # noqa: BLE001
+                pass
+            with contextlib.suppress(Exception):
+                s._client.close()
+        finally:
+            if acquired:
+                lk.release()
 
 
 # --- rulebase pull + structuring (the read-only viewer) -------------------------------------

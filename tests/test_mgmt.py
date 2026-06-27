@@ -576,6 +576,74 @@ def test_login_throttle_gives_up_after_retries(monkeypatch):
         assert "429" in str(e)
 
 
+def test_write_session_drops_on_transport_error_probe(monkeypatch):
+    # HIGH (review): a dead TCP connection makes the keepalive probe raise a raw httpx error (call() does not
+    # wrap transport errors). The probe must still report not-alive so the dead session is DROPPED + re-logged
+    # in — not left poisoning the pool.
+    import httpx
+    mgmt_api.close_write_pool()
+    _FakeWrite.instances = []
+    monkeypatch.setattr(app_settings, "get", _settings())
+
+    class _ConnDrop(_FakeWrite):
+        def call(self, command, payload=None, **k):
+            self.calls.append(command)
+            if command == "keepalive":
+                raise httpx.ConnectError("connection refused")   # transport error, NOT MgmtError
+            return {}
+
+    monkeypatch.setattr(mgmt_api, "MgmtSession", _ConnDrop)
+    srv = _srv(id=205)
+    for _ in range(2):
+        with mgmt_api.write_session(srv, "s") as s:
+            s.call("publish")
+    assert len(_FakeWrite.instances) == 2                         # dead session dropped + fresh re-login
+    mgmt_api.close_write_pool()
+
+
+def test_read_session_login_failure_closes_client_and_skips_pool(monkeypatch):
+    # The read login now runs OUTSIDE _POOL_LOCK; a failed login must close its httpx client (no leak) and
+    # leave nothing pooled.
+    mgmt_api.close_pool()
+    monkeypatch.setattr(app_settings, "get", _settings())
+    closed = []
+
+    class _BadLogin:
+        def __init__(self, *a, **k):
+            self._client = types.SimpleNamespace(close=lambda: closed.append(1))
+            self.sid = None
+            self.trace = []
+
+        def login(self):
+            raise mgmt_api.MgmtError("login refused")
+
+    monkeypatch.setattr(mgmt_api, "MgmtSession", _BadLogin)
+    srv = _srv(id=301)
+    try:
+        with mgmt_api.read_session(srv, "s"):
+            pass
+        assert False, "expected MgmtError"
+    except mgmt_api.MgmtError:
+        pass
+    assert closed == [1]                                          # client closed on login failure (no leak)
+    assert mgmt_api._POOL.get(mgmt_api._pool_key(srv)) is None    # nothing poisoned the pool
+    mgmt_api.close_pool()
+
+
+def test_close_write_pool_tears_down_and_clears(monkeypatch):
+    mgmt_api.close_write_pool()
+    _FakeWrite.instances = []
+    monkeypatch.setattr(app_settings, "get", _settings())
+    monkeypatch.setattr(mgmt_api, "MgmtSession", _FakeWrite)
+    srv = _srv(id=206)
+    with mgmt_api.write_session(srv, "s") as s:
+        s.call("publish")
+    inst = _FakeWrite.instances[0]
+    mgmt_api.close_write_pool()
+    assert inst.calls.count("logout") >= 1                        # session logged out on shutdown
+    assert mgmt_api._WRITE_POOL.get(mgmt_api._pool_key(srv)) is None   # pool cleared
+
+
 def test_app_settings_validation_and_clamp():
     timeout = app_settings._BY_KEY["mgmt_session_timeout"]
     assert app_settings._coerce(timeout, "999999") == 3600        # clamp to max
