@@ -104,16 +104,26 @@ class MgmtSession:
         # ("…are unexpected, when login is done in the readonly mode" / HTTP 400) — only send for writes.
         if self._session_description and not self._read_only:
             payload["session-description"] = self._session_description
-        try:
-            t = time.perf_counter()
-            r = self._client.post(f"{self.base}/login", json=payload)
-        except (httpx.ConnectError, ssl.SSLError, httpx.ConnectTimeout) as exc:
-            raise MgmtError(f"Could not reach {self.server.host}:{self.server.port} over TLS — {exc}. "
-                            "Check the host/port, the firewall, and (for a self-signed cert) the pinned "
-                            "cert / auto-trust.") from exc
-        self._record("login", {"user": self.server.username, "password": "***",
-                               **({"domain": self.server.domain} if self.server.domain else {})}, r, t)
-        if r.status_code != 200:
+        attempt = 0
+        while True:
+            try:
+                t = time.perf_counter()
+                r = self._client.post(f"{self.base}/login", json=payload)
+            except (httpx.ConnectError, ssl.SSLError, httpx.ConnectTimeout) as exc:
+                raise MgmtError(f"Could not reach {self.server.host}:{self.server.port} over TLS — {exc}. "
+                                "Check the host/port, the firewall, and (for a self-signed cert) the pinned "
+                                "cert / auto-trust.") from exc
+            self._record("login", {"user": self.server.username, "password": "***",
+                                   **({"domain": self.server.domain} if self.server.domain else {})}, r, t)
+            if r.status_code == 200:
+                break
+            # Check Point throttles remote logins (3/admin/domain/60s). A burst of apply/publish calls
+            # out-paces it -> HTTP 429. Wait out the window and retry (the session pools amortise the login,
+            # so this only fires on a cold burst / a pooled re-login after expiry), then fail loud.
+            if r.status_code == 429 and attempt < _login_retries():
+                attempt += 1
+                _THROTTLE_SLEEP(_login_backoff(attempt))
+                continue
             raise MgmtError(_login_error(r))
         self.login_info = _safe_json(r)
         self.sid = self.login_info.get("sid")
@@ -312,6 +322,25 @@ def _login_error(resp) -> str:
     return f"Management login failed (HTTP {resp.status_code})." + (f" {msg}" if msg else "")
 
 
+# Login-throttle retry knobs. _THROTTLE_SLEEP is module-level so tests stub the wait (no real sleep).
+_THROTTLE_SLEEP = time.sleep
+
+
+def _login_retries() -> int:
+    """How many times to retry a rate-limited (HTTP 429) login. From Settings; 0 if unavailable."""
+    try:
+        from . import app_settings
+        return max(0, int(app_settings.get("mgmt_login_retries")))
+    except Exception:  # noqa: BLE001 — never let a settings hiccup turn a login into a crash
+        return 0
+
+
+def _login_backoff(attempt: int) -> float:
+    """Seconds to wait before the Nth (1-based) login retry. ~20s per step ≈ Check Point's 3/60s window,
+    so two retries cover a full throttle window worst-case."""
+    return 20.0 * attempt
+
+
 def _is_session_expired(resp, data: dict) -> bool:
     """Does this error mean our session id is no longer valid (idle-expired / disconnected)? Used to
     decide whether a pooled read session should transparently re-login and retry."""
@@ -395,6 +424,126 @@ def close_pool() -> None:
             with contextlib.suppress(Exception):
                 entry.session._client.close()
         _POOL.clear()
+    close_write_pool()
+
+
+# --- shared read-WRITE session pool ----------------------------------------------------------
+# A burst of applies (a batch of tickets) logs in per change -> Check Point's 3-logins-per-minute throttle
+# rejects the 4th (HTTP 429). So apply/publish reuse ONE read-write session per (server, domain). A per-key
+# lock serializes the WHOLE apply (get/create/use/clean) for that server — only one apply touches its sid at
+# a time, and there is no stale-handle race — while different servers proceed in parallel. SAFETY INVARIANT:
+# a pooled write session is only ever kept if it is CLEAN (no pending changes -> it holds no object locks
+# while idle, preserving the "locks clear fast" guarantee a fresh-per-apply session gave). The caller
+# publishes/discards inside the block; the manager then defensively discards. On ANY error in the block, or
+# if that discard fails, the session is DROPPED (logout + close) rather than reused dirty/locked.
+_WRITE_POOL: dict = {}            # key -> the live reusable MgmtSession
+_WRITE_LOCKS: dict = {}           # key -> threading.Lock (one per server+domain)
+_WRITE_META_LOCK = threading.Lock()   # guards the two dicts above
+
+
+def _write_lock(key) -> threading.Lock:
+    with _WRITE_META_LOCK:
+        lk = _WRITE_LOCKS.get(key)
+        if lk is None:
+            lk = threading.Lock()
+            _WRITE_LOCKS[key] = lk
+        return lk
+
+
+def _drop_write(key, s: "MgmtSession") -> None:
+    """Discard (release locks) + log out + close a pooled write session and remove it from the pool."""
+    with contextlib.suppress(Exception):
+        s.discard()                   # release any object locks before we drop the sid
+    try:
+        s.logout()
+    except Exception:  # noqa: BLE001
+        pass
+    with contextlib.suppress(Exception):
+        s._client.close()
+    with _WRITE_META_LOCK:
+        if _WRITE_POOL.get(key) is s:
+            del _WRITE_POOL[key]
+
+
+def _write_session_alive(s: "MgmtSession") -> bool:
+    """Is a pooled write session still usable? A cheap keepalive doubles as a liveness probe; a failure
+    means it idle-expired (or the box bounced) -> the caller re-logs in."""
+    if not s.sid:
+        return False
+    try:
+        s.call("keepalive")
+        return True
+    except MgmtError:
+        return False
+
+
+@contextlib.contextmanager
+def write_session(server, secret: str):
+    """Yield a reusable READ-WRITE session for ``server`` for an apply/publish. The whole apply is
+    serialized per (server, domain) so the login is amortised across back-to-back applies (Check Point
+    throttles logins 3/admin/domain/60s). The CALLER must publish() or discard() before the block exits;
+    the pooled session is then returned clean (it holds no locks while idle). Falls back to a private,
+    logged-out-on-exit session when write reuse is disabled in Settings (the original per-apply behaviour).
+
+    On ANY error inside the block — or if the defensive end-of-block discard fails — the session is DROPPED
+    (logged out + closed) so a dirty/locked session is never handed to the next apply."""
+    from . import app_settings
+    timeout = write_session_timeout()
+    desc = "DC-Sim access automation (apply)"
+    if not app_settings.get("mgmt_write_session_reuse"):
+        with MgmtSession(server, secret, session_timeout=timeout, session_description=desc) as s:
+            yield s
+        return
+
+    key = _pool_key(server)
+    with _write_lock(key):                       # serialize the whole apply for this server (no stale race)
+        with _WRITE_META_LOCK:
+            s = _WRITE_POOL.get(key)
+        # A pooled session may have idle-expired since the last apply. It carries NO pending changes (the
+        # previous apply published/discarded + the defensive discard below), so re-login is SAFE here —
+        # unlike a mid-apply relogin, which would silently drop staged changes.
+        if s is not None and not _write_session_alive(s):
+            _drop_write(key, s)
+            s = None
+        if s is None:
+            s = MgmtSession(server, secret, session_timeout=timeout, session_description=desc)
+            try:
+                s.login()                        # a throttled login raises a clean MgmtError (no pool entry)
+            except Exception:
+                with contextlib.suppress(Exception):
+                    s._client.close()            # __enter__ isn't used here -> close the client on login failure
+                raise
+            with _WRITE_META_LOCK:
+                _WRITE_POOL[key] = s
+        s.trace = []
+        ok = False
+        try:
+            yield s
+            ok = True
+        finally:
+            if not ok:
+                _drop_write(key, s)              # the apply errored -> session state uncertain -> drop it
+            else:
+                try:
+                    s.discard()                  # defensive: never reuse a session with pending changes
+                except Exception:  # noqa: BLE001
+                    _drop_write(key, s)
+
+
+def close_write_pool() -> None:
+    """Discard (release locks) + log out + close every pooled write session. Wired into app shutdown."""
+    with _WRITE_META_LOCK:
+        sessions = list(_WRITE_POOL.values())
+        _WRITE_POOL.clear()
+    for s in sessions:
+        with contextlib.suppress(Exception):
+            s.discard()
+        try:
+            s.logout()
+        except Exception:  # noqa: BLE001
+            pass
+        with contextlib.suppress(Exception):
+            s._client.close()
 
 
 # --- rulebase pull + structuring (the read-only viewer) -------------------------------------
