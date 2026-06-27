@@ -54,6 +54,22 @@ class DecideBody(BaseModel):
     protocol: str = "tcp"
     application: str | None = None
     package: str | None = None
+    # typed endpoints + full-column support (parity with the MCP tool / webhook): the REST client must be
+    # able to request every access-rule column, or decide/apply silently ignore them (a write that omits the
+    # very column the caller asked for). model_dump() is splatted straight into decide_access/apply_access,
+    # whose signatures define these exact names.
+    source_kind: str = "ip"
+    destination_kind: str = "ip"
+    action: str = "Accept"
+    inline_layer: str | None = None
+    action_limit: str | None = None
+    captive_portal: bool = False
+    content: list[str] | None = None
+    content_direction: str = "any"
+    content_negate: bool = False
+    time_objects: list[str] | None = None
+    install_on: list[str] | None = None
+    vpn: list[str] | None = None
 
 
 class ApplyBody(DecideBody):
