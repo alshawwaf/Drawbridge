@@ -33,6 +33,8 @@ from ..services.render import (
 router = APIRouter(include_in_schema=False)
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+from .. import __version__ as _app_version
+templates.env.globals["app_version"] = _app_version   # surfaced in the footer (single shared templates env)
 
 # How many recent polls the feed page shows inline; the full history lives in the Activity log.
 POLL_PREVIEW = 6
