@@ -1,6 +1,7 @@
 """Application entrypoint: wiring, session middleware, DB bootstrap, admin seed."""
 import asyncio
 import logging
+import os
 import secrets
 import sys
 from contextlib import asynccontextmanager
@@ -9,10 +10,25 @@ from fastapi import FastAPI
 from sqlalchemy import select
 from starlette.middleware.sessions import SessionMiddleware
 
+from . import __version__
 from .config import get_settings
 from .db import SessionLocal, init_db
 from .models import User
-from .middleware import ActivityLogMiddleware
+from .middleware import ActivityLogMiddleware, SecurityHeadersMiddleware
+
+
+def _setup_logging() -> None:
+    """Emit the app's own ``dcsim.*`` logs (SIEM bind, MCP mount, credential/cache warnings) to stderr at
+    INFO by default — uvicorn doesn't configure our loggers, so without this they're silent in a PoV. A
+    dedicated handler (propagate off) avoids double-logging when a parent handler also exists."""
+    level = os.environ.get("DCSIM_LOG_LEVEL", "INFO").upper()
+    log = logging.getLogger("dcsim")
+    if not log.handlers:
+        h = logging.StreamHandler(sys.stderr)
+        h.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
+        log.addHandler(h)
+        log.propagate = False
+    log.setLevel(level)
 from .routers import (
     access_automation, aci_mock, activity, api_v1, datacenters, dynamic_layers, exports, feeds, gateways,
     gaia_mock, kubernetes_mock, mgmt, notifications, nsxt_mock, nutanix_mock, openstack_mock,
@@ -111,8 +127,9 @@ class _MCPCanonicalPath:
 
 
 def create_app() -> FastAPI:
+    _setup_logging()
     settings = get_settings()
-    app = FastAPI(title=settings.app_name, lifespan=lifespan)
+    app = FastAPI(title=settings.app_name, version=__version__, lifespan=lifespan)
 
     session_secret = settings.session_secret
     if not session_secret:
@@ -125,6 +142,7 @@ def create_app() -> FastAPI:
     app.add_middleware(SessionMiddleware, secret_key=session_secret, same_site="lax",
                        https_only=settings.base_url.startswith("https"), max_age=14 * 24 * 3600)
     app.add_middleware(ActivityLogMiddleware)
+    app.add_middleware(SecurityHeadersMiddleware, https=settings.base_url.startswith("https"))
     app.add_middleware(_MCPCanonicalPath)   # /mcp served without the auth-dropping 307 -> /mcp/ redirect
 
     app.include_router(ui.router)
