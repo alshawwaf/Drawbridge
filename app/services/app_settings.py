@@ -182,13 +182,13 @@ SETTINGS: list[Setting] = [
             "touch existing rules or override a deny (always create a new rule, place it below any block, "
             "flag it). Balanced (recommended): reuse/widen where exact, carve apps and override denies by "
             "placement so the access works, conditions respected, advisories on. Aggressive: same as "
-            "Balanced plus treat conditional rules as unconditional and stay quiet (no advisory notes). "
-            "Custom: ignore the profile and use the individual toggles below.",
+            "Balanced plus treat conditional rules (time / VPN / content / install-on) as unconditional — "
+            "the fewest rules, least friction. Custom: ignore the profile and use the individual toggles "
+            "below. (For the one-sentence agent demo, use the Autopilot preset under MCP / agent.)",
             group="Access automation logic",
             choices=(("balanced", "Balanced — recommended default"),
                      ("conservative", "Conservative — never modify or override existing rules"),
                      ("aggressive", "Aggressive — fewest rules, least friction"),
-                     ("autopilot", "Autopilot — lab demo: one sentence resolves, applies & publishes"),
                      ("custom", "Custom — use the individual toggles below"))),
     Setting("aa_app_carveout", "bool", True,
             "Carve out an application above a blocking rule",
@@ -227,12 +227,12 @@ SETTINGS: list[Setting] = [
             "Per-scope profile overrides",
             "Use a DIFFERENT profile for specific scopes — one per line, “scope = profile”. Scope is a "
             "management server (its name or id), or “server:layer”, or “*:layer” (that layer on any server). "
-            "Profile is conservative / balanced / aggressive / autopilot. Most-specific match wins (exact "
+            "Profile is conservative / balanced / aggressive. Most-specific match wins (exact "
             "server+layer ▸ *:layer ▸ server); anything unmatched uses the profile above. Blank lines and "
             "# comments are ignored. Example:\n"
             "Production = conservative\n"
             "*:DMZ = aggressive\n"
-            "HQ-SMS:DNS_Layer = autopilot",
+            "HQ-SMS:DNS_Layer = balanced",
             group="Access automation logic", max=4000),
 
     # --- MCP / agent ---------------------------------------------------------------------------------
@@ -246,6 +246,13 @@ SETTINGS: list[Setting] = [
             "Allow an MCP/LLM agent (authenticated with an MCP-scope API key) to commit + publish rules to a "
             "live management server. Leave OFF unless you intend agentic changes to reach production — with "
             "it off, agents can still decide, preview, and dry-run (validate-and-discard).",
+            group="MCP / agent"),
+    Setting("aa_autopilot", "bool", False,
+            "Autopilot — one-turn apply & publish (lab demo)",
+            "The headline lab demo: tells the agent it is pre-authorized to resolve, apply AND publish the "
+            "WHOLE change in a single turn — no confirmation step. Carried as an 'autopilot' flag on the "
+            "tool results. Pair with 'Let the MCP agent publish' (above) and the Aggressive profile — the "
+            "Autopilot preset button on Access automation logic sets all three at once. Lab/demo only.",
             group="MCP / agent"),
 
     # --- Ticketing webhook ---------------------------------------------------------------------------

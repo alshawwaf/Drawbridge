@@ -115,17 +115,15 @@ def _build(source, destination, service, port, protocol, application,
 
 
 def _autopilot(server=None, layer=None) -> bool:
-    """True when the Autopilot profile is EFFECTIVE for this (server, layer) — surfaced in tool results so a
-    prompt-driven agent knows it is pre-authorized to apply AND publish in one turn (the publish itself is
-    still gated by the admin's mcp_allow_publish). Scope-aware: a per-scope override pinning this server/layer
-    to a non-autopilot profile correctly returns False (don't auto-publish on a scope the admin guarded), and
-    a scoped-autopilot override correctly returns True — mirroring the engine's _decide_options. Best-effort:
-    any read failure → False (the agent then confirms as usual)."""
+    """True when the admin has enabled the Autopilot lab-demo toggle (``aa_autopilot``) — surfaced as an
+    'autopilot' flag on tool results so a prompt-driven agent knows it is pre-authorized to apply AND publish
+    in one turn, no confirmation. The publish itself is still independently gated by ``mcp_allow_publish``
+    (so with that OFF the agent's publish is refused even under autopilot). Autopilot is an agent PERMISSION,
+    not a decision posture — the engine's aggressiveness is the separate ``aa_profile``. Best-effort: any
+    read failure → False (the agent then confirms as usual)."""
     try:
         from . import app_settings
-        from .access_automation import _scoped_profile
-        scoped = _scoped_profile(app_settings, server, layer) if server is not None else None
-        return (scoped or str(app_settings.get("aa_profile") or "")) == "autopilot"
+        return bool(app_settings.get("aa_autopilot"))
     except Exception:  # noqa: BLE001
         return False
 

@@ -3213,16 +3213,16 @@ _PROFILES: dict[str, dict] = {
     # the access actually works, conditions respected, advisories on.
     "balanced": dict(app_carveout=True, override_blocking_deny=True, prefer_widen=True,
                      emit_notes=True, ignore_conditions=False),
-    # Make it work in the fewest rules with the least friction: also treat conditional rules as
-    # unconditional and stay quiet (no advisory notes).
+    # Make it work in the fewest rules with the least friction: also treat conditional rules (time / VPN /
+    # content / install-on) as unconditional, so a conditional Accept can cover and a conditional Drop can
+    # block. Notes stay ON so the engine (and the agent, in the lab-demo flow) can narrate what it did.
     "aggressive": dict(app_carveout=True, override_blocking_deny=True, prefer_widen=True,
-                       emit_notes=False, ignore_conditions=True),
-    # AUTOPILOT — the lab-demo profile: maximally decisive (like Aggressive) but keeps the advisory notes ON
-    # so the agent can NARRATE what it did ("widened rule 2 above the Silent Drop…"). Pair it with the
-    # Autopilot agent prompt + MCP publish enabled for the one-sentence-does-everything-and-publishes demo.
-    "autopilot": dict(app_carveout=True, override_blocking_deny=True, prefer_widen=True,
-                      emit_notes=True, ignore_conditions=True),
+                       emit_notes=True, ignore_conditions=True),
 }
+# NOTE: the "Autopilot" lab demo is NOT a behavior profile — it's the Aggressive engine posture PLUS the
+# agent's one-turn apply+publish blessing (the separate ``aa_autopilot`` toggle + ``mcp_allow_publish``).
+# Keeping it out of _PROFILES is deliberate: a profile is a DECISION posture; auto-publish is an agent
+# permission. See Settings → MCP / agent and mcp_tools._autopilot().
 
 
 def _scoped_profile(app_settings, server, layer) -> Optional[str]:
@@ -3263,7 +3263,7 @@ def _scoped_profile(app_settings, server, layer) -> Optional[str]:
 def _decide_options(server=None, layer=None) -> "DecideOptions":
     """Build the engine's decision/placement knobs from the admin's Settings (best-effort). Resolution order:
     a per-scope override (``aa_scope_overrides``) matching this server/layer wins; else the global
-    ``aa_profile`` bundle (Conservative/Balanced/Aggressive/Autopilot); else (``custom``/unknown) the
+    ``aa_profile`` bundle (Conservative/Balanced/Aggressive); else (``custom``/unknown) the
     individual ``aa_*`` toggles. Each Setting/profile carries the same default as DecideOptions, so an
     unconfigured portal decides exactly as before."""
     try:
