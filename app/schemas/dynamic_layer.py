@@ -252,6 +252,8 @@ def validate_layer_content(content: dict) -> None:
     for t, items in objects.items():
         if t not in OBJECT_SPECS:
             raise ValueError(f"Unknown object type: {t!r}")
+        if items is not None and not isinstance(items, list):
+            raise ValueError(f"Objects for {t!r} must be a JSON list.")
         for o in (items or []):
             if not isinstance(o, dict) or not o.get("name"):
                 raise ValueError(f"Every {t} object needs a name.")
