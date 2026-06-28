@@ -1,6 +1,6 @@
 # Deploying to Dokploy
 
-Hosted on **Dokploy** (panel: https://dokploy.ai.alshawwaf.ca/). Dokploy's Traefik handles the
+Hosted on **Dokploy** (your own Dokploy panel). Dokploy's Traefik handles the
 domain and Let's Encrypt TLS, so the Check Point gateway sees a publicly-trusted HTTPS feed with
 no cert-trust step. (Caddy / `docker-compose.yml` are only for standalone local/lab runs.)
 
@@ -11,7 +11,7 @@ no cert-trust step. (Caddy / `docker-compose.yml` are only for standalone local/
    or a Docker image you've pushed to a registry.
 3. **Build** — type *Dockerfile*; build context `/`, Dockerfile `Dockerfile`.
 4. **Port** — set the app/exposed port to **8000** (uvicorn's listen port).
-5. **Domain** — add your domain (e.g. `dcsim.ai.alshawwaf.ca`). Dokploy provisions the
+5. **Domain** — add your domain (e.g. `dcsim.example.com`). Dokploy provisions the
    Let's Encrypt cert via Traefik automatically.
 6. **Persistent volume** — add a mount at container path **`/data`**. SQLite lives there;
    without this, all feeds and poll history are wiped on every redeploy.
@@ -66,13 +66,13 @@ If `reload` prints *"Firewall not enabled"* while `status` says active, the rule
 `/etc/ufw/after.rules` (drop any stray non-iptables line after `COMMIT`), then `sudo ufw disable && sudo ufw enable`. `22/tcp` stays allowed, so SSH survives.
 
 **2 — SIEM 5514 → app**, via a host-network socat to the app's `docker_gwbridge` IP. That IP changes on
-every redeploy, so use the bundled helper, which re-resolves it each run:
+every redeploy, so use the bundled helper (`tools/siem-host-socat.sh` in this repo), which re-resolves it
+each run. Copy it onto the host and run it:
 ```bash
-sudo curl -fsSL https://raw.githubusercontent.com/alshawwaf/Datacenter-Integration-Simulator/main/tools/siem-host-socat.sh -o /usr/local/bin/siem-host-socat
-sudo chmod +x /usr/local/bin/siem-host-socat
+sudo install -m 0755 tools/siem-host-socat.sh /usr/local/bin/siem-host-socat   # from a repo checkout
+# or, if you're on the host without the repo: scp the file over, then chmod +x it
 sudo siem-host-socat
 ```
-(`tools/siem-host-socat.sh` is in this repo — `scp` it over if your remote differs.)
 
 **3 — Nutanix 9440 → Traefik 443**, a raw-TCP passthrough (TLS/SNI flow straight to Traefik's cert):
 ```bash

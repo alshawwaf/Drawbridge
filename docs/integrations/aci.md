@@ -40,7 +40,7 @@ NSX-T family's `/api/session` + `/api/v1`. Token routes (`/aci/<token>/api/...`)
 1. Portal → **Data Centers → New → Cisco ACI**. Set the Tenant + App Profile, add EPGs / ESGs
    (`Name = ip1, ip2`), and optionally a username/password (blank = open lab).
 2. SmartConsole → **New → More → Cloud → Data Center → Cisco ACI…**
-   - **URLs:** the **bare host** `https://dcsim.ai.alshawwaf.ca` (shown on the DC page) — CloudGuard
+   - **URLs:** the **bare host** `https://dcsim.example.com` (shown on the DC page) — CloudGuard
      ignores any path, so a `/aci/<token>` URL also works but resolves to the same apex.
    - **Username / Password:** the credentials you set (or anything, open lab).
 3. **Test Connection → Select objects.**

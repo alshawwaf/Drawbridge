@@ -17,7 +17,7 @@ Like vCenter, the NSX-T **Hostname** field is a **bare host**, so the mock is se
 1. Portal → **Data Centers → New → NSX-T**. Add VMs and NS Groups; set credentials (NSX-T needs
    **Auditor**-or-higher). Save.
 2. SmartConsole → **New → More → Cloud → Data Center → NSX-T**.
-   - **Hostname:** the portal's bare host (e.g. `dcsim.ai.alshawwaf.ca`).
+   - **Hostname:** the portal's bare host (e.g. `dcsim.example.com`).
    - **Username / Password:** the credentials you set on the portal DC.
 3. **Test Connection** → **Select objects**.
 

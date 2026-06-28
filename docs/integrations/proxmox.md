@@ -36,7 +36,7 @@ per portal, most-recently-created wins). Plain `<host>` would hit 8006 and miss 
 1. Portal → **Data Centers → New → Proxmox**. Add VMs (`name = ip | tag, tag`), the node name, and
    optionally an API token (Token ID + Secret). Blank secret = open lab (any token accepted).
 2. SmartConsole → **New → More → Cloud → Data Center → Proxmox…**
-   - **Hostname:** `dcsim.ai.alshawwaf.ca:443` (the `:443` is required).
+   - **Hostname:** `dcsim.example.com:443` (the `:443` is required).
    - **Token ID / Secret:** the API token you set on the portal DC.
 3. **Test Connection → Select objects.**
 

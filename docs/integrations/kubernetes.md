@@ -36,7 +36,7 @@ Apex single-tenant (bare host) — **one Kubernetes mock per portal**.
 2. On the portal DC page, download the **Service Account Token** (required) — and optionally the
    **CA Certificate** (the portal's own TLS chain) if you want to demo the real-cluster CA-import step.
 3. SmartConsole → **New → More → Cloud → Data Center → Kubernetes…**
-   - **Hostname / API server:** the full URL **with `https://`** (e.g. `https://dcsim.ai.alshawwaf.ca`),
+   - **Hostname / API server:** the full URL **with `https://`** (e.g. `https://dcsim.example.com`),
      **no port**. The connector parses this field with `new URL()`, so a bare `host:443` fails with
      *"unknown protocol"*; `https://` connects on 443 (the portal's port, the https default).
    - **Import Service Account Token…:** pick the token file (required field — token is a file, not typed).

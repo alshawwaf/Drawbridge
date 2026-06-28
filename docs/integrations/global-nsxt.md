@@ -35,7 +35,7 @@ Apex single-tenant (bare host), like NSX-T — **one Global NSX-T mock per porta
 
 1. Portal → **Data Centers → New → Global NSX-T**. Add VMs + NS Groups; set credentials (Auditor+).
 2. SmartConsole → **New → More → Cloud → Data Center → VMware by Broadcom → VMware Global NSX-T…**
-   - **Hostname:** the portal's bare host (e.g. `dcsim.ai.alshawwaf.ca`).
+   - **Hostname:** the portal's bare host (e.g. `dcsim.example.com`).
    - **Username / Password:** the credentials you set on the portal DC.
 3. **Test Connection → Select objects.**
 
