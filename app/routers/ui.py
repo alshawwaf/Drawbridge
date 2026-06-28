@@ -53,7 +53,7 @@ def coverage_page(request: Request, api: str = "management", version: str = "",
 @router.get("/mcp-guide", response_class=HTMLResponse)
 def mcp_guide_page(request: Request, db: Session = Depends(get_db)):
     """Onboarding for the MCP server: the tool catalog + copy-paste connect config for the common
-    clients (Claude Desktop / Cursor / VS Code / n8n) + live status + the safety model."""
+    clients (a desktop stdio client / Cursor / VS Code / n8n) + live status + the safety model."""
     if get_user_or_none(request, db) is None:
         return RedirectResponse("/login", status_code=303)
     from .. import mcp_server
