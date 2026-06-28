@@ -8,10 +8,10 @@
   <p class="muted">Drawbridge — the bridge to your Check Point policy</p>
   {% if error %}<div class="err" style="margin-top:12px;">{{ error }}</div>{% endif %}
   <form method="post" action="/login">
-    <label>Username</label>
-    <input name="username" autofocus autocomplete="username">
-    <label>Password</label>
-    <input name="password" type="password" autocomplete="current-password">
+    <label for="login-username">Username</label>
+    <input id="login-username" name="username" autofocus autocomplete="username">
+    <label for="login-password">Password</label>
+    <input id="login-password" name="password" type="password" autocomplete="current-password">
     <div style="margin-top:18px;"><button type="submit">Sign in</button></div>
   </form>
 </div>
