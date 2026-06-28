@@ -21,14 +21,17 @@ def _setup_logging() -> None:
     """Emit the app's own ``dcsim.*`` logs (SIEM bind, MCP mount, credential/cache warnings) to stderr at
     INFO by default — uvicorn doesn't configure our loggers, so without this they're silent in a PoV. A
     dedicated handler (propagate off) avoids double-logging when a parent handler also exists."""
-    level = os.environ.get("DCSIM_LOG_LEVEL", "INFO").upper()
+    raw = os.environ.get("DCSIM_LOG_LEVEL", "INFO").strip()
+    lvl = int(raw) if raw.isdigit() else logging.getLevelName(raw.upper())
+    if not isinstance(lvl, int):          # an unknown level name -> don't abort boot, fall back to INFO
+        lvl = logging.INFO
     log = logging.getLogger("dcsim")
     if not log.handlers:
         h = logging.StreamHandler(sys.stderr)
         h.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
         log.addHandler(h)
         log.propagate = False
-    log.setLevel(level)
+    log.setLevel(lvl)
 from .routers import (
     access_automation, aci_mock, activity, api_v1, datacenters, dynamic_layers, exports, feeds, gateways,
     gaia_mock, kubernetes_mock, mgmt, notifications, nsxt_mock, nutanix_mock, openstack_mock,
