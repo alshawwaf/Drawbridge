@@ -148,8 +148,16 @@ class MgmtSession:
             else:
                 raise MgmtError("Not logged in.")
         t = time.perf_counter()
-        r = self._client.post(f"{self.base}/{command}", json=payload or {},
-                              headers={"X-chkp-sid": self.sid})
+        try:
+            r = self._client.post(f"{self.base}/{command}", json=payload or {},
+                                  headers={"X-chkp-sid": self.sid})
+        except (httpx.HTTPError, ssl.SSLError, OSError) as exc:
+            # A MID-SESSION transport drop (idle RST, SMS reboot/timeout, network blip) — login() wraps
+            # these but call() did not, so they used to escape as a raw 500 to the SE mid-pull/apply. Wrap
+            # into MgmtError so every consumer (read pool, write pool, mgmt router, MCP/REST tools) reports
+            # a clean, user-facing error instead of a stack trace.
+            raise MgmtError(f"lost connection to {self.server.host}:{self.server.port} during “{command}” "
+                            f"({exc}). Check the SMS is reachable and retry.") from exc
         self._record(command, payload or {}, r, t)
         data = _safe_json(r)
         if r.status_code != 200:

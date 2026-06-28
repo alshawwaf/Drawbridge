@@ -750,7 +750,7 @@ def _render_terraform(layer, emit, rules, ref_map, skipped) -> str:
             L.append("")
             prev = addr
         else:
-            L.append(f'# unsupported rulebase item: {row.get("type", "unknown")} {row.get("name", "")}')
+            L.append(f'# unsupported rulebase item: {_one_line(row.get("type", "unknown"))} {_one_line(row.get("name", ""))}')
             L.append("")
     return "\n".join(L).rstrip() + "\n"
 
@@ -896,7 +896,7 @@ def _render_ansible(layer, emit, rules, skipped, host="", domain="") -> str:
                 L.append(f'        comments: {_q(row["comments"])}')
             L.append("        state: present")
         else:
-            L.append(f'    # unsupported rulebase item: {row.get("type", "unknown")} {row.get("name", "")}')
+            L.append(f'    # unsupported rulebase item: {_one_line(row.get("type", "unknown"))} {_one_line(row.get("name", ""))}')
 
     L += ["    - name: Publish", "      check_point.mgmt.cp_mgmt_publish:"]
     return "\n".join(L).rstrip() + "\n"

@@ -419,6 +419,24 @@ def test_call_relogins_once_on_expired_session():
     assert s.sid == "fresh"
 
 
+def test_call_wraps_transport_error_as_mgmterror():
+    # ship-audit HIGH: a mid-session transport drop must surface as a clean MgmtError (not a raw httpx
+    # error that escapes to a 500), so the mgmt router / REST tools render an error, not a stack trace.
+    import httpx
+    s = mgmt_api.MgmtSession(_srv(), "pw")
+    s.sid = "live"
+
+    def boom(*a, **k):
+        raise httpx.ConnectError("connection reset by peer")
+
+    s._client = types.SimpleNamespace(post=boom, close=lambda: None)
+    try:
+        s.call("show-access-rulebase")
+        assert False, "expected MgmtError"
+    except mgmt_api.MgmtError as e:
+        assert "lost connection" in str(e).lower()
+
+
 def test_write_session_does_not_silently_relogin():
     s = mgmt_api.MgmtSession(_srv(), "pw")           # auto_relogin defaults False (write session)
     s.sid = "stale"

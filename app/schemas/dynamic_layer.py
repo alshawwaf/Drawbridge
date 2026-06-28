@@ -247,6 +247,8 @@ def evaluate_dynamic_content(payload: dict) -> dict:
 def validate_layer_content(content: dict) -> None:
     """Light validation when saving an authored layer (the gateway/dry-run does the deep checks)."""
     objects = content.get("objects") or {}
+    if not isinstance(objects, dict):
+        raise ValueError("Objects must be a JSON object mapping each type to a list.")
     for t, items in objects.items():
         if t not in OBJECT_SPECS:
             raise ValueError(f"Unknown object type: {t!r}")
@@ -254,9 +256,13 @@ def validate_layer_content(content: dict) -> None:
             if not isinstance(o, dict) or not o.get("name"):
                 raise ValueError(f"Every {t} object needs a name.")
     rulebase = content.get("rulebase") or []
+    if not isinstance(rulebase, list):
+        raise ValueError("The rulebase must be a JSON list of rules.")
     if not rulebase:
         raise ValueError("Add at least one rule to the layer.")
     for i, r in enumerate(rulebase):
+        if not isinstance(r, dict):
+            raise ValueError(f"Rule #{i + 1} must be a JSON object.")
         if not r.get("name"):
             raise ValueError(f"Rule #{i + 1} needs a name.")
         if not r.get("action"):

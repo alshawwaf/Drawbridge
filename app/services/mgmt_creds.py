@@ -7,11 +7,15 @@ call. The app boots either way.
 """
 from __future__ import annotations
 
+import logging
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..models import ManagementSecret, ManagementServer
 from . import crypto
+
+_log = logging.getLogger("dcsim.creds")
 
 _INFO = b"dcsim-mgmt-secret-v1"   # HKDF context label — distinct from gateway/datacenter secrets
 
@@ -50,7 +54,13 @@ def secret_kind(db: Session, server: ManagementServer) -> str | None:
 def get_secret(db: Session, server: ManagementServer) -> str | None:
     """Decrypt and return the saved password/API key, or None if none stored / undecryptable."""
     row = _row(db, server)
-    return decrypt(row.ciphertext) if (row and row.ciphertext) else None
+    if not (row and row.ciphertext):
+        return None
+    plain = decrypt(row.ciphertext)
+    if plain is None and available():     # key present but ciphertext won't open -> rotation/corruption
+        _log.warning("management-server credential for id=%s did not decrypt (encryption key changed?) — "
+                     "re-enter it on the server's Edit page", server.id)
+    return plain
 
 
 def store_secret(db: Session, server: ManagementServer, plaintext: str, kind: str = "password") -> None:

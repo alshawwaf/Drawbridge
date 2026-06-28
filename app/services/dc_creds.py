@@ -11,11 +11,13 @@ so datacenters created before this change keep validating.
 from __future__ import annotations
 
 import hmac
+import logging
 
 from ..security import hash_password, verify_password
 from . import crypto
 
 _INFO = b"dcsim-dc-credential-v1"
+_log = logging.getLogger("dcsim.creds")
 
 
 def available() -> bool:
@@ -49,7 +51,13 @@ def configured(cfg: dict, field: str = "password") -> bool:
 def plaintext(cfg: dict, field: str = "password") -> str | None:
     """The recoverable secret for display/copy, or None if not stored encrypted (or undecryptable)."""
     tok = (cfg or {}).get(f"{field}_enc")
-    return decrypt(tok) if tok else None
+    if not tok:
+        return None
+    plain = decrypt(tok)
+    if plain is None and available():     # key present but ciphertext won't open -> rotation/corruption
+        _log.warning("a datacenter credential (field=%s) did not decrypt (encryption key changed?) — "
+                     "re-enter it on the datacenter's Edit page", field)
+    return plain
 
 
 def matches(cfg: dict, supplied: str, field: str = "password") -> bool | None:

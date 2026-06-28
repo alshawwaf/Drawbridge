@@ -6,11 +6,15 @@ per-apply password field. The app always boots either way.
 """
 from __future__ import annotations
 
+import logging
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..models import Gateway, GatewaySecret
 from . import crypto
+
+_log = logging.getLogger("dcsim.creds")
 
 # HKDF context label — unchanged, so gateway secrets stored before the crypto refactor still decrypt.
 _INFO = b"dcsim-gateway-password-v1"
@@ -47,7 +51,13 @@ def has_password(db: Session, gw: Gateway) -> bool:
 def get_password(db: Session, gw: Gateway) -> str | None:
     """Decrypt and return the saved password, or None if none is stored / cannot be decrypted."""
     row = _row(db, gw)
-    return decrypt(row.ciphertext) if (row and row.ciphertext) else None
+    if not (row and row.ciphertext):
+        return None
+    plain = decrypt(row.ciphertext)
+    if plain is None and available():     # key present but ciphertext won't open -> rotation/corruption
+        _log.warning("gateway credential for id=%s did not decrypt (encryption key changed?) — "
+                     "re-enter it on the gateway's Edit page", gw.id)
+    return plain
 
 
 def store_password(db: Session, gw: Gateway, plaintext: str) -> None:
