@@ -35,7 +35,7 @@ the same: a **webhook**-scope API key sent as `X-DCSim-Token`, or the shared web
 
 **Self-serve onboarding page:** the portal has a **MCP for agents** page at **`/mcp-guide`** (under
 *Layers & Gateways*) — live status pills (SDK installed / endpoint enabled / publish gate), a
-connect-config generator with copy-paste snippets for a desktop stdio client, Cursor, VS Code and n8n (built from
+connect-config generator with copy-paste snippets for Claude Desktop, Cursor, VS Code and n8n (built from
 the live origin + a bearer token you type in), and the full tool catalog. Same idea as
 <https://mcp.checkpoint.com/>. Point teammates there instead of hand-writing config.
 
