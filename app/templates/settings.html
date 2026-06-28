@@ -268,8 +268,7 @@
     var PROFILES = {
       conservative: { aa_app_carveout: false, aa_override_blocking_deny: false, aa_prefer_widen: false, aa_emit_notes: true,  aa_ignore_conditions: false },
       balanced:     { aa_app_carveout: true,  aa_override_blocking_deny: true,  aa_prefer_widen: true,  aa_emit_notes: true,  aa_ignore_conditions: false },
-      aggressive:   { aa_app_carveout: true,  aa_override_blocking_deny: true,  aa_prefer_widen: true,  aa_emit_notes: false, aa_ignore_conditions: true },
-      autopilot:    { aa_app_carveout: true,  aa_override_blocking_deny: true,  aa_prefer_widen: true,  aa_emit_notes: true,  aa_ignore_conditions: true }
+      aggressive:   { aa_app_carveout: true,  aa_override_blocking_deny: true,  aa_prefer_widen: true,  aa_emit_notes: true,  aa_ignore_conditions: true }
     };
     var boxes = {}, rows = [];
     KNOBS.forEach(function (k) {
@@ -303,6 +302,27 @@
     }
     sel.addEventListener('change', sync);
     sync();
+
+    // One-click "Autopilot (lab demo)" preset: Aggressive engine posture + agent publish + the one-turn
+    // autopilot blessing (all live in the form, just across two groups), then save in one go.
+    var apBtn = document.createElement('button');
+    apBtn.type = 'button';
+    apBtn.textContent = '⚡ Autopilot (lab demo)';
+    apBtn.style.cssText = 'margin-top:10px; padding:7px 14px; font-weight:600; font-size:12.5px;' +
+      'border:1px solid var(--line); border-radius:9px; background:var(--accent-grad); color:#fff; cursor:pointer;';
+    apBtn.title = 'Set Aggressive + enable agent publish + one-turn autopilot, then save (lab/demo only)';
+    apBtn.addEventListener('click', function () {
+      if (!confirm('Autopilot lab demo: set the Aggressive profile, let the MCP agent PUBLISH to live ' +
+                   'policy, and pre-authorize one-turn apply+publish (no confirmation). For lab/demo use. Continue?')) return;
+      sel.value = 'aggressive'; sync();
+      var pub = document.querySelector('input[name="mcp_allow_publish"]');
+      var auto = document.querySelector('input[name="aa_autopilot"]');
+      if (pub) pub.checked = true;
+      if (auto) auto.checked = true;
+      var f = sel.form || document.querySelector('form');
+      if (f) { if (f.requestSubmit) f.requestSubmit(); else f.submit(); }
+    });
+    if (selRow) selRow.appendChild(apBtn);
   })();
 </script>
 {% endblock %}

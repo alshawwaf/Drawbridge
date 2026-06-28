@@ -32,14 +32,14 @@ def test_decide_access_builds_request_and_previews(monkeypatch):
     assert seen["req"].service == "icmp" and seen["layer"] == "Network"
 
 
-def test_decide_access_signals_autopilot_from_profile(monkeypatch):
-    # The Autopilot behavior profile must surface in the tool result so a prompt-driven agent knows it may
-    # apply+publish in one turn. Any other profile (or read failure) -> autopilot False (agent confirms).
+def test_decide_access_signals_autopilot_from_toggle(monkeypatch):
+    # The Autopilot lab-demo toggle (aa_autopilot) must surface in the tool result so a prompt-driven agent
+    # knows it may apply+publish in one turn. Toggle off (or read failure) -> autopilot False (agent confirms).
     _fake_server(monkeypatch)
     monkeypatch.setattr(aa, "preview", lambda *a, **k: {"ok": True, "outcome": "widen"})
-    monkeypatch.setattr(app_settings, "get", lambda k: "autopilot" if k == "aa_profile" else None)
+    monkeypatch.setattr(app_settings, "get", lambda k: True if k == "aa_autopilot" else None)
     assert mcp_tools.decide_access(1, "10.1.1.5", "Any", "Network", application="Facebook")["autopilot"] is True
-    monkeypatch.setattr(app_settings, "get", lambda k: "balanced" if k == "aa_profile" else None)
+    monkeypatch.setattr(app_settings, "get", lambda k: False if k == "aa_autopilot" else None)
     assert mcp_tools.decide_access(1, "10.1.1.5", "Any", "Network", application="Facebook")["autopilot"] is False
 
 
@@ -85,27 +85,25 @@ def test_remove_access_publish_gate_and_delegates(monkeypatch):
 
 def test_remove_access_carries_autopilot_signal(monkeypatch):
     # M6: the headline one-turn revoke-and-publish needs the autopilot flag on the REMOVE result too (the
-    # agent routes straight to remove_access). It must be scope-aware (here: global autopilot, no override).
+    # agent routes straight to remove_access).
     _fake_server(monkeypatch)
-    monkeypatch.setattr(app_settings, "get", lambda k: "autopilot" if k == "aa_profile" else None)
+    monkeypatch.setattr(app_settings, "get", lambda k: True if k == "aa_autopilot" else None)
     monkeypatch.setattr(aa, "remove_execute",
                         lambda *a, **k: {"ok": True, "outcome": "deny", "applied": True, "published": False})
     out = mcp_tools.remove_access(1, "10.1.2.250", "Any", "Network", application="Facebook")
     assert out.get("autopilot") is True
 
 
-def test_autopilot_signal_is_scope_aware(monkeypatch):
-    # M2 + H1 interaction (re-checked after the precedence fix): the signal resolves the per-scope profile.
+def test_autopilot_signal_from_global_toggle(monkeypatch):
+    # Autopilot is now a global lab-demo toggle (aa_autopilot), not a per-scope profile: on -> True for any
+    # server/layer; off -> False.
     store = {}
     monkeypatch.setattr(app_settings, "get", lambda k: store.get(k))
     srv = types.SimpleNamespace(id=1, name="HQ")
-    # global conservative, but a *:DMZ override pins DMZ to autopilot -> True on DMZ, False elsewhere
-    store.update(aa_profile="conservative", aa_scope_overrides="*:DMZ = autopilot")
-    assert mcp_tools._autopilot(srv, "DMZ") is True
-    assert mcp_tools._autopilot(srv, "Network") is False
-    # global autopilot, but a server override guards HQ as conservative -> the signal is withheld there
-    store.update(aa_profile="autopilot", aa_scope_overrides="HQ = conservative")
-    assert mcp_tools._autopilot(srv, "AnyLayer") is False
+    store["aa_autopilot"] = True
+    assert mcp_tools._autopilot(srv, "DMZ") is True and mcp_tools._autopilot(None, None) is True
+    store["aa_autopilot"] = False
+    assert mcp_tools._autopilot(srv, "DMZ") is False
 
 
 # --- list_changes / revert_change (rollback) ------------------------------------------------------

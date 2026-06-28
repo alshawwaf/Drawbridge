@@ -1791,15 +1791,15 @@ def test_decide_options_resolves_named_profiles(monkeypatch):
     assert (o.app_carveout, o.override_blocking_deny, o.prefer_widen, o.emit_notes, o.ignore_conditions) \
         == (False, False, False, True, False)
 
-    store["aa_profile"] = "aggressive"                      # fewest rules, ignore conditions, quiet
-    o = aa._decide_options()
-    assert o.prefer_widen and o.app_carveout and o.override_blocking_deny and o.ignore_conditions \
-        and not o.emit_notes
-
-    store["aa_profile"] = "autopilot"                       # demo: max-decisive but narrates (notes ON)
+    store["aa_profile"] = "aggressive"                      # fewest rules, ignore conditions, notes ON
     o = aa._decide_options()
     assert o.prefer_widen and o.app_carveout and o.override_blocking_deny and o.ignore_conditions \
         and o.emit_notes
+
+    store["aa_profile"] = "autopilot"                       # NOT a profile anymore -> falls through to the
+    o = aa._decide_options()                                # Custom toggles (unset in this stub store -> all off)
+    assert (o.app_carveout, o.override_blocking_deny, o.prefer_widen, o.emit_notes, o.ignore_conditions) \
+        == (False, False, False, False, False)
 
 
 def test_scoped_profile_overrides_global_by_specificity(monkeypatch):
@@ -1812,15 +1812,16 @@ def test_scoped_profile_overrides_global_by_specificity(monkeypatch):
     store["aa_scope_overrides"] = (
         "Production = conservative\n"
         "*:DMZ = aggressive\n"
-        "HQ-SMS:DNS_Layer = autopilot\n"
+        "HQ-SMS:DNS_Layer = conservative\n"
         "# a comment line and a junk line\n"
         "garbage without equals\n")
 
-    # exact server+layer wins
-    assert aa._decide_options(srv, "DNS_Layer").ignore_conditions and aa._decide_options(srv, "DNS_Layer").emit_notes  # autopilot
-    # *:DMZ matches the layer on any server -> aggressive (quiet)
+    # exact server+layer wins -> conservative (never modify/override)
+    c = aa._decide_options(srv, "DNS_Layer")
+    assert not c.app_carveout and not c.override_blocking_deny and not c.ignore_conditions
+    # *:DMZ matches the layer on any server -> aggressive (ignore conditions, notes ON)
     o = aa._decide_options(srv, "DMZ")
-    assert o.ignore_conditions and not o.emit_notes
+    assert o.ignore_conditions and o.emit_notes
     # server name match (by name) on a different server -> conservative
     prod = types.SimpleNamespace(id=9, name="Production")
     c = aa._decide_options(prod, "AnyLayer")
@@ -2055,7 +2056,7 @@ def test_decide_removal_dynamic_layer_only_is_not_a_review():
 
 
 def test_decide_removal_conditional_drop_never_asserts_full_deny_under_ignore_conditions():
-    # M3: with ignore_conditions ON (aggressive/autopilot), a conditional DROP must NOT terminate the removal
+    # M3: with ignore_conditions ON (the Aggressive profile), a conditional DROP must NOT terminate the removal
     # walk as a full deny — it only blocks UNDER its condition, so a broad ACCEPT below still grants the flow
     # when the condition is unmet. The honest, safe answer is REVIEW (don't claim "already denied / removed").
     cond_drop = _rule("cd", 1, "Drop", _net("10.0.0.0/24"), _host("1.1.1.1"), ServiceSet(any=True),
