@@ -16,6 +16,10 @@
   .ax-bar select, .ax-bar input { padding:6px 9px; min-width:180px; }
   .ax-bar input.url { min-width:340px; font-family:ui-monospace,monospace; }
   .ax-bar button { padding:7px 16px; font-weight:600; }
+  /* The proxy toggle is a checkbox — exclude it from the field sizing above (and the global
+     input{width:100%}) so it renders as a small box, not a full-width bar. */
+  .ax-bar input[type="checkbox"] { width:auto; min-width:0; padding:0; margin:0; accent-color:var(--accent);
+    flex:0 0 auto; width:15px; height:15px; cursor:pointer; }
   /* One collapsed "how it works" disclosure instead of two big always-on explainer blocks. */
   .ax-help { max-width:980px; margin:2px 0 14px; border:1px solid var(--line); border-radius:9px;
     background:var(--surface-2); font-size:12.5px; overflow:hidden; }
@@ -46,8 +50,13 @@
   #swagger-ui .renderedMarkdown p, #swagger-ui .markdown p { color:var(--text-2); }
   #swagger-ui .info a, #swagger-ui a.nostyle, #swagger-ui .info a:hover { color:var(--accent); }
   /* server / authorize bar */
+  /* Only the Authorize button remains (servers hidden below), so shrink the container to wrap just the
+     button and float it right — otherwise Swagger renders a tall, full-width, mostly-empty bar. */
   #swagger-ui .scheme-container { background:var(--surface-2); box-shadow:none;
-    border:1px solid var(--line); border-radius:10px; margin:0 0 18px; }
+    border:1px solid var(--line); border-radius:10px; margin:0 0 16px auto; padding:8px 12px;
+    width:fit-content; display:flex; }
+  #swagger-ui .scheme-container .schemes.wrapper { width:auto; padding:0; margin:0; }
+  #swagger-ui .scheme-container .auth-wrapper { margin:0; }
   #swagger-ui .scheme-container .schemes-title, #swagger-ui label { color:var(--text-2); }
   /* The portal's own TARGET SERVER picker (above) already sets the base URL — hide Swagger's redundant
      server line so the target isn't shown twice. Authorize stays. */
