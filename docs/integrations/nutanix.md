@@ -44,7 +44,7 @@ Apex single-tenant (bare host) — **one Nutanix mock per portal**.
 1. Portal → **Data Centers → New → Nutanix**. Add VMs (`name = ip | Category=Value, …`); optionally set
    Prism credentials.
 2. SmartConsole → **New → More → Cloud → Data Center → Nutanix…**
-   - **Hostname:** the **bare** host — `dcsim.ai.alshawwaf.ca` (no `https://`, no port; CloudGuard hits
+   - **Hostname:** the **bare** host — `dcsim.example.com` (no `https://`, no port; CloudGuard hits
      `:9440` itself).
    - **Username / Password:** the Basic-auth credentials you set on the portal DC (Viewer role is enough).
 3. **Test Connection → Select objects.**
@@ -100,7 +100,7 @@ them blank for an open lab.
 
 ## Exposing port 9440 end-to-end (Dokploy/Traefik + cloud edge)
 
-The hosted `dcsim.ai.alshawwaf.ca` runs behind Dokploy's Traefik (TLS on 443 → the app; it ignores the
+The hosted `dcsim.example.com` runs behind Dokploy's Traefik (TLS on 443 → the app; it ignores the
 repo's `docker-compose.yml`/`Caddyfile`). Nutanix needs `:9440` reachable **all the way from the SMS**,
 which is **three layers** — and every one must be open (confirmed the hard way against a live SMS):
 
@@ -137,9 +137,9 @@ also pass `:9440`. 443 works only because the edge forwards it; 9440 stays dropp
 
 **Verify from a public host** (not the VM's own LAN, or the host firewall masks the result):
 ```bash
-curl -skI https://dcsim.ai.alshawwaf.ca:9440/healthz   # a response (not a timeout) = all 3 layers open
+curl -skI https://dcsim.example.com:9440/healthz   # a response (not a timeout) = all 3 layers open
 ```
-Then in SmartConsole enter the **bare** hostname (`dcsim.ai.alshawwaf.ca`) → Test Connection.
+Then in SmartConsole enter the **bare** hostname (`dcsim.example.com`) → Test Connection.
 
 > **Status (2026-06-19): ✅ working end-to-end on `YUL-SKUNK`** — Test Connection passes and the object
 > viewer imports the VMs + Categories. Beyond opening 9440 at all three layers, the real blockers were

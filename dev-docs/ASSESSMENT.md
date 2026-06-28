@@ -1,13 +1,13 @@
 # DC Integration Simulator — state & roadmap
 
 _Assessment of what's built, how good it is, and what to add to make it maximally useful for SE demos._
-_Last updated: 2026-06-19._
+_Last updated: 2026-06-28._
 
 ## TL;DR
 
 The portal is the broadest CloudGuard / Quantum integration demo surface in one place: **8 datacenter
 mocks + 3 feeds + the full push side** (dynamic-layer builder → real or mock gateway) **+ a SIEM
-receiver** (Log Exporter sink) **+ a live-mutation control panel**, one app, **259 tests passing**,
+receiver** (Log Exporter sink) **+ a live-mutation control panel**, one app, **900+ tests passing**,
 **live-confirmed against real R82.10 CloudGuard**. The mocks are built to each provider's *exact* API
 contract (response shapes, auth, query semantics) and validated against a live SMS — so they connect
 on the first/second try rather than after weeks of guessing. The **Scenarios** engine delivers the
@@ -29,7 +29,7 @@ one-click **auto-quarantine** demo; customer-facing **branding** is the main pol
 | Gateways & DC creds | **AES-256-GCM encrypted at rest**; **trust-on-first-use** cert pinning (TLS never disabled); real-gateway push | ✅ |
 | **Live demo control** | **Scenarios** (`/scenarios`): tag flip / scale-out / remove · presets (quarantine, scale-out, blocklist) · **timed runner** + live timeline · per-preset **talk-tracks** · baseline/reset | ✅ |
 | **PoV enablement** | **One-click seed** (full demo env + a running scenario) · **export/import** a portable bundle (no secrets) | ✅ |
-| **Diagnostics / infra** | Activity log (full request/response, redacted, per-provider filter + search), auth, Docker/Dokploy deploy, **259 tests** | ✅ |
+| **Diagnostics / infra** | Activity log (full request/response, redacted, per-provider filter + search), auth, Docker/Dokploy deploy, **900+ tests** | ✅ |
 | **Not built yet** | one-click **auto-quarantine** demo (IoC → BotFound → quarantine) · customer-facing **branding/logo** · feeds not yet wired into Scenarios | ❌ |
 
 ## How good it is

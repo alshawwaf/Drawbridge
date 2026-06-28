@@ -6,9 +6,8 @@ configure and demo dynamic-object integrations during PoVs with no real backend 
 dynamic-object analog of the RADIUS/TACACS simulator.
 
 ## Locked decisions
-- **Hosting:** cloud-hosted via **Dokploy** (Traefik handles domain + Let's Encrypt TLS; panel
-  at https://dokploy.ai.alshawwaf.ca/) **and** Docker-portable (Caddy/compose) for local/
-  air-gapped labs. See `DEPLOY.md`.
+- **Hosting:** cloud-hosted via **Dokploy** (Traefik handles domain + Let's Encrypt TLS) **and**
+  Docker-portable (Caddy/compose) for local/air-gapped labs. See `DEPLOY.md`.
 - **v1 scope:** three file feeds (Generic DC, IoC, Network Feed) **+ one cloud-API mock** — all
   shipped, and since extended well beyond: **8 datacenter mocks**, the **Dynamic Layers** push side,
   a **SIEM receiver**, and PoV **seed / bundle** tooling. See `ASSESSMENT.md` for the current state.

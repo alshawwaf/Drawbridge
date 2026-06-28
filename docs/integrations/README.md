@@ -76,6 +76,7 @@ log.
 
 ## Supported CloudGuard R82.10 datacenter types
 
-Endpoint-configurable (mockable here): OpenStack ✅, vCenter ✅, NSX-T ✅ (+ Global NSX-T), Nutanix,
-Cisco ACI, Kubernetes, Proxmox (new), Cisco ISE. Fixed-cloud (**not** mockable — use a Generic Data
-Center feed instead): AWS, Azure, GCP, Oracle OCI. Dropped in R82.10: NSX-V, Nuage.
+Built in Drawbridge (mockable here): OpenStack ✅, vCenter ✅, NSX-T ✅ (+ Global NSX-T) ✅, Nutanix ✅,
+Cisco ACI ✅, Kubernetes ✅, Proxmox ✅. Endpoint-configurable in R82.10 but **not yet built here**:
+Cisco ISE. Fixed-cloud (**not** mockable — use a Generic Data Center feed instead): AWS, Azure, GCP,
+Oracle OCI. Dropped in R82.10: NSX-V, Nuage.
