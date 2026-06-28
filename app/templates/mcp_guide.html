@@ -38,7 +38,7 @@
 <div class="mcp-hero">
   <h1><span class="icon-chip lg"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v1H7a2 2 0 0 0-2 2v3H4a2 2 0 1 0 0 4h1v3a2 2 0 0 0 2 2h3v1a3 3 0 1 0 6 0v-1h3a2 2 0 0 0 2-2v-3h1a2 2 0 1 0 0-4h-1V8a2 2 0 0 0-2-2h-2V5a3 3 0 0 0-3-3z"/></svg></span> MCP for agents</h1>
 </div>
-<p class="mcp-sub">Drive Drawbridge from an LLM agent (n8n, Cursor, VS Code, and other MCP clients) over the Model
+<p class="mcp-sub">Drive Drawbridge from an LLM agent (n8n, Claude Desktop, Cursor, VS Code) over the Model
 Context Protocol. The agent gets typed tools to <b>reason about and act on</b> Check Point access
 policy — decide on a request, correlate a service/app name, analyse a layer, and (gated) apply a change.
 Same idea as <a href="https://mcp.checkpoint.com/" target="_blank" rel="noopener">Check Point's MCP servers</a>,
@@ -64,7 +64,7 @@ focused on the access-automation engine.</p>
     shown only once, so copy the config now. Manage or revoke keys in
     <a href="/settings#grp-api-keys">Settings → API keys</a>.</p>
   <div class="mcp-tabs" id="mcp-tabs">
-    <button data-c="stdio" class="active">Desktop (stdio)</button>
+    <button data-c="claude" class="active">Claude Desktop</button>
     <button data-c="cursor">Cursor</button>
     <button data-c="vscode">VS Code</button>
     <button data-c="n8n">n8n</button>
@@ -77,7 +77,7 @@ focused on the access-automation engine.</p>
   <h3 style="margin:0 0 6px;">Suggested agent system prompt</h3>
   <p class="mcp-note" style="margin:0 0 10px;">Paste this into your agent's <b>system message</b>. It teaches the order —
     <b>pick the management server &amp; layer → decide (read-only) → apply on your OK</b> — so a smaller model doesn't guess
-    a server/layer or loop. Written for n8n's <b>built-in MCP Client Tool</b> (and Cursor / VS Code / other MCP clients),
+    a server/layer or loop. Written for n8n's <b>built-in MCP Client Tool</b> (and Claude Desktop / Cursor / VS Code),
     where each Drawbridge tool is exposed to the agent directly (it calls <code>list_management_servers</code>,
     <code>decide_access</code>, … by name).</p>
   <div class="mcp-sys-actions">
@@ -118,7 +118,7 @@ focused on the access-automation engine.</p>
     var tokEl = document.getElementById('mcp-tok'),
         fieldsEl = document.getElementById('mcp-fields'),
         hint = document.getElementById('mcp-clienthint'), tabs = document.getElementById('mcp-tabs');
-    var current = 'stdio';
+    var current = 'claude';
     function tok() { return tokEl.value.trim() || '<your-mcp-key>'; }
     function flash(btn, label) {
       var keep = btn.getAttribute('data-label') || btn.textContent;
@@ -129,10 +129,10 @@ focused on the access-automation engine.</p>
     function copyText(btn, text) { if (navigator.clipboard) navigator.clipboard.writeText(text); flash(btn, 'Copied'); }
     function cfg() {
       var t = tok(), auth = 'Bearer ' + t;
-      if (current === 'stdio') {
-        return { fields: [{ label: 'MCP client config (mcpServers)', pre: true, value: JSON.stringify({ mcpServers: { drawbridge: {
+      if (current === 'claude') {
+        return { fields: [{ label: 'claude_desktop_config.json', pre: true, value: JSON.stringify({ mcpServers: { drawbridge: {
           command: 'npx', args: ['mcp-remote', url, '--header', 'Authorization: ' + auth] } } }, null, 2) }],
-          hint: 'For a desktop MCP client that speaks <b>stdio</b>: it bridges to our HTTP server via <code>mcp-remote</code>. Paste this into your client\'s <code>mcpServers</code> config, then restart the client.' };
+          hint: 'Claude Desktop speaks stdio, so it bridges to our HTTP server via <code>mcp-remote</code>. Paste this into <code>claude_desktop_config.json</code>, then restart Claude Desktop.' };
       }
       if (current === 'cursor') {
         return { fields: [{ label: '~/.cursor/mcp.json', pre: true, value: JSON.stringify({ mcpServers: { drawbridge: {
