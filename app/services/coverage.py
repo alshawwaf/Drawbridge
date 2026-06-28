@@ -244,12 +244,13 @@ def _examples(obj: dict, api_type: str) -> dict:
     return out
 
 
-# Public documentation links so the user can verify support / browse fields per tool.
-_SWAGGER_BASE = os.environ.get("COVERAGE_SPEC_URL", "https://swagger.ai.alshawwaf.ca")
+# Documentation links so the user can verify support / browse fields per tool. The "api" link points at the
+# portal's OWN integrated API explorer (this project vendors the CP-Docs-To-Swagger converter as
+# app.services.cp_docs) — a relative URL on the current site, never a retired external service.
 
 
 def _doc_urls(api_type: str, obj: dict) -> dict:
-    docs = {"api": f"{_SWAGGER_BASE}/docs?api_type={api_type}"}
+    docs = {"api": f"/api-explorer?api={api_type}"}
     if obj["terraform"]:
         # The Check Point provider's registry doc slug KEEPS the resource prefix (the doc files are named
         # checkpoint_<resource>.html.markdown) — unlike most providers — so do NOT strip "checkpoint_".

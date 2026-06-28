@@ -138,3 +138,11 @@ def test_terraform_doc_url_keeps_checkpoint_prefix():
     d = coverage._doc_urls("management", {"terraform": "checkpoint_management_identity_provider", "ansible": None})
     assert d["terraform"].endswith("/docs/resources/checkpoint_management_identity_provider")
     assert "/docs/resources/management_identity_provider" not in d["terraform"]
+
+
+def test_api_doc_link_uses_in_portal_explorer_not_retired_swagger():
+    # The CP-Docs-To-Swagger service is vendored into this project; the "api" doc link must point at the
+    # portal's own /api-explorer (current site), never the retired external swagger.ai host.
+    d = coverage._doc_urls("management", {"terraform": None, "ansible": None})
+    assert d["api"] == "/api-explorer?api=management"
+    assert "swagger.ai" not in d["api"] and "://" not in d["api"]
