@@ -19,7 +19,7 @@
       --bg:#0a0e17; --bg-glow:radial-gradient(1100px 460px at 78% -160px, rgba(255,61,154,.10), transparent 70%);
       --surface:#121829; --surface-2:#171f33; --surface-3:#1d263c;
       --line:#26304a; --line-soft:#1d2538; --line-strong:#3a4666;
-      --text:#e8ecf6; --text-2:#c3ccde; --muted:#8e98b0; --faint:#697088;
+      --text:#e8ecf6; --text-2:#c3ccde; --muted:#8e98b0; --faint:#7d889f;
       --accent:#ff3d9a; --accent-2:#ff66b2; --accent-dark:#e6007e; --on-accent:#fff;
       --accent-soft:rgba(255,61,154,.15); --focus-ring:rgba(255,61,154,.32);
       /* Signature magenta→violet gradient — used for icon chips, primary buttons, active chips. Defined
@@ -45,7 +45,7 @@
       --bg:#eef1f7; --bg-glow:radial-gradient(1100px 460px at 78% -200px, rgba(230,0,126,.07), transparent 70%);
       --surface:#fff; --surface-2:#fff; --surface-3:#f7f9fc;
       --line:#e3e8f1; --line-soft:#eef1f6; --line-strong:#d3d9e4;
-      --text:#16203a; --text-2:#33415c; --muted:#5b6678; --faint:#8b94a6;
+      --text:#16203a; --text-2:#33415c; --muted:#5b6678; --faint:#6b7488;
       --accent:#e6007e; --accent-2:#ff2e9a; --accent-dark:#c70d72; --on-accent:#fff;
       --accent-soft:rgba(230,0,126,.10); --focus-ring:rgba(230,0,126,.16);
       --ok:#15935a; --ok-bg:#e6f5ec; --ok-line:#bfe6cd;
@@ -63,6 +63,13 @@
 
     * { box-sizing:border-box; }
     html { scroll-behavior:smooth; }
+    /* Keyboard-accessibility: a clear focus ring on every interactive control (mouse clicks stay clean via
+       :focus-visible). Uses the theme's --focus-ring so it reads in both light and dark. */
+    a:focus-visible, button:focus-visible, .btn:focus-visible, .chip:focus-visible, .copybtn:focus-visible,
+    .icon-btn:focus-visible, header nav a:focus-visible, .signout-btn:focus-visible, summary:focus-visible,
+    [tabindex]:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
+      outline:2px solid transparent; outline-offset:2px; box-shadow:0 0 0 3px var(--focus-ring); border-radius:6px;
+    }
     body {
       margin:0; min-height:100vh;
       font-family:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
