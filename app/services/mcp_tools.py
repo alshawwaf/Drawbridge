@@ -226,9 +226,9 @@ def apply_access(server_id: str, source: str, destination: str, layer: str, serv
             allowed = False
         if not allowed:
             return {"ok": False, "outcome": "review", "applied": False, "published": False,
-                    "error": "publishing is disabled for the MCP agent — an admin must enable "
-                             "'Let the MCP agent publish to live policy' in Settings. Re-run with "
-                             "publish=false to dry-run (validate then discard)."}
+                    "error": "agentic publishing is disabled — an admin must enable 'Let the MCP agent "
+                             "publish to live policy' in Settings (this gate covers the MCP and REST "
+                             "apply paths). Re-run with publish=false to dry-run (validate then discard)."}
     db = SessionLocal()
     try:
         ms, secret = _server_secret(db, server_id)
@@ -275,9 +275,9 @@ def remove_access(server_id: str, source: str, destination: str, layer: str, ser
             allowed = False
         if not allowed:
             return {"ok": False, "outcome": "review", "applied": False, "published": False,
-                    "error": "publishing is disabled for the MCP agent — an admin must enable "
-                             "'Let the MCP agent publish to live policy' in Settings. Re-run with "
-                             "publish=false to dry-run (validate then discard)."}
+                    "error": "agentic publishing is disabled — an admin must enable 'Let the MCP agent "
+                             "publish to live policy' in Settings (this gate covers the MCP and REST "
+                             "apply paths). Re-run with publish=false to dry-run (validate then discard)."}
     db = SessionLocal()
     try:
         ms, secret = _server_secret(db, server_id)

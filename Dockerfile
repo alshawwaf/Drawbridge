@@ -12,6 +12,12 @@ ENV DCSIM_DATABASE_URL=sqlite:////data/dcsim.db
 VOLUME ["/data"]
 EXPOSE 8000
 
+# Drop privileges: run as a non-root user. /data (the named volume) is created + owned by that user so the
+# SQLite DB is writable on first boot. (A bind-mount to a host dir must be chowned to UID 10001 on the host.)
+RUN useradd --system --uid 10001 --create-home --home-dir /home/app app \
+    && mkdir -p /data && chown -R app:app /data /srv
+USER app
+
 # Dokploy/Traefik terminates TLS and routes the domain to port 8000 — no Caddy in the hosted path.
 # stdlib healthcheck (slim image has no curl) so Dokploy can report container health.
 HEALTHCHECK --interval=30s --timeout=4s --start-period=10s --retries=3 \

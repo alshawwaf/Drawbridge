@@ -97,6 +97,40 @@ def _parse_response(raw: bytes, content_type: str):
     return text[:_MAX_BODY]
 
 
+class SecurityHeadersMiddleware:
+    """Adds defensive HTTP response headers to every reply: anti-clickjacking (the admin portal is never
+    meant to be framed), MIME-sniff protection, a tight referrer policy, and HSTS when served over HTTPS.
+    Deliberately minimal — no restrictive ``default-src`` CSP — so the embedded Swagger UI and the inline
+    ``<script type="application/json">`` blobs keep working; only ``frame-ancestors`` is locked down."""
+
+    _BASE = [
+        (b"x-frame-options", b"DENY"),
+        (b"content-security-policy", b"frame-ancestors 'none'"),
+        (b"x-content-type-options", b"nosniff"),
+        (b"referrer-policy", b"same-origin"),
+    ]
+
+    def __init__(self, app, https: bool = False):
+        self.app = app
+        self._headers = list(self._BASE)
+        if https:
+            self._headers.append((b"strict-transport-security", b"max-age=31536000; includeSubDomains"))
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") != "http":
+            return await self.app(scope, receive, send)
+
+        async def snd(msg):
+            if msg.get("type") == "http.response.start":
+                headers = list(msg.get("headers") or [])
+                have = {k.lower() for k, _ in headers}
+                headers.extend((k, v) for k, v in self._headers if k not in have)
+                msg = {**msg, "headers": headers}
+            await send(msg)
+
+        await self.app(scope, receive, snd)
+
+
 class ActivityLogMiddleware:
     def __init__(self, app):
         self.app = app
