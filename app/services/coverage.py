@@ -251,9 +251,10 @@ _SWAGGER_BASE = os.environ.get("COVERAGE_SPEC_URL", "https://swagger.ai.alshawwa
 def _doc_urls(api_type: str, obj: dict) -> dict:
     docs = {"api": f"{_SWAGGER_BASE}/docs?api_type={api_type}"}
     if obj["terraform"]:
-        slug = obj["terraform"].replace("checkpoint_", "", 1)   # checkpoint_management_host -> management_host
+        # The Check Point provider's registry doc slug KEEPS the resource prefix (the doc files are named
+        # checkpoint_<resource>.html.markdown) — unlike most providers — so do NOT strip "checkpoint_".
         docs["terraform"] = ("https://registry.terraform.io/providers/CheckPointSW/checkpoint/latest/"
-                             f"docs/resources/{slug}")
+                             f"docs/resources/{obj['terraform']}")
     if obj["ansible"]:
         coll = "mgmt" if api_type == "management" else "gaia"
         docs["ansible"] = (f"https://docs.ansible.com/ansible/latest/collections/check_point/{coll}/"
