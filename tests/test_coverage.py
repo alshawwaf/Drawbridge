@@ -67,7 +67,7 @@ def test_gaia_examples_use_gaia_api_path_and_no_mgmt_cli():
     assert "mgmt_cli" not in ex                                    # clish, not mgmt_cli — so omitted here
     assert 'context = "gaia_api"' in ex["terraform"]
     assert "check_point.gaia.cp_gaia_dns" in ex["ansible"]
-    assert d["docs"]["terraform"].endswith("/resources/gaia_dns")
+    assert d["docs"]["terraform"].endswith("/resources/checkpoint_gaia_dns")   # registry slug keeps the prefix
     assert "check_point/gaia/cp_gaia_dns_module.html" in d["docs"]["ansible"]
 
 
@@ -130,3 +130,11 @@ def test_check_for_update_adds_then_finds_existing(monkeypatch, tmp_path):
     assert (tmp_path / "management-v9.9-test.json").exists()
     r2 = cb.check_for_update("management", "v9.9-test")    # now bundled
     assert r2["ok"] and r2["added"] is False
+
+
+def test_terraform_doc_url_keeps_checkpoint_prefix():
+    # The Check Point provider's registry doc slug KEEPS the resource prefix (doc files are named
+    # checkpoint_<resource>.html.markdown) — stripping it 404s.
+    d = coverage._doc_urls("management", {"terraform": "checkpoint_management_identity_provider", "ansible": None})
+    assert d["terraform"].endswith("/docs/resources/checkpoint_management_identity_provider")
+    assert "/docs/resources/management_identity_provider" not in d["terraform"]
