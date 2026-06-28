@@ -15,12 +15,28 @@ _ISSUED = "2020-01-01T00:00:00.000000Z"
 _NETWORK_NAME = "default-net"  # the single mock network; VM addresses are keyed by this name
 
 
+def _default_cidr(dc) -> str:
+    """A plausible CIDR for the synthetic default subnet: the /24 of the first instance IP, else 10.0.0.0/24."""
+    for inst in (dc.content or {}).get("instances", []) or []:
+        for ip in _ips(inst):
+            try:
+                return str(ipaddress.ip_network(f"{ip}/24", strict=False))
+            except ValueError:
+                continue
+    return "10.0.0.0/24"
+
+
 def _subnets(dc) -> list[dict]:
     """The datacenter's subnets as {id, name, cidr} — the canonical ids ports/networks reference."""
     out = []
     for i, s in enumerate((dc.content or {}).get("subnets", []) or []):
         name = s.get("name") or f"subnet-{i + 1}"
         out.append({"id": _id(dc.token, "subnet", name), "name": name, "cidr": s.get("cidr", "")})
+    # Instances but no subnets configured -> synthesize a "default" subnet so a port's subnet_id never
+    # references a subnet the subnets/networks listings don't contain (that dangle stalls a CloudGuard
+    # import at "still initializing"). Matches the id _subnet_for_ip falls back to.
+    if not out and (dc.content or {}).get("instances"):
+        out.append({"id": _id(dc.token, "subnet", "default"), "name": "default", "cidr": _default_cidr(dc)})
     return out
 
 
@@ -190,8 +206,7 @@ def neutron_security_groups(dc) -> dict:
 
 
 def neutron_networks(dc) -> dict:
-    subnet_ids = [_id(dc.token, "subnet", (s.get("name") or f"subnet-{i + 1}"))
-                  for i, s in enumerate((dc.content or {}).get("subnets", []) or [])]
+    subnet_ids = [s["id"] for s in _subnets(dc)]   # same source as subnets/ports (incl. synthetic default)
     return {"networks": [{"id": _id(dc.token, "network", "default"), "name": "default-net",
                           "status": "ACTIVE", "admin_state_up": True, "subnets": subnet_ids,
                           "tenant_id": _id(dc.token, "project"), "project_id": _id(dc.token, "project")}]}

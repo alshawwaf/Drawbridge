@@ -231,7 +231,10 @@ def mgmt_apply(sid: int, request: Request, edit: RuleEdit, db: Session = Depends
     if err:
         return err
     op = mgmt_api.build_set_rule_op(edit.layer, edit.uid, edit.changes)
-    return JSONResponse(mgmt_api.apply_changes(ms, secret, [op], publish=edit.publish))
+    try:
+        return JSONResponse(mgmt_api.apply_changes(ms, secret, [op], publish=edit.publish))
+    except mgmt_api.MgmtError as exc:        # incl. a wrapped mid-session transport drop -> clean 400, not 500
+        return JSONResponse({"error": str(exc)}, status_code=400)
 
 
 @router.get("/management/{sid}/gaia-export", response_class=HTMLResponse)
