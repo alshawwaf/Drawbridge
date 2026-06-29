@@ -190,4 +190,6 @@ pip install pytest && pytest -q          # 900+ tests, all green
 - **[docs/integrations/](docs/integrations/)** — per-integration setup, endpoints, object model, gotchas.
 - **[docs/access-automation-whitepaper.md](docs/access-automation-whitepaper.md)** — how the decide/grant
   engine reasons about a rulebase.
+- **[docs/mcp-agent-qa.md](docs/mcp-agent-qa.md)** — the MCP-agent QA battery: one-sentence “…and publish”
+  prompts that exercise every tool, outcome, and column (the demo script + regression check in one).
 - **[CHANGELOG.md](CHANGELOG.md)** — what's in this release.
