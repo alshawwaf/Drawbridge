@@ -123,6 +123,15 @@ whole dimension. Good for an agent to *understand* a policy before proposing a c
 3. (if approved) `apply_access(..., publish=false)` to dry-run, then `publish=true` once the admin toggle
    is on.
 
+With the **Autopilot (lab demo)** preset on (Settings → Access automation logic), steps 1–3 collapse into a
+single turn: one sentence ending “…and publish the changes” resolves, applies **and** publishes.
+
+## 5b. QA battery
+
+A standing set of one-sentence “…and publish” prompts that exercise **every** tool, outcome, and column —
+the demo script and the regression check in one — lives in **[mcp-agent-qa.md](mcp-agent-qa.md)**. Run it
+after any change to the engine or the MCP tools.
+
 ## 6. Status — validated live
 
 Validated end-to-end against `mcp` SDK 1.28.0 (Streamable-HTTP): a request with no / wrong bearer → 401;
