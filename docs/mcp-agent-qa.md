@@ -23,13 +23,62 @@ to the live policy — in one turn.
    publish in one turn without asking**. Without it, the agent will decide + dry-run and ask you to confirm —
    also a valid test, just not the one-sentence demo.
 
-**Lab object map** (from the seeded Network layer): `win_client 10.1.1.222` · `win_server 10.1.2.250` ·
-`jump_host 10.1.1.200` · `GW 10.1.1.111` · `SMS 10.1.1.100` · `ubuntu25 10.1.3.33` · `kali_linux 203.0.113.5`
-· DNS `8.8.8.8/8.8.4.4` · nets `10.1.1.0/24`, `10.1.2.0/24`, `10.1.3.0/24` · zones `InternalZone` /
-`DMZZone` / `ExternalZone`. Predefined data-type `Source Code`; built-in VPN community `All_GwToGw`.
+The exact rulebase and object map these prompts assume are in **[Reference policy](#reference-policy--the-sms-network-layer-these-prompts-assume)** below — recreate it (or adapt the prompts to your own policy) so the outcomes match.
 
 **How to read each row:** the **Prompt** is what you paste; **Exercises** is the tool path + engine
 behavior it proves; **Expect** is the result a healthy system returns.
+
+---
+
+## Reference policy — the SMS **Network** layer these prompts assume
+
+The prompts in §2–§8 are calibrated against this exact rulebase (what the **Seed SBT Lab Environment** preset
+builds). Recreate it — or map the prompts onto your own policy — so the outcomes match. It reads top-down,
+first-match, exactly as in SmartConsole:
+
+| # | Name | Source | Destination | Service | Action |
+|--:|------|--------|-------------|---------|--------|
+| 1 | Silent Drop | Any | Any | bootp, NBT, nbsession, nbname, nbdatagram | **Drop** |
+| 2 | CP Updates | GW, SMS | Akamai Services, Check Point Services | http, https, proxy | Accept |
+| 3 | Management | jump_host, win_client, SMS, GW | GW, SMS | ssh_v2, https | Accept |
+| 4 | DCSIM | SMS, GW | `.ai.alshawwaf.ca` *(domain)* | Any | Accept |
+| 5 | Orchestrator | ubuntu25, cloudshare | SMS, GW | Any | Accept |
+| 6 | Stealth Rule | Any | GW | Any | **Drop** |
+| 7 | DNS Layer | Any | Any | dns | **Apply Layer** → `DNS_Layer` (inline) |
+| 8 | Dynamic Layer | Any | Any | Any | **Apply Layer** → `dynamic_layer` (inline, sk182252) |
+| 9 | Outbound | net_10_1_1_0_24, net_10_1_2_0_24, net_10_1_3_0_24 | Any | http, https, proxy, icmp-requests, quic | Accept |
+| 10 | Mail | net_10_1_1_0_24, net_10_1_2_0_24, jump_host | Any | mail_services | Accept |
+| 11 | LDAP | win_client, SMS | win_server | LDAP_all, ntp, tcp-high-ports | Accept |
+| 12 | DMZ | kali_linux | win_server | Any | Accept |
+| 13 | Cleanup rule | Any | Any | Any | **Drop** |
+
+**Objects referenced above:**
+
+| Object | Address | | Object | Address |
+|--------|---------|---|--------|---------|
+| GW | 10.1.1.111 | | win_server | 10.1.2.250 |
+| SMS | 10.1.1.100 | | ubuntu25 | 10.1.3.33 |
+| jump_host | 10.1.1.200 | | kali_linux | 203.0.113.5 |
+| win_client | 10.1.1.222 | | cloudshare | 207.121.63.12 |
+| net_10_1_1_0_24 | 10.1.1.0/24 | | net_10_1_2_0_24 | 10.1.2.0/24 |
+| net_10_1_3_0_24 | 10.1.3.0/24 | | DNS servers | 8.8.8.8, 8.8.4.4 |
+
+Security zones: `InternalZone` / `DMZZone` / `ExternalZone` / `WirelessZone`. Predefined data-type
+`Source Code`; built-in VPN community `All_GwToGw`. *(No access-roles exist in this lab.)*
+
+**Why the structure matters** — it's what makes each outcome reachable:
+- **Rule 9 (Outbound)** is the broad web Accept → drives the **no_op** in §2 #8 (10.1.1.50→TCP 80 is already allowed).
+- **Rule 10 (Mail)** is the *only* widen-friendly rule (its non-matching dims are exactly equal, not Any) → the **widen** in #9.
+- **Rule 1 (Silent Drop)** is a resolved Drop → the **create-ABOVE-a-deny** in #11 (nbsession lands above it for first-match safety).
+- **Rule 6 (Stealth)** is an opaque Drop to the gateway → acts as a **placement floor** (a gateway-dest grant is floored below it + flagged).
+- **Rules 7–8** are inline layers; rule 8 (dynamic, sk182252) is **skipped from matching** but still a floor.
+- **Rule 12 (DMZ)** is `kali_linux → win_server` Any — the **sole exact grant**, so revoking it **disables** that rule in §5 #26.
+- **Rule 13 (Cleanup)** is the catch-all Drop — anything not matched above lands here, which is why a fresh create is needed for new access.
+
+> 🔁 **On a different environment:** keep the *shape* (a broad Accept like Outbound, one tight Accept like
+> Mail, a resolved Drop near the top, a stealth/cleanup Drop) and the prompt outcomes carry over — just swap
+> the IPs/object names for yours. Or pull your own policy first with **"Summarize the Network layer on SMS"**
+> (prompt #3) and adapt.
 
 ---
 
