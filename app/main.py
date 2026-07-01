@@ -109,6 +109,21 @@ async def lifespan(app: FastAPI):
             await receiver.stop()
 
 
+def _frame_ancestors(settings) -> str:
+    """CSP frame-ancestors value: an explicit DCSIM_FRAME_ANCESTORS if set, else auto-derive from
+    base_url — 'self' plus the parent domain (so a sibling like hub.<domain> may embed the portal,
+    while any other origin is refused). Falls back to 'self' for a bare host (e.g. localhost)."""
+    explicit = (settings.frame_ancestors or "").strip()
+    if explicit:
+        return explicit
+    from urllib.parse import urlparse
+    host = (urlparse(settings.base_url).hostname or "").strip()
+    parts = [p for p in host.split(".") if p]
+    if len(parts) >= 3:                      # dcsim.ai.alshawwaf.ca -> 'self' https://*.ai.alshawwaf.ca
+        return f"'self' https://*.{'.'.join(parts[1:])}"
+    return "'self'"
+
+
 def create_app() -> FastAPI:
     _setup_logging()
     settings = get_settings()
@@ -125,7 +140,8 @@ def create_app() -> FastAPI:
     app.add_middleware(SessionMiddleware, secret_key=session_secret, same_site="lax",
                        https_only=settings.base_url.startswith("https"), max_age=14 * 24 * 3600)
     app.add_middleware(ActivityLogMiddleware)
-    app.add_middleware(SecurityHeadersMiddleware, https=settings.base_url.startswith("https"))
+    app.add_middleware(SecurityHeadersMiddleware, https=settings.base_url.startswith("https"),
+                       frame_ancestors=_frame_ancestors(settings))
 
     app.include_router(ui.router)
     app.include_router(feeds.router)
