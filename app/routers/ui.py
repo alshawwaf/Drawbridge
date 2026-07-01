@@ -12,14 +12,12 @@ from sqlalchemy.orm import Session
 from ..config import get_settings
 from ..db import get_db
 from ..links import public_url
-from ..models import (
-    Datacenter, DynamicLayer, Feed, FeedPoll, FeedType, Gateway, ManagementServer, User,
-)
+from ..models import Datacenter, Feed, FeedPoll, FeedType, User
 from ..security import (
     get_user_or_none, hash_password, new_feed_token, password_strength_error, verify_password,
 )
 from ..schemas.ioc import IOC_FORMATS, IOC_LEVELS, IOC_TYPES
-from ..services import bundle, coverage, login_guard, table_prefs
+from ..services import bundle, login_guard, table_prefs
 from ..services.render import (
     custom_csv_command,
     normalize_generic_dc_content,
@@ -39,207 +37,6 @@ templates.env.globals["app_version"] = _app_version   # surfaced in the footer (
 # How many recent polls the feed page shows inline; the full history lives in the Activity log.
 POLL_PREVIEW = 6
 
-
-@router.get("/coverage", response_class=HTMLResponse)
-def coverage_page(request: Request, api: str = "management", version: str = "",
-                  db: Session = Depends(get_db)):
-    """Spec-driven API vs Terraform vs Ansible coverage, per API version, with expandable examples."""
-    if get_user_or_none(request, db) is None:
-        return RedirectResponse("/login", status_code=303)
-    if api not in ("management", "gaia"):
-        api = "management"
-    version = version or coverage.latest(api)
-    return templates.TemplateResponse(request, "coverage.html", coverage.page_context(api, version))
-
-
-@router.get("/mcp-guide", response_class=HTMLResponse)
-def mcp_guide_page(request: Request, db: Session = Depends(get_db)):
-    """Onboarding for the MCP server: the tool catalog + copy-paste connect config for the common
-    clients (Claude Desktop / Cursor / VS Code / n8n) + live status + the safety model."""
-    if get_user_or_none(request, db) is None:
-        return RedirectResponse("/login", status_code=303)
-    from .. import mcp_server
-    from ..services import app_settings
-    return templates.TemplateResponse(request, "mcp_guide.html", {
-        "tools": mcp_server.tool_catalog(),
-        "sdk_installed": mcp_server.have_mcp(),
-        "token_set": mcp_server.token_configured(),     # an active mcp-scope API key exists -> /mcp live
-        "allow_publish": bool(app_settings.get("mcp_allow_publish")),
-    })
-
-
-@router.post("/mcp-guide/key")
-async def mcp_guide_generate_key(request: Request, db: Session = Depends(get_db)):
-    """Generate an mcp-scope API key and RETURN its plaintext once, so the MCP page can drop it straight
-    into the connect-config (no copy/paste, no separate Settings trip). The key is hashed at rest; this
-    response is the only time the secret is shown. This is the single way to enable /mcp."""
-    user = get_user_or_none(request, db)
-    if user is None:
-        return JSONResponse({"error": "Not authenticated"}, status_code=401)
-    from ..services import api_keys
-    form = await request.form()
-    name = (form.get("name") or "").strip() or "mcp-agent"
-    row, secret = api_keys.generate(name, "mcp", created_by=user.username)
-    return JSONResponse({"key": secret, "name": row.name, "scope": row.scope})
-
-
-@router.get("/coverage/object")
-def coverage_object(request: Request, api: str, version: str, name: str,
-                    db: Session = Depends(get_db)):
-    """JSON: one object's field-level API/TF/Ansible diff + the four example forms (lazy-loaded)."""
-    if get_user_or_none(request, db) is None:
-        return JSONResponse({"error": "Not authenticated"}, status_code=401)
-    return JSONResponse(coverage.object_detail(api, version, name))
-
-
-@router.post("/coverage/update")
-def coverage_update(request: Request, api: str = "management", version: str = "",
-                    db: Session = Depends(get_db)):
-    """Check the CP-Docs-To-Swagger service for a newer API version and bundle it if found."""
-    if get_user_or_none(request, db) is None:
-        return JSONResponse({"error": "Not authenticated"}, status_code=401)
-    if api not in ("management", "gaia"):
-        api = "management"
-    from ..services import coverage_build
-    result = coverage_build.check_for_update(api, version)
-    if result.get("ok") and result.get("added"):
-        coverage._index.cache_clear()      # surface the new version in the picker
-        coverage._artifact.cache_clear()
-    try:                                   # also report latest Terraform/Ansible versions vs the bundled
-        result["tools"] = coverage_build.tool_version_status(api, result.get("version") or version)
-    except Exception:  # noqa: BLE001 — best-effort; the CP-spec result still stands
-        pass
-    return JSONResponse(result)
-
-
-# --- API explorer: embedded Swagger UI over the in-portal converter --------------------
-def _explorer_servers(db: Session, user: User) -> dict:
-    """Saved connections the explorer can target, as base URLs the spec's `servers` block uses.
-    Management Servers drive web_api; Gateways expose gaia_api."""
-    mgmt = db.execute(select(ManagementServer).where(ManagementServer.owner_id == user.id)).scalars().all()
-    gws = db.execute(select(Gateway).where(Gateway.owner_id == user.id)).scalars().all()
-    return {
-        "management": [{"name": m.name, "url": f"https://{m.host}:{m.port}/web_api"} for m in mgmt],
-        "gaia": [{"name": g.name, "url": f"https://{g.host}:{g.port}/gaia_api"} for g in gws],
-    }
-
-
-@router.get("/api-explorer", response_class=HTMLResponse)
-def api_explorer_page(request: Request, api: str = "management", version: str = "",
-                      db: Session = Depends(get_db)):
-    """Interactive Swagger-UI explorer for the Management / Gaia API, built in-portal from the CP docs."""
-    user = get_user_or_none(request, db)
-    if user is None:
-        return RedirectResponse("/login", status_code=303)
-    if api not in ("management", "gaia"):
-        api = "management"
-    servers = _explorer_servers(db, user)
-    # Pre-select a registered server when one exists, so examples + Try it out target it by default
-    # (falling back to the docs placeholder only when nothing is registered for this API).
-    default_server = servers.get(api, [{}])[0].get("url", "") if servers.get(api) else ""
-    return templates.TemplateResponse(request, "api_explorer.html", {
-        "api_type": api, "version": version or coverage.latest(api),
-        "versions": coverage.versions(), "servers": servers, "default_server": default_server,
-    })
-
-
-@router.get("/api-explorer/openapi.json")
-def api_explorer_spec(request: Request, api: str = "management", version: str = "",
-                      server_url: str = "", download: int = 0, db: Session = Depends(get_db)):
-    """The full OpenAPI document Swagger UI loads — converted live from the CP docs, cached, with the
-    chosen target server pre-filled. `version=''` = latest published. This is a standard OpenAPI 3.0
-    document, so `download=1` serves it as a file ready to import into Postman or Bruno (which both build
-    a request collection from it), with the selected target server baked into the spec's `servers`."""
-    if get_user_or_none(request, db) is None:
-        return JSONResponse({"error": "Not authenticated"}, status_code=401)
-    if api not in ("management", "gaia"):
-        api = "management"
-    from ..services import coverage_build
-    try:
-        spec = coverage_build.openapi_spec(api, version, server_url)
-    except Exception as exc:  # noqa: BLE001
-        return JSONResponse({"error": f"Could not build the {api} {version or 'latest'} spec — {exc}"},
-                            status_code=502)
-    resp = JSONResponse(spec)
-    if download:
-        ver = re.sub(r"[^A-Za-z0-9._-]", "", version or coverage.latest(api) or "latest")
-        resp.headers["Content-Disposition"] = f'attachment; filename="checkpoint-{api}-{ver}.openapi.json"'
-    return resp
-
-
-def _explorer_proxy_targets(db: Session, user: User) -> dict:
-    """{'host:port': server} for the user's OWN saved Management Servers + Gateways — the ONLY targets the
-    explorer proxy may reach. This allowlist is the SSRF guard: the proxy is never an open relay."""
-    out: dict = {}
-    for m in db.execute(select(ManagementServer).where(ManagementServer.owner_id == user.id)).scalars():
-        out[f"{m.host}:{m.port}".lower()] = m
-    for g in db.execute(select(Gateway).where(Gateway.owner_id == user.id)).scalars():
-        out[f"{g.host}:{g.port}".lower()] = g
-    return out
-
-
-@router.api_route("/api-explorer/proxy", methods=["GET", "POST", "PUT", "DELETE", "PATCH"],
-                  include_in_schema=False)
-async def api_explorer_proxy(request: Request, db: Session = Depends(get_db)):
-    """Server-side proxy for the explorer's *Try it out*, so live calls work without the browser's
-    cross-origin (CORS) block. STRICTLY allowlisted — it forwards ONLY to the caller's own saved
-    Management Servers / Gateways (exact host:port), never an arbitrary URL, so it can't be abused as an
-    open relay (SSRF). TLS is verified server-side (the server's pinned cert when set); the portal's own
-    session cookie is never forwarded upstream."""
-    import ssl
-    import httpx
-    from urllib.parse import urlparse
-
-    user = get_user_or_none(request, db)
-    if user is None:
-        return JSONResponse({"error": "Not authenticated"}, status_code=401)
-    target = request.headers.get("x-dcsim-target", "").strip()
-    try:                                          # a hostile header (bad IPv6 / port) must 400, not 500
-        parsed = urlparse(target) if target else None
-        port = parsed.port if parsed else None
-    except ValueError:
-        parsed, port = None, None
-    if not parsed or parsed.scheme not in ("http", "https") or not parsed.hostname:
-        return JSONResponse({"error": "Missing or invalid X-Dcsim-Target URL."}, status_code=400)
-    port = port or (443 if parsed.scheme == "https" else 80)
-    key = f"{parsed.hostname}:{port}".lower()
-    server = _explorer_proxy_targets(db, user).get(key)
-    if server is None:
-        return JSONResponse(
-            {"error": f"Refused — {parsed.hostname}:{port} is not one of your saved servers. The explorer "
-                      "only proxies to Management Servers / Gateways you've added (this prevents the portal "
-                      "being used as an open proxy). Add it under Layers & Gateways, then retry."},
-            status_code=403)
-
-    from ..services.mgmt_api import _verify_for
-    try:                                          # a malformed stored pin is a local config problem, not "upstream failed"
-        verify = _verify_for(server)
-    except ssl.SSLError:
-        return JSONResponse({"error": f"The pinned certificate stored for {key} is invalid PEM — re-add the "
-                                      "server's certificate on its Edit page.", "via": "portal-proxy"},
-                            status_code=502)
-    # Drop the full hop-by-hop set (RFC 7230) so httpx owns request framing from content=body — a stray
-    # Transfer-Encoding alongside our Content-Length would be a request-smuggling primitive. Also never
-    # forward the portal's own session cookie / forwarded-* headers upstream.
-    drop = {"host", "cookie", "content-length", "connection", "accept-encoding",
-            "x-dcsim-target", "x-forwarded-for", "x-forwarded-host", "x-forwarded-proto",
-            "transfer-encoding", "te", "trailer", "trailers", "upgrade", "keep-alive",
-            "proxy-authorization", "proxy-authenticate"}
-    fwd = {k: v for k, v in request.headers.items() if k.lower() not in drop}
-    body = await request.body()
-    if len(body) > 2_000_000:                     # cap the relayed request body (parity with the response cap)
-        return JSONResponse({"error": "Request body too large (max 2 MB for the explorer proxy)."},
-                            status_code=413)
-    try:
-        async with httpx.AsyncClient(verify=verify, timeout=20.0,
-                                     follow_redirects=False) as client:   # no redirect-based SSRF
-            r = await client.request(request.method, target, content=body, headers=fwd)
-    except Exception as exc:  # noqa: BLE001
-        return JSONResponse({"error": f"Upstream request to {key} failed: {exc}", "via": "portal-proxy"},
-                            status_code=502)
-    content = r.content[:2_000_000]   # truncate what we relay to the browser (allowlisted own-servers + 20s timeout bound the upstream size)
-    return Response(content=content, status_code=r.status_code,
-                    media_type=r.headers.get("content-type", "application/json"))
 
 # --- Generic Data Center default (the canonical sk167210 sample) -----------------------
 DEFAULT_FEED_NAME = "Generic-DC-Example"
@@ -561,8 +358,7 @@ def home(request: Request, db: Session = Depends(get_db)):
         return db.scalar(select(func.count()).select_from(model)
                          .where(model.owner_id == user.id)) or 0
 
-    counts = {"feeds": _count(Feed), "datacenters": _count(Datacenter), "gateways": _count(Gateway),
-              "management": _count(ManagementServer), "layers": _count(DynamicLayer)}
+    counts = {"feeds": _count(Feed), "datacenters": _count(Datacenter)}
     return templates.TemplateResponse(request, "home.html",
                                       {"user": user, "counts": counts, "flash": _pop_flash(request)})
 
@@ -622,8 +418,7 @@ async def portal_import(request: Request, file: UploadFile = File(None), db: Ses
         _flash(request, f"Import failed: {exc}", "error")
         return RedirectResponse("/", status_code=303)
     c = result["counts"]
-    msg = (f"Imported {c['feeds']} feed(s), {c['datacenters']} datacenter(s), "
-           f"{c['gateways']} gateway(s), {c['dynamic_layers']} layer(s). "
+    msg = (f"Imported {c['feeds']} feed(s), {c['datacenters']} datacenter(s). "
            "Credentials aren’t included in bundles — re-enter them on each item.")
     if result["skipped"]:
         msg += " Skipped: " + "; ".join(result["skipped"]) + "."
@@ -639,8 +434,7 @@ def portal_seed(request: Request, preset: str = Form("demo"), db: Session = Depe
     if preset == "sbt_lab":
         c = bundle.import_bundle(db, user, bundle.sbt_lab_bundle())["counts"]
         _flash(request, f"Seeded the SBT Lab Environment: {c['datacenters']} datacenters (mock vCenter + "
-                        f"NSX-T mirroring the lab VMs at their real IPs), {c['feeds']} feeds, "
-                        f"{c['management_servers']} management server + {c['gateways']} gateway profile. "
+                        f"NSX-T mirroring the lab VMs at their real IPs), {c['feeds']} feeds. "
                         "Connect CloudGuard to SBT-vCenter to import the VMs.")
         return RedirectResponse("/", status_code=303)
     result = bundle.import_bundle(db, user, bundle.seed_bundle())
@@ -663,8 +457,7 @@ def portal_seed(request: Request, preset: str = Form("demo"), db: Session = Depe
                 extra = f" A live scenario (“{label}”) is now running on {dc.name} — watch the Activity log."
     except Exception:
         pass
-    _flash(request, f"Seeded a demo environment: {c['feeds']} feeds, {c['datacenters']} datacenters, "
-                    f"{c['gateways']} gateway, {c['dynamic_layers']} dynamic layer.{extra}")
+    _flash(request, f"Seeded a demo environment: {c['feeds']} feeds, {c['datacenters']} datacenters.{extra}")
     return RedirectResponse("/", status_code=303)
 
 

@@ -5,7 +5,6 @@ from app.middleware import _excluded, _kind, _parse_request
 
 
 def test_kind_classification():
-    assert _kind("/gaia_api/v1.9/login") == "gaia_mock"
     assert _kind("/gdc/abc.json") == "feed_poll"
     assert _kind("/netfeed/x") == "feed_poll"
     assert _kind("/api/feeds") == "api"

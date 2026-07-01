@@ -33,8 +33,8 @@ def _setup_logging() -> None:
         log.propagate = False
     log.setLevel(lvl)
 from .routers import (
-    access_automation, aci_mock, activity, api_v1, datacenters, dynamic_layers, exports, feeds, gateways,
-    gaia_mock, kubernetes_mock, mgmt, notifications, nsxt_mock, nutanix_mock, openstack_mock,
+    aci_mock, activity, datacenters, exports, feeds,
+    kubernetes_mock, notifications, nsxt_mock, nutanix_mock, openstack_mock,
     proxmox_mock, scenarios, serve, settings as settings_router, siem, ui, vcenter_mock,
 )
 from .security import hash_password
@@ -101,32 +101,12 @@ async def lifespan(app: FastAPI):
     _seed_admin(settings)
     receiver = await _start_siem_receiver(settings)
     retention_task = asyncio.create_task(_retention_loop())
-    from . import mcp_server                          # run the mounted /mcp app's session manager (no-op
-    try:                                              # if MCP isn't mounted)
-        async with mcp_server.mcp_lifespan(app):
-            yield
+    try:
+        yield
     finally:
         retention_task.cancel()
         if receiver is not None:
             await receiver.stop()
-        from .services.mgmt_api import close_pool   # log out pooled read sessions on shutdown
-        close_pool()
-
-
-class _MCPCanonicalPath:
-    """Serve a bare ``/mcp`` WITHOUT the 307 → ``/mcp/`` redirect. The Streamable-HTTP endpoint is mounted
-    at ``/mcp`` with its handler at ``/`` (so it lives at ``/mcp/``); Starlette redirects the slash-less
-    ``/mcp`` to ``/mcp/``, and some MCP clients — or a TLS-terminating reverse proxy — drop the
-    ``Authorization`` header on that redirect, so the bearer arrives empty and the server answers 401. We
-    rewrite the EXACT path ``/mcp`` to ``/mcp/`` in-place (no client-visible redirect); everything else is
-    untouched, so both ``/mcp`` and ``/mcp/`` now work and keep the auth header."""
-    def __init__(self, app):
-        self.app = app
-
-    async def __call__(self, scope, receive, send):
-        if scope.get("type") == "http" and scope.get("path") == "/mcp":
-            scope = dict(scope, path="/mcp/", raw_path=b"/mcp/")
-        await self.app(scope, receive, send)
 
 
 def create_app() -> FastAPI:
@@ -146,14 +126,10 @@ def create_app() -> FastAPI:
                        https_only=settings.base_url.startswith("https"), max_age=14 * 24 * 3600)
     app.add_middleware(ActivityLogMiddleware)
     app.add_middleware(SecurityHeadersMiddleware, https=settings.base_url.startswith("https"))
-    app.add_middleware(_MCPCanonicalPath)   # /mcp served without the auth-dropping 307 -> /mcp/ redirect
 
     app.include_router(ui.router)
     app.include_router(feeds.router)
     app.include_router(serve.router)
-    app.include_router(gaia_mock.router)
-    app.include_router(dynamic_layers.router)
-    app.include_router(gateways.router)
     app.include_router(openstack_mock.router)
     app.include_router(vcenter_mock.router)
     app.include_router(kubernetes_mock.router)  # before nsxt: its /api/v1/{nodes,pods,…} are explicit,
@@ -166,24 +142,9 @@ def create_app() -> FastAPI:
     app.include_router(scenarios.router)
     app.include_router(activity.router)
     app.include_router(siem.router)
-    app.include_router(mgmt.router)
-    app.include_router(access_automation.router)
     app.include_router(settings_router.router)
     app.include_router(notifications.router)
     app.include_router(exports.router)
-    app.include_router(api_v1.router)   # general REST API for any HTTP client (api-scope key auth)
-
-    # MCP server for n8n / LLM agents — mounted at /mcp whenever the SDK is installed (Artifactory).
-    # Auth is a single mechanism: an active mcp-scope API KEY, verified PER REQUEST. While none exists the
-    # endpoint returns 503; generating a key (on the MCP page) activates it with no redeploy. If the SDK is
-    # absent the endpoint is simply not mounted; the rest is unaffected.
-    try:
-        from . import mcp_server
-        mcp_app = mcp_server.build_mcp_app()   # default guard: active mcp-scope API keys
-        if mcp_app is not None:
-            app.mount("/mcp", mcp_app)
-    except Exception:  # noqa: BLE001 — never let the optional MCP mount break app startup
-        pass
 
     @app.get("/healthz", include_in_schema=False)
     def healthz() -> dict:
