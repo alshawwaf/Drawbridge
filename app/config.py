@@ -13,6 +13,12 @@ class Settings(BaseSettings):
     # this is the HTTPS domain (e.g. https://dcsim.example.com). Set via env.
     base_url: str = "http://localhost:8000"
 
+    # Origins allowed to iframe this portal (CSP frame-ancestors). BLANK = auto: 'self' plus the parent
+    # domain of base_url, so a sibling app (e.g. a dev-hub at hub.<domain>) can embed it while everything
+    # else is refused. Set "'none'" to forbid all framing, or an explicit space-separated allowlist.
+    # Anti-clickjacking stays on either way — this only scopes WHO may frame, never disables protection.
+    frame_ancestors: str = ""
+
     # Cookie-signing key for portal sessions. MUST be set in production.
     # If empty, an ephemeral key is generated at startup (dev only — logs out on restart).
     session_secret: str = ""
