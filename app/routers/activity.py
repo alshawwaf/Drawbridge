@@ -13,8 +13,7 @@ from .ui import _flash, _pop_flash, templates
 
 router = APIRouter(include_in_schema=False)
 
-KIND_LABELS = {"feed_poll": "Feed poll", "gaia_mock": "Mock Gaia API", "layer_apply": "Layer apply",
-               "gateway_read": "Gateway read", "datacenter": "Data Center", "api": "API", "ui": "Page view"}
+KIND_LABELS = {"feed_poll": "Feed poll", "datacenter": "Data Center", "api": "API", "ui": "Page view"}
 
 # Data Center sub-filter: which path fragments identify each provider's traffic, so the user can
 # narrow the "Data Center" kind to one provider when troubleshooting (vCenter vs NSX-T vs Proxmox…).

@@ -55,7 +55,6 @@ def init_db() -> None:
 # Additive, idempotent column migrations for SQLite (no Alembic): create_all won't add a column to an
 # already-existing table, so columns introduced later are added here on boot.
 _ADDED_COLUMNS = {
-    "gateways": {"auto_trust": "BOOLEAN DEFAULT 1"},
     "users": {
         "first_name": "VARCHAR(80) DEFAULT ''",
         "last_name": "VARCHAR(80) DEFAULT ''",
@@ -63,7 +62,6 @@ _ADDED_COLUMNS = {
         "title": "VARCHAR(120) DEFAULT ''",
     },
     "api_keys": {"expires_at": "DATETIME"},     # key-expiry, added after the table shipped
-    "applied_changes": {"resolution": "VARCHAR(16) DEFAULT ''"},   # rolled-back vs disabled-rule-deleted
 }
 
 

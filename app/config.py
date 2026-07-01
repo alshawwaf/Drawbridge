@@ -46,33 +46,6 @@ class Settings(BaseSettings):
     # disk — older rows are trimmed). It's a live demo viewer, not a log archive.
     syslog_max_records: int = 2000
 
-    # Access automation — generic ticketing webhook (ServiceNow, Jira, Remedy, custom portal …).
-    # The inbound webhook (POST /access-automation/webhook) is DISABLED unless a shared secret is set;
-    # the caller must send it as the X-DCSim-Token header.
-    # SECURITY: this token grants policy publish on every ALLOWED management server, so treat it as a
-    # top-tier secret. Optionally scope it to specific servers with the webhook_server_ids allowlist.
-    # NOTE: these are now FALLBACKS — Settings → Ticketing webhook (DB-backed, token encrypted at rest)
-    # takes precedence and can be set/rotated from the portal with no redeploy.
-    webhook_token: str = ""
-    webhook_server_ids: str = ""    # comma-separated server ids the webhook may target; blank = all
-
-    # MCP server (for n8n / LLM agents). The /mcp endpoint is mounted whenever the `mcp` SDK is installed
-    # (Artifactory) and is ENABLED once a bearer token is set; clients send it as `Authorization: Bearer
-    # <token>`. Like the webhook token it can drive policy writes, gated by the mcp_allow_publish setting
-    # (default OFF). NOTE: this env var is a FALLBACK — Settings → MCP / agent (DB-backed, encrypted at
-    # rest) takes precedence and lets an admin set/rotate/clear the token from the portal with no redeploy.
-    mcp_token: str = ""
-
-    # Optional BUILT-IN write-back: post the decision + rule UID to a ServiceNow incident's work notes
-    # via the Table API. (Other vendors use the generic per-request `callback_url`, or just read the
-    # synchronous response.) TLS verification is always on. NOTE: these are FALLBACKS — Settings →
-    # Ticket write-back (DB-backed, password encrypted at rest) takes precedence over the env vars.
-    servicenow_instance: str = ""   # e.g. https://dev12345.service-now.com
-    servicenow_user: str = ""
-    servicenow_password: str = ""
-    servicenow_table: str = "incident"
-
-
 @lru_cache
 def get_settings() -> Settings:
     return Settings()

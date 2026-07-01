@@ -27,8 +27,6 @@ def _excluded(path: str) -> bool:
 
 
 def _kind(path: str) -> str:
-    if path.startswith("/gaia_api"):
-        return "gaia_mock"
     if path.startswith(("/gdc/", "/netfeed/", "/ioc/")):
         return "feed_poll"
     # Datacenter mocks — token-prefixed, plus the apex (bare-host) vCenter/NSX-T endpoints.
