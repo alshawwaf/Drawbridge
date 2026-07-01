@@ -96,23 +96,28 @@ def _parse_response(raw: bytes, content_type: str):
 
 
 class SecurityHeadersMiddleware:
-    """Adds defensive HTTP response headers to every reply: anti-clickjacking (the admin portal is never
-    meant to be framed), MIME-sniff protection, a tight referrer policy, and HSTS when served over HTTPS.
-    Deliberately minimal — no restrictive ``default-src`` CSP — so the embedded Swagger UI and the inline
-    ``<script type="application/json">`` blobs keep working; only ``frame-ancestors`` is locked down."""
+    """Adds defensive HTTP response headers to every reply: anti-clickjacking (frame-ancestors),
+    MIME-sniff protection, a tight referrer policy, and HSTS when served over HTTPS. Deliberately
+    minimal — no restrictive ``default-src`` CSP — so the embedded Swagger UI and inline
+    ``<script type="application/json">`` blobs keep working; only ``frame-ancestors`` is locked down.
 
-    _BASE = [
-        (b"x-frame-options", b"DENY"),
-        (b"content-security-policy", b"frame-ancestors 'none'"),
-        (b"x-content-type-options", b"nosniff"),
-        (b"referrer-policy", b"same-origin"),
-    ]
+    ``frame_ancestors`` controls who may iframe the portal (default ``'none'`` = nobody). When it
+    permits framing (e.g. ``'self' https://*.example.com``) the blanket ``X-Frame-Options: DENY`` is
+    omitted — it can't express an allowlist and would override the CSP — and the CSP directive governs."""
 
-    def __init__(self, app, https: bool = False):
+    def __init__(self, app, https: bool = False, frame_ancestors: str = "'none'"):
         self.app = app
-        self._headers = list(self._BASE)
+        fa = (frame_ancestors or "'none'").strip()
+        headers = [
+            (b"content-security-policy", f"frame-ancestors {fa}".encode()),
+            (b"x-content-type-options", b"nosniff"),
+            (b"referrer-policy", b"same-origin"),
+        ]
+        if fa == "'none'":
+            headers.insert(0, (b"x-frame-options", b"DENY"))   # belt-and-suspenders full lockdown
         if https:
-            self._headers.append((b"strict-transport-security", b"max-age=31536000; includeSubDomains"))
+            headers.append((b"strict-transport-security", b"max-age=31536000; includeSubDomains"))
+        self._headers = headers
 
     async def __call__(self, scope, receive, send):
         if scope.get("type") != "http":
