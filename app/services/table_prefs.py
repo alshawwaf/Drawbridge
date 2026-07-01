@@ -39,38 +39,6 @@ TABLE_SPECS: dict[str, list[Col]] = {
         Col("url", "Feed URL"),
         Col("created", "Created", default=False),
     ],
-    "gateways": [
-        Col("name", "Name", locked=True),
-        Col("address", "Address"),
-        Col("username", "Username"),
-        Col("tls", "TLS"),
-        Col("layers", "Layers"),
-        Col("created", "Created", default=False),
-    ],
-    "management": [
-        Col("name", "Name", locked=True),
-        Col("address", "Address"),
-        Col("domain", "Domain"),
-        Col("username", "Username"),
-        Col("tls", "TLS"),
-        Col("secret", "Secret"),
-        Col("created", "Created", default=False),
-    ],
-    "layers": [
-        Col("name", "Name", locked=True),
-        Col("gateway", "Gateway"),
-        Col("gwlayer", "Gateway layer"),
-        Col("objects", "Objects"),
-        Col("rules", "Rules"),
-        Col("lastapply", "Last apply"),
-        Col("created", "Created", default=False),
-    ],
-    "access-servers": [
-        Col("name", "Name", locked=True),
-        Col("address", "Address"),
-        Col("domain", "Domain"),
-        Col("secret", "Secret"),
-    ],
 }
 
 

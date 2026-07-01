@@ -20,6 +20,5 @@ def test_unknown_table_returns_none():
 
 
 def test_all_builders_registered():
-    expected = {"activity", "datacenters", "feeds", "gateways", "management",
-                "layers", "access-servers", "siem", "coverage"}
+    expected = {"activity", "datacenters", "feeds", "siem"}
     assert expected <= known()

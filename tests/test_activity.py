@@ -48,14 +48,14 @@ def test_redact_body_handles_lists():
 
 
 def test_shell_renders_checkbox_filters_page_size_and_modal():
-    counts = {"all": 4445, "feed_poll": 4077, "layer_apply": 19}
+    counts = {"all": 4445, "feed_poll": 4077, "datacenter": 19}
     html = _render("activity.html", counts=counts, kind_labels=KIND_LABELS, selected=["feed_poll"],
                    page_size=10, page_sizes=PAGE_SIZES, provider_labels=PROVIDER_LABELS,
                    dc_counts={"vcenter": 3, "proxmox": 5}, q="", selected_dc=[],
                    selected_status=[], status_classes=["2xx", "3xx", "4xx", "5xx"], flash=None)
     # filters are checkboxes on the left; the selected one is checked
     assert 'name="kinds" value="feed_poll" class="kind-cb" checked' in html
-    assert 'name="kinds" value="layer_apply" class="kind-cb" ' in html
+    assert 'name="kinds" value="datacenter" class="kind-cb" ' in html
     # rows-per-page picker, default 10 selected
     assert '<select id="page-size"' in html and 'value="10" selected' in html
     # delete + clear controls and the viewer modal
