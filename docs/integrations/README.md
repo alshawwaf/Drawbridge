@@ -4,14 +4,10 @@ Each integration makes the portal **act as the external system Check Point integ
 PoV can be demoed end-to-end without the real thing. Three interaction models:
 
 - **Pull** — Check Point polls/scans the portal: the **feeds** and the **datacenter** API mocks.
-- **Push** — the portal pushes to the gateway's Gaia API: **Dynamic Layers**.
-- **Manage** — the portal acts as a `web_api` / Gaia **client to a real R82.10 SMS or gateway** (read-only
-  except an explicit, dry-run-first apply): view + export policy as IaC
-  ([Management API export](management-export.md)), export a box's **Gaia OS** config
-  ([Gaia export](gaia-export.md)), and turn a ticket into a rule
-  ([Access Automation](access-automation.md)). Drive it from agents/HTTP clients via the
-  **[MCP server + REST API](../mcp-n8n.md)**; runtime config, secrets, and API keys live in
-  **[Settings](../settings.md)**.
+- **Reverse** — the portal receives from Check Point: the **SIEM receiver** (Log Exporter sink).
+
+Runtime config, secrets, and API keys live in **[Settings](../settings.md)**. (Policy automation —
+access-automation, dynamic layers, Management-API — moved to the separate **PolicyPilot** product.)
 
 To *drive* the pull model live during a demo, see **[Scenarios](scenarios.md)** — mutate a DC's
 inventory (flip a tag, scale out, run a timed preset) and the next ~30s scan re-resolves policy.
@@ -29,7 +25,6 @@ inventory (flip a tag, scale out, run a timed preset) and the next ~30s scan re-
 | [Cisco ACI](aci.md) | APIC REST — **XML** (`aaaLogin` + class queries) | Data Center → Cisco ACI | bare host (apex) — `https://<portal>` |
 | [Kubernetes](kubernetes.md) | kube-apiserver REST (bearer token) | Data Center → Kubernetes | full **URL** (apex) — `https://<portal>` |
 | [Nutanix Prism](nutanix.md) | Prism REST v3 + v4 (Basic auth) | Data Center → Nutanix | bare host (apex) — `<portal>` **on port 9440** (connector-fixed) |
-| [Dynamic Layers](dynamic-layers.md) | Gaia API (`set-dynamic-content`) | *(push to gateway / mock)* | n/a — portal is the client |
 | [Scenarios](scenarios.md) | live inventory mutation + timed presets | *(drives any DC mock's next poll)* | n/a — portal control panel (`/scenarios`) |
 | [SIEM receiver](siem.md) | Log Exporter sink — syslog / CEF / LEEF / JSON over TCP+UDP | *(gateway / MGMT sends logs here)* | `udp+tcp://<portal-host>:5514` (not HTTP — bypasses Caddy) |
 
@@ -65,7 +60,7 @@ log.
 
 ## Shared diagnostics
 
-- **Activity log** (`/activity`) — every inbound call (feed poll, datacenter API, mock Gaia) with the
+- **Activity log** (`/activity`) — every inbound call (feed poll, datacenter API) with the
   request/response bodies, redacted. Filter by kind; `/sdk` rows are labeled with the SOAP op. This is
   the first place to look when something doesn't sync.
 - **"All 200s but still initializing"** = a topology / referential-integrity problem, not a missing
