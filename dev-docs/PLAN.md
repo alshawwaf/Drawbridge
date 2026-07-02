@@ -1,5 +1,9 @@
 # Plan — Check Point Dynamic-Object Integration Simulator
 
+> **Historical.** The push / policy items below (Dynamic Layers, Access Automation, Management-API) have
+> since moved to the separate **PolicyPilot** product. Drawbridge is now the poll-side simulator
+> (datacenter mocks + feeds) plus the reverse SIEM receiver.
+
 ## Goal
 A multi-tenant portal that **is** the external server Check Point polls, so SEs/partners can
 configure and demo dynamic-object integrations during PoVs with no real backend server. The

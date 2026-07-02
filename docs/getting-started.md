@@ -1,10 +1,14 @@
-# Getting started — your first PoV in 15 minutes
+# Getting started — your first PoV in 10 minutes
 
-A guided first run of **Drawbridge** for an SE: get it up, seed a realistic environment, and run two demos
-end-to-end — a **datacenter → dynamic-object sync**, and a **ticket → Check Point rule** on a real SMS.
+A guided first run of **Drawbridge** for an SE: get it up, seed a realistic environment, and run the
+headline demo end-to-end — a **datacenter → dynamic-object sync** that CloudGuard resolves live.
 
-> 🎯 Goal: by the end you can show a customer (1) CloudGuard resolving live inventory from a mocked
-> datacenter, and (2) a ServiceNow-style ticket becoming the minimal, first-match-safe access rule.
+> 🎯 Goal: by the end you can show a customer CloudGuard resolving live inventory from a mocked
+> datacenter, and policy following that inventory as it changes — with no real backend.
+
+> **Policy automation lives elsewhere.** Turning a ticket into a Check Point rule (Access Automation),
+> Dynamic Layers, and Management-API / Gaia export moved to the separate **PolicyPilot** product. Point
+> PolicyPilot at a real SMS and feed it Drawbridge's simulated data.
 
 ---
 
@@ -27,15 +31,16 @@ HTTPS URL so the gateway needs no cert-trust step.
 
 ## 1. Seed a demo environment (1 min)
 
-On the dashboard, open the **Seed an environment** menu → **✨ Demo environment**. This creates feeds,
-datacenters, a gateway, a dynamic layer, and a running scenario — so every page has realistic content.
+On the dashboard, open the **Seed an environment** menu → **✨ Demo environment**. This creates a set of
+feeds and datacenters and auto-starts a gentle live scenario — so every page has realistic content.
 
-> Prefer the lab-accurate set? Use **Seed SBT Lab Environment** to mirror the Check Point hands-on training
-> lab (mock vCenter / NSX-T at the lab IPs), so import → rule → ping validates against the real lab.
+> Prefer the lab-accurate set? Use **SBT Lab Environment** to mirror the Check Point hands-on training
+> lab (mock vCenter / NSX-T at the lab IPs, plus threat feeds), so import → rule → ping validates against
+> the real lab.
 
 ---
 
-## 2. Demo A — datacenter → dynamic object (5 min)
+## 2. Demo — datacenter → dynamic object (5 min)
 
 The headline CloudGuard story: inventory in an external system becomes Check Point objects that rules
 follow automatically.
@@ -55,35 +60,20 @@ Watch every poll in the **Activity log** (`/activity`) — full request/response
 
 ---
 
-## 3. Demo B — ticket → Check Point rule (5 min)
+## 3. Show the reverse side — SIEM receiver (optional)
 
-Turn an access request into the minimal correct rule on a **real R82.10 SMS** (least-privilege; the engine
-only does what the API account is permitted to).
-
-1. **Settings → add a Management Server** (host, API user, password — encrypted at rest). The portal pins
-   its cert on first connect.
-2. Open **Access automation**, pick the server + layer.
-3. Enter a request — e.g. *allow `10.1.1.50` → the DNS servers over DNS*. Click **Decide** (read-only): the
-   engine returns **no-op / widen / create**, the reasoning, and the exact placement (first-match-safe).
-4. Review and **Apply** (approval-gated). It supports **every access-rule column** — action (Accept / Drop /
-   Reject / Ask / Inform / Apply Layer) plus content, time, install-on, and VPN — and records the change for
-   **one-click rollback**.
-
-**Automate it:** the same engine is exposed for agents and ticketing systems —
-- **Webhook** (ServiceNow / Jira / any system): `POST /access-automation/webhook` with a `webhook`-scope
-  API key.
-- **MCP** (n8n / LLM agents): connect at `/mcp` — onboarding + connect-config at **`/mcp-guide`**.
-- **REST**: `/dbapi/v1` with an `api`-scope key.
-
-Mint keys in **Settings → API keys** (scoped, revocable, shown once). Agentic **publish** to live policy is
-off by default — enable it deliberately in *Settings → MCP / agent*.
+Point Check Point's **Log Exporter** at the portal on `udp+tcp://<portal-host>:5514`; the built-in sink
+auto-detects CEF / LEEF / JSON / syslog and shows logs arriving live at `/siem` — proof gateway logs
+reach a SIEM, with no real Splunk/QRadar. Setup + the port-publishing gotchas are in
+[docs/integrations/siem.md](integrations/siem.md).
 
 ---
 
 ## 4. Hand it off
 
 - **Export** the whole environment (dashboard → Export) to a portable JSON bundle for a colleague or a
-  per-customer save. Bundles never carry credentials — re-enter them after **Import**.
+  per-customer save. Bundles carry feeds + datacenters and **never carry credentials** — re-enter them
+  after **Import**.
 - Point teammates at this repo's **[README](../README.md)** and **[docs/integrations/](integrations/)** for
   per-integration detail.
 
@@ -93,7 +83,6 @@ off by default — enable it deliberately in *Settings → MCP / agent*.
 
 | Symptom | Fix |
 |---|---|
-| SmartConsole "Test Connection" fails | Re-check the URL/credentials; for self-signed, confirm the cert pinned on the gateway/DC Edit page. |
+| SmartConsole "Test Connection" fails | Re-check the URL/credentials; for self-signed, confirm the cert pinned on the DC Edit page. |
 | Datacenter object stuck "initializing" | Delete + re-add the DC object in SmartConsole to force a clean full sync (it caches the prior topology). |
-| "Too many login requests" on apply | Expected CP throttle under bursts — session reuse handles it; pace rapid applies if needed (Settings → Management API). |
-| `/mcp` returns 503 | No active `mcp`-scope key — generate one on `/mcp-guide`. |
+| SIEM receiver stays empty | Packets reach the host but nothing shows → work the NIC → firewall → host socket → container ladder in [siem.md](integrations/siem.md#troubleshooting--packets-reach-the-host-but-nothing-shows-on-siem). |

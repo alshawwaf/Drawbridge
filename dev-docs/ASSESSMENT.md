@@ -3,6 +3,12 @@
 _Assessment of what's built, how good it is, and what to add to make it maximally useful for SE demos._
 _Last updated: 2026-06-28._
 
+> **Since this assessment: the push / policy side split out.** The Dynamic-Layer builder, Management-API
+> export, Gaia export, and Access-Automation (ticket → rule) are now the separate **PolicyPilot** product.
+> Drawbridge is the poll-side simulator (datacenter mocks + feeds) plus the reverse SIEM sink. Where this
+> doc says "full push side / dynamic-layer builder / 900+ tests", read it as historical — the current
+> suite is ~251 tests covering what remains here.
+
 ## TL;DR
 
 The portal is the broadest CloudGuard / Quantum integration demo surface in one place: **8 datacenter

@@ -8,7 +8,7 @@
 
 ![Version](https://img.shields.io/badge/version-1.0.0-ff3d9a)
 ![Validated](https://img.shields.io/badge/validated-R82.10-7b3ff2)
-![Tests](https://img.shields.io/badge/tests-249%20passing-34d399)
+![Tests](https://img.shields.io/badge/tests-251%20passing-34d399)
 ![Python](https://img.shields.io/badge/python-3.12-3b82f6)
 ![TLS](https://img.shields.io/badge/TLS-always%20verified-15935a)
 ![License](https://img.shields.io/badge/license-proprietary-5b6678)
@@ -133,11 +133,9 @@ Caddy obtains the cert for `DCSIM_DOMAIN` (use `localhost` for an internal cert)
   secrets in code; portal logins use PBKDF2; saved **datacenter credentials are AES-256-GCM encrypted at
   rest** (`DCSIM_ENCRYPTION_KEY`, falls back to the session secret); parameterized queries via SQLAlchemy;
   feed input validated against the Check Point schema.
-- **Secrets & access are portal-managed** — integration secrets are set write-only from **Settings**,
-  encrypted at rest, and take precedence over the `DCSIM_*` env vars **with no redeploy** (env vars are
-  fallbacks).
-- **PoV bundles carry no credentials** — feed auth and datacenter auth are stripped on export; re-enter
-  them after import.
+- **The public base URL is portal-managed** — set it from **Settings** to restamp every emitted feed URL
+  with no redeploy (`DCSIM_BASE_URL` is the fallback). See [docs/settings.md](docs/settings.md).
+- **PoV bundles carry no credentials** — datacenter auth is stripped on export; re-enter it after import.
 - **Use demo/synthetic data only.** Do not upload real customer threat-intel; anything sensitive must stay
   on Check Point-controlled infrastructure.
 
@@ -146,7 +144,7 @@ Caddy obtains the cert for `DCSIM_DOMAIN` (use `localhost` for an internal cert)
 ## ✅ Tests
 
 ```bash
-pip install pytest && pytest -q          # 249 tests, all green
+pip install pytest && pytest -q          # 251 tests, all green
 ```
 
 ---

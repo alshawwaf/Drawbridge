@@ -112,10 +112,8 @@ Traefik, so it doesn't need this.)
 - **`DCSIM_ENCRYPTION_KEY`** encrypts saved gateway and datacenter credentials at rest (AES-256-GCM).
   Optional — it falls back to `DCSIM_SESSION_SECRET`; set a dedicated key so rotating the session
   secret doesn't make stored credentials unreadable.
-- **Integration secrets are better set from the UI than baked into the deploy.** The MCP token,
-  ticketing webhook secret, and ServiceNow credentials can be set in **Settings** (encrypted at rest,
-  no redeploy) and take precedence over any `DCSIM_MCP_TOKEN` / `DCSIM_WEBHOOK_TOKEN` /
-  `DCSIM_SERVICENOW_*` env vars — those env vars are just fallbacks. See [docs/settings.md](docs/settings.md).
+- **The public base URL can be set from the UI, no redeploy.** `DCSIM_BASE_URL` is the fallback; a value
+  set in **Settings** restamps every emitted feed/GDC/Keystone URL live. See [docs/settings.md](docs/settings.md).
 - A Docker `HEALTHCHECK` hits `/healthz`, so Dokploy reports container health.
 
 ## Updating
