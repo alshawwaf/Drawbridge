@@ -1,0 +1,33 @@
+# Dokploy deployment for Drawbridge (Datacenter Simulator) — app service only.
+#
+# Dokploy clones this repo (sourceType=git) and builds from the app's own
+# Dockerfile (build context = repo root). Traefik terminates TLS and routes the
+# Dokploy domain to the container's internal HTTP port 8000 (create_domain does
+# that) — so there is NO bundled Caddy/Traefik here and NO host port publishing.
+# For the standalone (Caddy-fronted) deployment use docker-compose.yml instead.
+#
+# Secrets come from the installer-rendered .env (DCSIM_* keys) — nothing is
+# hardcoded here; every value is read from the environment.
+#
+# Extra non-HTTP ports the app can expose but are intentionally NOT published
+# (Dokploy routes only the HTTP port; to use these, add a dedicated Traefik
+# TCP/UDP entrypoint + host firewall allowance):
+#   - 5514/tcp+udp  SIEM receiver (Check Point Log Exporter target)
+#   - 9440/tcp      Nutanix Prism (CloudGuard hardcodes :9440 TLS)
+services:
+  drawbridge:
+    build: .
+    environment:
+      - DCSIM_BASE_URL=${DCSIM_BASE_URL}
+      - DCSIM_ADMIN_USERNAME=${DCSIM_ADMIN_USERNAME:-admin}
+      - DCSIM_ADMIN_PASSWORD=${DCSIM_ADMIN_PASSWORD}
+      - DCSIM_SESSION_SECRET=${DCSIM_SESSION_SECRET}
+      - DCSIM_ENCRYPTION_KEY=${DCSIM_ENCRYPTION_KEY}
+      - DCSIM_DATABASE_URL=sqlite:////data/dcsim.db
+      # SIEM listener binds internally (0 disables). NOT published — see note above.
+      - DCSIM_SYSLOG_PORT=${DCSIM_SYSLOG_PORT:-5514}
+    volumes:
+      - drawbridge-data:/data
+    restart: unless-stopped
+volumes:
+  drawbridge-data:
