@@ -1,7 +1,7 @@
 # Integrations
 
 Each integration makes the portal **act as the external system Check Point integrates with**, so a
-PoV can be demoed end-to-end without the real thing. Three interaction models:
+PoV can be demoed end-to-end without the real thing. Two interaction models:
 
 - **Pull** — Check Point polls/scans the portal: the **feeds** and the **datacenter** API mocks.
 - **Reverse** — the portal receives from Check Point: the **SIEM receiver** (Log Exporter sink).
