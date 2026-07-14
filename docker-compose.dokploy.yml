@@ -16,7 +16,10 @@
 #   - 9440/tcp      Nutanix Prism (CloudGuard hardcodes :9440 TLS)
 services:
   drawbridge:
-    build: .
+    image: ghcr.io/alshawwaf/drawbridge:latest
+    pull_policy: always
+    # build disabled: prebuilt + published by .github/workflows/publish-image.yml; uncomment to build locally.
+    # build: .
     environment:
       - DCSIM_BASE_URL=${DCSIM_BASE_URL}
       - DCSIM_ADMIN_USERNAME=${DCSIM_ADMIN_USERNAME:-admin}
